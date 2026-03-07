@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
-import { portfolioAPI, emailAPI } from '../lib/api';
+import { portfolioAPI, emailAPI, authAPI } from '../lib/api';
+import AdminPanel from './AdminPanel';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import './Dashboard.css';
 
@@ -29,7 +30,12 @@ export default function Dashboard() {
   const [syncResult, setSyncResult] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showConnectModal, setShowConnectModal] = useState(false);
-  const [connectStep, setConnectStep] = useState('choose'); // choose | connecting | done
+  const [connectStep, setConnectStep] = useState('choose');
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [profile, setProfile] = useState({ pan: '', dob: '', mobile: '', name: '' });
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileSaved, setProfileSaved] = useState(false);
+  const [profileError, setProfileError] = useState('');
 
   const loadPortfolio = useCallback(async () => {
     try {
@@ -79,12 +85,23 @@ export default function Dashboard() {
   const syncEmails = async () => {
     setSyncing(true); setSyncResult(null);
     try {
-      const r = await emailAPI.sync();
+      const r = await emailAPI.syncCAS();
       setSyncResult(r.data);
       await loadPortfolio();
     } catch (e) {
       setSyncResult({ success: false, message: e.response?.data?.error || 'Sync failed' });
     } finally { setSyncing(false); }
+  };
+
+  const saveProfile = async () => {
+    setProfileSaving(true); setProfileError('');
+    try {
+      await authAPI.saveProfile({ pan: profile.pan, dob: profile.dob, mobile: profile.mobile, name: profile.name });
+      setProfileSaved(true);
+      setTimeout(() => setProfileSaved(false), 3000);
+    } catch (e) {
+      setProfileError(e.response?.data?.error || 'Failed to save');
+    } finally { setProfileSaving(false); }
   };
 
   const s = portfolio?.summary || {};
@@ -144,6 +161,7 @@ export default function Dashboard() {
           <div className="db-nav-label" style={{marginTop:12}}>Analytics</div>
           {[
             { id:'tax', icon:'⊞', label:'Tax Summary' },
+            { id:'admin', icon:'⚙', label:'Sync Logs' },
           ].map(n => (
             <div key={n.id} className={`db-nav-item ${tab === n.id ? 'active' : ''}`}
               onClick={() => loadTab(n.id)}>
@@ -161,7 +179,10 @@ export default function Dashboard() {
             </div>
           </div>
           <button className="db-connect-btn" onClick={() => { setShowConnectModal(true); setConnectStep('choose'); }}>
-            + Connect Email
+            + Connect Gmail
+          </button>
+          <button className="db-connect-btn" style={{marginTop:6,background:'#1e293b',border:'1px solid #334155'}} onClick={() => setShowProfileModal(true)}>
+            ⚙ Profile &amp; PAN
           </button>
           <button className="db-logout-btn" onClick={() => { logout(); nav('/'); }}>
             Sign out
@@ -524,6 +545,69 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+
+      {/* ── PROFILE MODAL ── */}
+      {showProfileModal && (
+        <div className="db-modal-overlay" onClick={e => { if(e.target===e.currentTarget) setShowProfileModal(false); }}>
+          <div className="db-modal" style={{maxWidth:420}}>
+            <div className="db-modal-header">
+              <h3>Profile &amp; PDF Settings</h3>
+              <button className="db-modal-close" onClick={() => setShowProfileModal(false)}>✕</button>
+            </div>
+            <div className="db-modal-body">
+              <p style={{color:'#64748b',fontSize:12,marginBottom:16,lineHeight:1.5}}>
+                Required to unlock password-protected PDFs from CDSL, NSDL and brokers.
+                Gemini AI uses your PAN + DOB to generate the correct password automatically.
+              </p>
+
+              <div style={{marginBottom:14}}>
+                <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:5}}>FULL NAME</label>
+                <input className="db-input" placeholder="As per PAN card e.g. HAREESH RAVICHANDRAN"
+                  value={profile.name} onChange={e => setProfile({...profile, name: e.target.value})} />
+              </div>
+
+              <div style={{marginBottom:14}}>
+                <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:5}}>PAN NUMBER</label>
+                <input className="db-input" placeholder="e.g. ABCDE1234F" maxLength={10}
+                  value={profile.pan} onChange={e => setProfile({...profile, pan: e.target.value.toUpperCase()})} />
+                <span style={{color:'#475569',fontSize:11,marginTop:3,display:'block'}}>Used to unlock CDSL/NSDL CAS PDFs</span>
+              </div>
+
+              <div style={{marginBottom:14}}>
+                <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:5}}>DATE OF BIRTH</label>
+                <input className="db-input" type="date"
+                  value={profile.dob} onChange={e => setProfile({...profile, dob: e.target.value})} />
+                <span style={{color:'#475569',fontSize:11,marginTop:3,display:'block'}}>Used for ICICI Direct, HDFC Sec password formats</span>
+              </div>
+
+              <div style={{marginBottom:20}}>
+                <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:5}}>MOBILE (optional)</label>
+                <input className="db-input" placeholder="10-digit mobile number"
+                  value={profile.mobile} onChange={e => setProfile({...profile, mobile: e.target.value})} />
+                <span style={{color:'#475569',fontSize:11,marginTop:3,display:'block'}}>Used for 5paisa and some other brokers</span>
+              </div>
+
+              {profileError && <div style={{color:'#f43f5e',fontSize:12,marginBottom:12,padding:'6px 10px',background:'#1a0a0e',borderRadius:4}}>{profileError}</div>}
+              {profileSaved && <div style={{color:'#00d4a1',fontSize:12,marginBottom:12,padding:'6px 10px',background:'#0a2a1a',borderRadius:4}}>✓ Profile saved successfully</div>}
+
+              <button className="db-sync-btn" style={{width:'100%'}} onClick={saveProfile} disabled={profileSaving}>
+                {profileSaving ? 'Saving…' : 'Save Profile'}
+              </button>
+
+              <div style={{marginTop:16,padding:'10px 12px',background:'#0a1628',borderRadius:6,border:'1px solid #1e3a5f'}}>
+                <div style={{color:'#0ea5e9',fontSize:11,fontWeight:700,marginBottom:4}}>HOW PDF PASSWORDS WORK</div>
+                <div style={{color:'#64748b',fontSize:11,lineHeight:1.6}}>
+                  1. Gemini AI reads the email body for password hints<br/>
+                  2. Combines your PAN + DOB + Name to generate candidates<br/>
+                  3. Tries each until the PDF opens<br/>
+                  4. Falls back to rule-based patterns if AI fails
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
