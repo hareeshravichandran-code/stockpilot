@@ -175,14 +175,12 @@ export default function Dashboard() {
         <div className="db-topbar">
           <div>
             <h1 className="db-page-title">
-  {({
-    dashboard: 'Dashboard',
-    holdings: 'Holdings',
-    dividends: 'Dividend Tracker',
-    transactions: 'Transaction History',
-    tax: 'Tax Summary'
-  }[tab])}
-</h1>
+                 {tab === 'dashboard' && 'Dashboard'}
+                 {tab === 'holdings' && 'Holdings'}
+                 {tab === 'dividends' && 'Dividend Tracker'}
+                 {tab === 'transactions' && 'Transaction History'}
+                 {tab === 'tax' && 'Tax Summary'}
+            </h1>
             <p className="db-page-sub">
               {emailStatus.length > 0
                 ? `Last synced ${emailStatus[0].last_synced ? new Date(emailStatus[0].last_synced).toLocaleString('en-IN') : 'never'}`
