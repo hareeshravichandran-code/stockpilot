@@ -1,13 +1,13 @@
 /**
  * StockPilot Email Routes — CAS Phase Only
- * Every attempt logged to Railway + Supabase sync_logs
+ * gmail.js already extracts PDFs and merges text into email.body
+ * Every attempt is logged to Railway console + Supabase sync_logs
  */
 const router      = require('express').Router();
 const requireAuth = require('../middleware/requireAuth');
 const supabase    = require('../services/supabase');
 const { getAuthUrl, exchangeCode, fetchEmails } = require('../services/gmail');
 const { parseCAS, detectCASType }               = require('../services/casParser');
-const { resolvePDFPasswordSmart }               = require('../services/geminiPasswordResolver');
 const SyncLogger                                = require('../services/logger');
 
 // ── Gmail OAuth URL ───────────────────────────────────────────────────
@@ -40,12 +40,14 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
   const logger = new SyncLogger(req.user.id);
 
   try {
+    // Get Gmail connection
     const { data: conn } = await supabase
       .from('email_connections').select('*')
       .eq('user_id', req.user.id).eq('provider', 'gmail').single();
 
     if (!conn) return res.status(400).json({ error: 'No Gmail account connected' });
 
+    // Get user profile (PAN/DOB needed for PDF password)
     const { data: userProfile } = await supabase
       .from('users').select('pan, dob, name, mobile, client_code')
       .eq('id', req.user.id).single();
@@ -57,7 +59,7 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
 
     await logger.startSession();
 
-    // Search CDSL + NSDL emails
+    // ── Fetch CAS emails (gmail.js extracts PDF text into body) ──────
     const casQuery = 'from:(cdslindia.com OR cvlindia.com OR nsdl.co.in OR nsdlindia.com) subject:(CAS OR "consolidated account statement" OR "account statement" OR "statement of account")';
     console.log(JSON.stringify({ event: 'GMAIL_SEARCH', query: casQuery }));
 
@@ -74,72 +76,88 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
     if (casEmails.length === 0) {
       await logger.logSkipped({ phase: 'cas', reason: 'NO_EMAILS', detail: 'No CAS emails found from CDSL/NSDL senders' });
       await logger.finishSession({ message: 'No CAS emails found' });
-      return res.json({ success: false, message: 'No CAS emails found in Gmail. Make sure CDSL/NSDL statements go to this account.', sessionId: logger.sessionId, ...logger.counts });
+      return res.json({
+        success: false,
+        message: 'No CAS emails found in Gmail. Make sure CDSL/NSDL statements are sent to this account.',
+        sessionId: logger.sessionId, ...logger.counts
+      });
     }
 
     let bestResult = null, bestDate = null;
 
     for (const email of casEmails) {
       const meta = { phase: 'cas', emailId: email.id, subject: email.subject, from: email.from, date: email.date };
-      console.log(JSON.stringify({ event: 'PROCESSING_EMAIL', subject: email.subject, from: email.from }));
+      console.log(JSON.stringify({ event: 'PROCESSING_EMAIL', subject: email.subject, from: email.from, hasPdf: email.hasPdf, bodyLen: email.body?.length }));
 
-      const pdfAtt = (email.attachments || []).find(a => a.filename?.toLowerCase().endsWith('.pdf'));
-      let textContent = null, pdfUnlocked = false;
-
-      if (pdfAtt) {
-        // ── PDF path ──────────────────────────────────────────
-        console.log(JSON.stringify({ event: 'PDF_FOUND', filename: pdfAtt.filename, sizeBytes: pdfAtt.data?.length }));
-        try {
-          textContent = await resolvePDFPasswordSmart(
-            pdfAtt.data, email.body || '', email.from || '', email.subject || '', userProfile || {}
-          );
-          if (textContent && textContent.length > 100) {
-            pdfUnlocked = true;
-            console.log(JSON.stringify({ event: 'PDF_UNLOCKED', filename: pdfAtt.filename, chars: textContent.length }));
-          } else {
-            await logger.logFailure({ ...meta, hasPdf: true, pdfFilename: pdfAtt.filename, pdfUnlocked: false, errorType: 'NO_TEXT', errorMessage: 'PDF opened but extracted text too short', rawText: textContent || '' });
-            continue;
-          }
-        } catch (pdfErr) {
-          await logger.logFailure({ ...meta, hasPdf: true, pdfFilename: pdfAtt.filename, pdfUnlocked: false, errorType: 'PDF_LOCKED', errorMessage: pdfErr.message, errorStack: pdfErr.stack });
-          continue;
-        }
-      } else if (email.body && email.body.length > 200) {
-        // ── Email body path ───────────────────────────────────
-        console.log(JSON.stringify({ event: 'NO_PDF_USE_BODY', subject: email.subject, bodyLen: email.body.length }));
-        textContent = email.body;
-      } else {
-        await logger.logSkipped({ ...meta, hasPdf: false, reason: 'NO_PDF', detail: 'No PDF attachment and body too short' });
+      // ── Check for PDF failure hint ────────────────────────────
+      if (email.pdfFailed && (!email.body || email.body.length < 200)) {
+        await logger.logFailure({
+          ...meta, hasPdf: true,
+          errorType:    'PDF_LOCKED',
+          errorMessage: 'PDF found but could not be unlocked. Please set your PAN and Date of Birth in Profile & PAN settings.',
+          rawText:      email.body?.slice(0, 500) || ''
+        });
         continue;
       }
 
-      // ── Parse CAS ─────────────────────────────────────────
-      const casType = detectCASType(textContent);
+      // ── Check body has content ────────────────────────────────
+      if (!email.body || email.body.trim().length < 100) {
+        await logger.logSkipped({ ...meta, hasPdf: email.hasPdf || false, reason: 'NO_CONTENT', detail: 'Email body is empty or too short after extraction' });
+        continue;
+      }
+
+      // ── Detect and parse CAS ──────────────────────────────────
+      const casType = detectCASType(email.body);
+      console.log(JSON.stringify({ event: 'CAS_DETECTED', type: casType, bodyLen: email.body.length }));
+
       let parseResult;
       try {
-        parseResult = parseCAS(textContent);
+        parseResult = parseCAS(email.body);
       } catch (parseErr) {
-        await logger.logFailure({ ...meta, hasPdf: !!pdfAtt, pdfFilename: pdfAtt?.filename, pdfUnlocked, errorType: 'PARSE_FAILED', errorMessage: parseErr.message, errorStack: parseErr.stack, rawText: textContent });
+        await logger.logFailure({
+          ...meta, hasPdf: email.hasPdf || false,
+          errorType: 'PARSE_FAILED', errorMessage: parseErr.message,
+          errorStack: parseErr.stack, rawText: email.body
+        });
         continue;
       }
 
       const { holdings, summary } = parseResult;
 
       if (!holdings || holdings.length === 0) {
-        await logger.logFailure({ ...meta, hasPdf: !!pdfAtt, pdfFilename: pdfAtt?.filename, pdfUnlocked, errorType: 'NO_ISIN', errorMessage: `Parsed as ${casType} but no ISINs found`, rawText: textContent });
+        await logger.logFailure({
+          ...meta, hasPdf: email.hasPdf || false,
+          errorType: 'NO_ISIN',
+          errorMessage: `Parsed as ${casType} but no ISINs/holdings found`,
+          rawText: email.body
+        });
         continue;
       }
 
-      // ── Success ───────────────────────────────────────────
-      await logger.logSuccess({ ...meta, hasPdf: !!pdfAtt, pdfFilename: pdfAtt?.filename, pdfUnlocked, itemsFound: holdings.length, parsedData: holdings, rawText: textContent });
+      // ── Success ───────────────────────────────────────────────
+      await logger.logSuccess({
+        ...meta, hasPdf: email.hasPdf || false,
+        pdfUnlocked: email.hasPdf || false,
+        itemsFound: holdings.length,
+        parsedData: holdings,
+        rawText: email.body
+      });
 
       const d = new Date(email.date);
-      if (!bestDate || d > bestDate) { bestDate = d; bestResult = { email, holdings, summary, casType }; }
+      if (!bestDate || d > bestDate) {
+        bestDate   = d;
+        bestResult = { email, holdings, summary, casType };
+      }
     }
 
+    // ── Save best CAS to DB ───────────────────────────────────────
     if (!bestResult) {
       await logger.finishSession({ message: 'Emails found but none parsed successfully' });
-      return res.json({ success: false, message: 'CAS emails found but could not be parsed. See Admin → Sync Logs for details.', sessionId: logger.sessionId, ...logger.counts });
+      return res.json({
+        success: false,
+        message: 'CAS emails found but could not be parsed. Go to ⚙ Sync Logs for details.',
+        sessionId: logger.sessionId, ...logger.counts
+      });
     }
 
     const savedCount = await saveCASHoldings(req.user.id, bestResult.holdings);
@@ -148,11 +166,16 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
       .update({ last_synced: new Date().toISOString(), emails_parsed: casEmails.length })
       .eq('id', conn.id);
 
-    await logger.finishSession({ casType: bestResult.casType, holdingsSaved: savedCount, statementDate: bestResult.summary?.statementDate, profileComplete });
+    await logger.finishSession({
+      casType: bestResult.casType,
+      holdingsSaved: savedCount,
+      statementDate: bestResult.summary?.statementDate,
+      profileComplete
+    });
 
     return res.json({
       success: true,
-      message: `Synced ${savedCount} holdings from ${bestResult.casType}`,
+      message: `✓ Synced ${savedCount} holdings from ${bestResult.casType}`,
       casType: bestResult.casType, holdingsSaved: savedCount,
       sessionId: logger.sessionId, profileComplete,
       scanned: logger.counts.scanned, parsed: logger.counts.parsed, failed: logger.counts.failed,
@@ -165,12 +188,21 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
   }
 });
 
-// ── Save CAS holdings (preserve avg_cost from broker emails) ─────────
+// ── Also keep /sync for backward compat (calls CAS sync) ─────────────
+router.post('/sync', requireAuth, (req, res, next) => {
+  req.url = '/sync/cas';
+  next('route');
+});
+
+// ── Save holdings (preserve avg_cost) ────────────────────────────────
 async function saveCASHoldings(userId, holdings) {
   let saved = 0;
   for (const h of holdings) {
     if (!h.isin) continue;
-    const { data: existing } = await supabase.from('holdings').select('avg_cost, dividend_per_share, sector').eq('user_id', userId).eq('isin', h.isin).maybeSingle();
+    const { data: existing } = await supabase
+      .from('holdings').select('avg_cost, dividend_per_share, sector')
+      .eq('user_id', userId).eq('isin', h.isin).maybeSingle();
+
     const { error } = await supabase.from('holdings').upsert({
       user_id: userId, isin: h.isin,
       symbol: h.symbol || h.isin, company: h.company || h.isin,
@@ -181,6 +213,7 @@ async function saveCASHoldings(userId, holdings) {
       cas_source: h.source, cas_updated_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }, { onConflict: 'user_id,isin' });
+
     if (error) console.error(JSON.stringify({ event: 'HOLDING_SAVE_ERROR', isin: h.isin, error: error.message }));
     else saved++;
   }
@@ -190,27 +223,36 @@ async function saveCASHoldings(userId, holdings) {
 
 // ── Email connection status ───────────────────────────────────────────
 router.get('/status', requireAuth, async (req, res) => {
-  const { data } = await supabase.from('email_connections').select('provider, connected_at, last_synced, emails_parsed').eq('user_id', req.user.id);
+  const { data } = await supabase.from('email_connections')
+    .select('provider, connected_at, last_synced, emails_parsed')
+    .eq('user_id', req.user.id);
   res.json({ connections: data || [] });
 });
 
-// ── Sync sessions list ────────────────────────────────────────────────
+// ── Sync sessions (Admin panel) ───────────────────────────────────────
 router.get('/sessions', requireAuth, async (req, res) => {
-  const { data, error } = await supabase.from('sync_sessions').select('*').eq('user_id', req.user.id).order('started_at', { ascending: false }).limit(20);
+  const { data, error } = await supabase.from('sync_sessions')
+    .select('*').eq('user_id', req.user.id)
+    .order('started_at', { ascending: false }).limit(20);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ sessions: data || [] });
 });
 
 // ── Logs for a session ────────────────────────────────────────────────
 router.get('/sessions/:sessionId/logs', requireAuth, async (req, res) => {
-  const { data, error } = await supabase.from('sync_logs').select('*').eq('session_id', req.params.sessionId).eq('user_id', req.user.id).order('logged_at', { ascending: true });
+  const { data, error } = await supabase.from('sync_logs')
+    .select('*').eq('session_id', req.params.sessionId).eq('user_id', req.user.id)
+    .order('logged_at', { ascending: true });
   if (error) return res.status(500).json({ error: error.message });
   res.json({ logs: data || [] });
 });
 
 // ── All failures ──────────────────────────────────────────────────────
 router.get('/failures', requireAuth, async (req, res) => {
-  const { data, error } = await supabase.from('sync_logs').select('*').eq('user_id', req.user.id).in('status', ['failed', 'password_failed', 'skipped']).order('logged_at', { ascending: false }).limit(50);
+  const { data, error } = await supabase.from('sync_logs')
+    .select('*').eq('user_id', req.user.id)
+    .in('status', ['failed', 'password_failed', 'skipped'])
+    .order('logged_at', { ascending: false }).limit(50);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ failures: data || [] });
 });
