@@ -175,11 +175,8 @@ export default function Dashboard() {
         <div className="db-topbar">
           <div>
             <h1 className="db-page-title">
-                 {tab === 'dashboard' && 'Dashboard'}
-                 {tab === 'holdings' && 'Holdings'}
-                 {tab === 'dividends' && 'Dividend Tracker'}
-                 {tab === 'transactions' && 'Transaction History'}
-                 {tab === 'tax' && 'Tax Summary'}
+              {{ dashboard:'Dashboard', holdings:'Holdings', dividends:'Dividend Tracker',
+                 transactions:'Transaction History', tax:'Tax Summary' }[tab]}
             </h1>
             <p className="db-page-sub">
               {emailStatus.length > 0
@@ -491,14 +488,7 @@ export default function Dashboard() {
 
       {/* EMAIL CONNECT MODAL */}
       {showConnectModal && (
-        <div
-          className="db-modal-overlay"
-          onClick={(e) => {
-          if (e.target.className.includes('overlay')) {
-          setShowConnectModal(false);
-         }
-         }}
-        >
+        <div className="db-modal-overlay" onClick={e => { if(e.target === e.currentTarget) setShowConnectModal(false); }}>
           <div className="db-modal fade-in">
             <button className="db-modal-close" onClick={() => setShowConnectModal(false)}>✕</button>
 
