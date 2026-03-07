@@ -87,7 +87,16 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
 
     for (const email of casEmails) {
       const meta = { phase: 'cas', emailId: email.id, subject: email.subject, from: email.from, date: email.date };
-      console.log(JSON.stringify({ event: 'PROCESSING_EMAIL', subject: email.subject, from: email.from, hasPdf: email.hasPdf, bodyLen: email.body?.length }));
+      console.log(JSON.stringify({ 
+        event: 'PROCESSING_EMAIL', 
+        subject: email.subject, 
+        from: email.from, 
+        hasPdf: email.hasPdf,
+        pdfFailed: email.pdfFailed,
+        bodyLen: email.body?.length,
+        hasPdfMarker: email.body?.includes('--- PDF ATTACHMENT ---'),
+        bodyPreview: email.body?.slice(0, 100).replace(/\n/g,' ')
+      }));
 
       // ── Check for PDF failure hint ────────────────────────────
       if (email.pdfFailed && (!email.body || email.body.length < 200)) {
