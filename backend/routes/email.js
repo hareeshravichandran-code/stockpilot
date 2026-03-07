@@ -63,9 +63,15 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
     const casQuery = 'from:(cdslindia.com OR cvlindia.com OR nsdl.co.in OR nsdlindia.com) subject:(CAS OR "consolidated account statement" OR "account statement" OR "statement of account")';
     console.log(JSON.stringify({ event: 'GMAIL_SEARCH', query: casQuery }));
 
+    // Only fetch last 3 months of CAS emails
+    const threeMonthsAgo = new Date();
+    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+    const afterDate = threeMonthsAgo.toISOString().split('T')[0].replace(/-/g, '/');
+    const casQueryWithDate = casQuery + ` after:${afterDate}`;
+
     let casEmails = [];
     try {
-      casEmails = await fetchEmails(conn.access_token, conn.refresh_token, casQuery, userProfile || {});
+      casEmails = await fetchEmails(conn.access_token, conn.refresh_token, casQueryWithDate, userProfile || {});
       console.log(JSON.stringify({ event: 'GMAIL_FOUND', count: casEmails.length }));
     } catch (gmailErr) {
       await logger.logFailure({ phase: 'cas', errorType: 'GMAIL_ERROR', errorMessage: gmailErr.message, errorStack: gmailErr.stack });
