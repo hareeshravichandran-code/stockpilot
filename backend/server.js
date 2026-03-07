@@ -29,10 +29,14 @@ app.use(cors({
   credentials: true
 }));
 
+// ── Trust Railway proxy ──
+app.set('trust proxy', 1);
+
 // ── Rate limiting ──
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 min
+  windowMs: 15 * 60 * 1000,
   max: 100,
+  validate: { xForwardedForHeader: false },
   message: { error: 'Too many requests, please try again later.' }
 });
 app.use('/api/', limiter);
