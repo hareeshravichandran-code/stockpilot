@@ -75,7 +75,24 @@ export default function Dashboard() {
     setConnectStep('connecting');
     try {
       const r = await emailAPI.connectGmail();
-      window.location.href = r.data.url;
+      // Open OAuth in new tab so JWT in localStorage is preserved
+      const popup = window.open(r.data.url, '_blank', 'width=500,height=600');
+      // Poll every 3s to check if Gmail got connected
+      const poll = setInterval(async () => {
+        try {
+          const s = await emailAPI.status();
+          const connected = (s.data.connections || []).find(c => c.provider === 'gmail');
+          if (connected) {
+            clearInterval(poll);
+            setShowConnectModal(false);
+            setConnectStep('choose');
+            setSyncResult({ success: null, message: 'Gmail connected! Click Sync Emails to import your CAS.' });
+            if (popup) popup.close();
+          }
+        } catch(e) {}
+      }, 3000);
+      // Stop polling after 3 minutes
+      setTimeout(() => clearInterval(poll), 180000);
     } catch (e) {
       setConnectStep('choose');
       alert('Failed to get OAuth URL. Check backend is running.');
