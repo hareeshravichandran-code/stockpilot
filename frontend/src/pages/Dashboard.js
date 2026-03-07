@@ -491,7 +491,14 @@ export default function Dashboard() {
 
       {/* EMAIL CONNECT MODAL */}
       {showConnectModal && (
-        <div className="db-modal-overlay" onClick={e => { if(e.target.className.includes('overlay')) setShowConnectModal(false); }}>
+        <div
+          className="db-modal-overlay"
+          onClick={(e) => {
+          if (e.target.className.includes('overlay')) {
+          setShowConnectModal(false);
+         }
+         }}
+        >
           <div className="db-modal fade-in">
             <button className="db-modal-close" onClick={() => setShowConnectModal(false)}>✕</button>
 
