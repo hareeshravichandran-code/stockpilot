@@ -446,7 +446,7 @@ export default function Dashboard() {
             <div className="fade-in">
               <div className="db-stats-grid">
                 <div className="db-stat-card gold">
-                  <div className="db-stat-label">STCG (< 1 Year)</div>
+                  <div className="db-stat-label">STCG (&lt; 1 Year)</div>
                   <div className="db-stat-val gold">{fmtFull(tax.stcg)}</div>
                   <div className="db-stat-sub">Tax @20%: {fmtFull(tax.stcgTax)}</div>
                 </div>
