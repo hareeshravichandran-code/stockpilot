@@ -9,6 +9,7 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
   const nav = useNavigate();
+  const [searchParams] = useSearchParams();
 
   const handle = e => setForm(p => ({ ...p, [e.target.name]: e.target.value }));
 
@@ -17,7 +18,8 @@ export default function Login() {
     setError(''); setLoading(true);
     try {
       await login(form.email, form.password);
-      nav('/dashboard');
+      const params = searchParams.toString();
+      nav(params ? `/dashboard?${params}` : '/dashboard');
     } catch (err) {
       setError(err.response?.data?.error || 'Login failed. Check your credentials.');
     } finally { setLoading(false); }

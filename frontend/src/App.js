@@ -13,7 +13,12 @@ function PrivateRoute({ children }) {
       Loading StockPilot…
     </div>
   );
-  return user ? children : <Navigate to="/login" replace />;
+  if (!user) {
+    // Preserve query params (e.g. ?connected=gmail) through login redirect
+    const params = window.location.search;
+    return <Navigate to={`/login${params}`} replace />;
+  }
+  return children;
 }
 
 function PublicRoute({ children }) {
