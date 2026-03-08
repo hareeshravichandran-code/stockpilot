@@ -133,20 +133,40 @@ async function extractEmailContent(gmail, messageId, payload, pdfPasswords = [],
     // PDF attachment
     if (mime === 'application/pdf' || (part.filename && part.filename.toLowerCase().endsWith('.pdf'))) {
       pdfCount++;
+      console.log(JSON.stringify({ 
+        event: 'PDF_PART_FOUND', 
+        mime, 
+        filename: part.filename, 
+        hasData: !!part.body?.data, 
+        hasAttachmentId: !!part.body?.attachmentId,
+        bodySize: part.body?.size,
+        partId: part.partId
+      }));
       try {
         let pdfData;
 
         if (part.body?.data) {
           pdfData = Buffer.from(part.body.data, 'base64');
+          console.log(JSON.stringify({ event: 'PDF_INLINE', filename: part.filename, bytes: pdfData.length }));
         } else if (part.body?.attachmentId) {
-          const attachment = await gmail.users.messages.attachments.get({
-            userId: 'me',
-            messageId,
-            id: part.body.attachmentId
-          });
-          if (attachment.data?.data) {
-            pdfData = Buffer.from(attachment.data.data, 'base64');
+          console.log(JSON.stringify({ event: 'PDF_FETCHING_ATTACHMENT', filename: part.filename, attachmentId: part.body.attachmentId }));
+          try {
+            const attachment = await gmail.users.messages.attachments.get({
+              userId: 'me',
+              messageId,
+              id: part.body.attachmentId
+            });
+            if (attachment.data?.data) {
+              pdfData = Buffer.from(attachment.data.data, 'base64');
+              console.log(JSON.stringify({ event: 'PDF_ATTACHMENT_FETCHED', filename: part.filename, bytes: pdfData.length }));
+            } else {
+              console.log(JSON.stringify({ event: 'PDF_ATTACHMENT_EMPTY', filename: part.filename }));
+            }
+          } catch (fetchErr) {
+            console.log(JSON.stringify({ event: 'PDF_ATTACHMENT_FETCH_ERROR', filename: part.filename, error: fetchErr.message }));
           }
+        } else {
+          console.log(JSON.stringify({ event: 'PDF_NO_DATA', filename: part.filename, bodyKeys: Object.keys(part.body || {}) }));
         }
 
         if (pdfData) {
