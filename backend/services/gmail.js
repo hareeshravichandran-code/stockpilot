@@ -212,7 +212,9 @@ async function extractEmailContent(gmail, messageId, payload, pdfPasswords = [],
     body = Buffer.from(payload.body.data, 'base64').toString('utf-8');
   }
 
+  console.log(JSON.stringify({ event: 'EMAIL_ASSEMBLED', pdfCount, pdfTextsCount: pdfTexts.length, pdfFailed, bodyLen: body?.length, totalLen: combinedText?.length || 0 }));
   const combinedText = [body, ...pdfTexts].join('\n\n--- PDF ATTACHMENT ---\n\n');
+  console.log(JSON.stringify({ event: 'EMAIL_ASSEMBLED', pdfCount, pdfTextsCount: pdfTexts.length, pdfFailed, bodyLen: body?.length, combinedLen: combinedText.length }));
   return { body: combinedText, hasPdf: pdfCount > 0, pdfFailed };
 }
 
