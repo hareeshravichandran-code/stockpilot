@@ -171,12 +171,10 @@ async function extractEmailContent(gmail, messageId, payload, pdfPasswords = [],
 
         if (pdfData) {
           try {
-            const text = await resolvePDFPasswordSmart(
+            const { text } = await parsePdfWithPasswords(
               pdfData,
-              body || '',        // email body for Gemini context
-              emailFrom || '',
-              emailSubject || '',
-              userProfile || {}
+              pdfPasswords,
+              part.filename || 'attachment'
             );
             if (text && text.trim().length > 50) {
               console.log(JSON.stringify({ event: 'PDF_UNLOCKED_GEMINI', filename: part.filename, chars: text.length }));
@@ -233,8 +231,9 @@ async function fetchEmails(accessToken, refreshToken, query = '', userProfile = 
   }
 
   // Use the passed query directly — caller is responsible for building correct query
-const searchQuery = query || 'from:(nsdl.co.in OR cdslindia.com OR cvlindia.com)';
-console.log(JSON.stringify({ event: 'GMAIL_QUERY', query: searchQuery }));
+  const searchQuery = query || 'from:(nsdl.co.in OR cdslindia.com OR cvlindia.com)';
+  console.log(JSON.stringify({ event: 'GMAIL_QUERY', query: searchQuery }));
+
   const listRes = await gmail.users.messages.list({
     userId: 'me',
     q: searchQuery,
