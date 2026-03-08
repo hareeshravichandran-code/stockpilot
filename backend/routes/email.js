@@ -131,7 +131,18 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
 
       // ── Detect and parse CAS ──────────────────────────────────
       const casType = detectCASType(textToParse);
-      console.log(JSON.stringify({ event: 'CAS_DETECTED', type: casType, hasPdfSection: pdfIdx !== -1, textLen: textToParse.length, preview: textToParse.slice(0, 200).replace(/\n/g,' ') }));
+      // Log key diagnostic info - find where ISINs might be
+      const isinMatches = [...textToParse.matchAll(/INE[A-Z0-9]{9}/g)];
+      const firstIsin = isinMatches[0];
+      console.log(JSON.stringify({ 
+        event: 'CAS_DETECTED', type: casType, 
+        hasPdfSection: pdfIdx !== -1, 
+        textLen: textToParse.length,
+        isinCount: isinMatches.length,
+        firstIsin: firstIsin ? firstIsin[0] : 'NONE',
+        firstIsinContext: firstIsin ? textToParse.slice(Math.max(0,firstIsin.index-20), firstIsin.index+60).replace(/\n/g,'|') : 'N/A',
+        preview: textToParse.slice(0, 300).replace(/\n/g,' ')
+      }));
 
       let parseResult;
       try {
