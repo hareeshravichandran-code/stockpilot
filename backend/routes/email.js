@@ -60,7 +60,7 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
     await logger.startSession();
 
     // ── Fetch CAS emails (gmail.js extracts PDF text into body) ──────
-    const casQuery = 'from:(cdslindia.com OR cvlindia.com OR nsdl.co.in OR nsdlindia.com) subject:(CAS OR "consolidated account statement" OR "account statement" OR "statement of account")';
+    const casQuery = 'from:(cdslindia.com OR cvlindia.com OR nsdl.co.in OR nsdlindia.com)';
     console.log(JSON.stringify({ event: 'GMAIL_SEARCH', query: casQuery }));
 
     // Only fetch last 3 months of CAS emails
