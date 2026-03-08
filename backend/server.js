@@ -48,6 +48,23 @@ app.use('/api/email', emailRoutes);
 app.use('/api/prices', priceRoutes);
 
 // ── Health check ──
+// Debug endpoint - check PDF tools
+app.get('/debug/pdf-tools', async (req, res) => {
+  const { spawnSync } = require('child_process');
+  
+  const python = spawnSync('python3', ['--version']);
+  const pikepdf = spawnSync('python3', ['-c', 'import pikepdf; print(pikepdf.__version__)']);
+  const pdfminer = spawnSync('python3', ['-c', 'import pdfminer; print("ok")']);
+  const qpdf = spawnSync('qpdf', ['--version']);
+  
+  res.json({
+    python: python.stdout?.toString().trim() || python.stderr?.toString().trim() || 'NOT FOUND',
+    pikepdf: pikepdf.stdout?.toString().trim() || pikepdf.stderr?.toString().trim() || 'NOT FOUND',
+    pdfminer: pdfminer.stdout?.toString().trim() || pdfminer.stderr?.toString().trim() || 'NOT FOUND',
+    qpdf: qpdf.stdout?.toString().trim() || qpdf.stderr?.toString().trim() || 'NOT FOUND',
+  });
+});
+
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', version: '1.0.0', timestamp: new Date().toISOString() });
 });
