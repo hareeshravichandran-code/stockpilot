@@ -136,10 +136,13 @@ async function decryptPDF(pdfBuffer, password) {
 
     if (result.status === 0 && fs.existsSync(outputPath)) {
       const decrypted = fs.readFileSync(outputPath);
+      console.log(JSON.stringify({ event: 'QPDF_SUCCESS', password, outputSize: decrypted.length }));
       return decrypted;
     }
+    console.log(JSON.stringify({ event: 'QPDF_FAILED', password, status: result.status, stderr: result.stderr?.toString().slice(0,200) }));
     return null;
   } catch (e) {
+    console.log(JSON.stringify({ event: 'QPDF_ERROR', password, error: e.message }));
     return null;
   } finally {
     try { fs.unlinkSync(inputPath); } catch(e) {}
@@ -156,68 +159,51 @@ async function decryptPDF(pdfBuffer, password) {
  * 5. Fall back to rule-based resolver
  */
 async function resolvePDFPasswordSmart(pdfBuffer, emailBody, emailFrom, emailSubject, userProfile) {
-  const pdfParse = require('pdf-parse');
+  const { extractPdfText } = require('./pdfExtract');
+  const { pan, dob } = userProfile || {};
 
-  // Step 1: Try without password
-  try {
-    const result = await pdfParse(pdfBuffer);
-    if (result.text && result.text.trim().length > 100) {
-      console.log('PDF opened without password');
-      return result.text;
+  // Build password list from user profile
+  const passwords = [];
+  if (pan) {
+    passwords.push(pan.toUpperCase());
+    passwords.push(pan.toLowerCase());
+  }
+  if (dob) {
+    // Normalize DOB: Supabase returns YYYY-MM-DD, convert to DDMMYYYY
+    let dobStr = dob;
+    if (dob.includes('-') && dob.length === 10) {
+      const [yyyy, mm, dd] = dob.split('-');
+      dobStr = dd + mm + yyyy;
     }
-  } catch (e) {
-    console.log('PDF is password protected');
+    if (pan) {
+      passwords.push(pan.toUpperCase() + dobStr);
+      passwords.push(dobStr);
+    }
   }
 
-  // Step 2: Ask Gemini for password (returns main + alternatives)
-  const aiResult = await resolvePasswordWithGemini(emailBody, emailFrom, emailSubject, userProfile);
+  // Step 1: Try with Python pdfminer (handles passwords natively)
+  const text = await extractPdfText(pdfBuffer, passwords);
+  if (text && text.trim().length > 100) {
+    return text;
+  }
 
-  // Step 3: Try ALL Gemini passwords (main + alternatives)
+  // Step 2: Ask Gemini for password and try again
+  console.log(JSON.stringify({ event: 'TRYING_GEMINI_PASSWORD', reason: 'pdfminer failed with known passwords' }));
+  const aiResult = await resolvePasswordWithGemini(emailBody, emailFrom, emailSubject, userProfile);
   if (aiResult) {
     const mainPwd = typeof aiResult === 'string' ? aiResult : aiResult.password;
     const alternatives = aiResult._allPasswords || [mainPwd];
+    const geminiPasswords = [...new Set([...alternatives, ...passwords])].filter(Boolean);
     
-    // Build full candidate list including case variants
-    const candidates = [];
-    for (const pwd of alternatives) {
-      if (pwd) {
-        candidates.push(pwd);
-        candidates.push(pwd.toUpperCase());
-        candidates.push(pwd.toLowerCase());
-      }
+    console.log(JSON.stringify({ event: 'GEMINI_PASSWORDS', passwords: geminiPasswords }));
+    const text2 = await extractPdfText(pdfBuffer, geminiPasswords);
+    if (text2 && text2.trim().length > 100) {
+      return text2;
     }
-    const uniqueCandidates = [...new Set(candidates)].filter(Boolean);
-    
-    console.log(JSON.stringify({ event: 'TRYING_PASSWORDS', count: uniqueCandidates.length, passwords: uniqueCandidates }));
-
-    for (const pwd of uniqueCandidates) {
-      // Try pdf-parse directly with password
-      try {
-        const result = await pdfParse(pdfBuffer, { password: pwd });
-        if (result.text && result.text.trim().length > 100) {
-          console.log(JSON.stringify({ event: 'PDF_UNLOCKED', method: 'pdf-parse', password: pwd }));
-          return result.text;
-        }
-      } catch (e) {}
-
-      // Try qpdf decrypt + pdf-parse
-      const decrypted = await decryptPDF(pdfBuffer, pwd);
-      if (decrypted) {
-        try {
-          const result = await pdfParse(decrypted);
-          if (result.text && result.text.trim().length > 100) {
-            console.log(JSON.stringify({ event: 'PDF_UNLOCKED', method: 'qpdf', password: pwd }));
-            return result.text;
-          }
-        } catch (e) {}
-      }
-    }
-    console.log(JSON.stringify({ event: 'ALL_GEMINI_PASSWORDS_FAILED', tried: uniqueCandidates }));
   }
 
-  // Step 4: Rule-based fallback
-  const { resolvePDFPassword } = require('./pdfPasswordResolver');
-  return await resolvePDFPassword(pdfBuffer, emailBody, emailFrom, emailSubject, userProfile);
+  console.log(JSON.stringify({ event: 'PDF_ALL_METHODS_FAILED' }));
+  return null;
 }
 
 module.exports = { resolvePDFPasswordSmart, resolvePasswordWithGemini };
