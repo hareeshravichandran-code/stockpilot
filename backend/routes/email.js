@@ -130,7 +130,7 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
 
       // ── Detect and parse CAS ──────────────────────────────────
       const casType = detectCASType(textToParse);
-      console.log(JSON.stringify({ event: 'CAS_DETECTED', type: casType, hasPdfSection: pdfIdx !== -1, textLen: textToParse.length }));
+      console.log(JSON.stringify({ event: 'CAS_DETECTED', type: casType, hasPdfSection: pdfIdx !== -1, textLen: textToParse.length, preview: textToParse.slice(0, 200).replace(/\n/g,' ') }));
 
       let parseResult;
       try {
@@ -139,7 +139,7 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
         await logger.logFailure({
           ...meta, hasPdf: email.hasPdf || false,
           errorType: 'PARSE_FAILED', errorMessage: parseErr.message,
-          errorStack: parseErr.stack, rawText: email.body
+          errorStack: parseErr.stack, rawText: textToParse.slice(0, 1000)
         });
         continue;
       }
@@ -151,7 +151,7 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
           ...meta, hasPdf: email.hasPdf || false,
           errorType: 'NO_ISIN',
           errorMessage: `Parsed as ${casType} but no ISINs/holdings found`,
-          rawText: email.body
+          rawText: textToParse.slice(0, 1000)
         });
         continue;
       }
@@ -162,7 +162,7 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
         pdfUnlocked: email.hasPdf || false,
         itemsFound: holdings.length,
         parsedData: holdings,
-        rawText: email.body
+        rawText: textToParse.slice(0, 1000)
       });
 
       const d = new Date(email.date);
