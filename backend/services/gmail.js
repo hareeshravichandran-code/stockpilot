@@ -101,7 +101,12 @@ async function parsePdfWithPasswords(pdfBuffer, passwords = [], filename = '') {
     }
   }
 
-  console.warn(`Could not unlock PDF: ${filename} — tried ${passwords.length} passwords`);
+  console.log(JSON.stringify({ 
+    event: 'PDF_ALL_PASSWORDS_FAILED', 
+    filename, 
+    tried: passwords.length,
+    passwords: passwords.slice(0, 5) // log first 5 for debugging
+  }));
   return { text: '', passwordUsed: null, failed: true };
 }
 
