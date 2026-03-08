@@ -72,42 +72,38 @@ function generatePdfPasswords(pan, dob) {
   return [...new Set(passwords)].filter(Boolean);
 }
 
-// Try to parse a PDF buffer, attempting multiple passwords if needed
+// Extract text from PDF using pdfjs-dist (supports password-protected PDFs natively)
 async function parsePdfWithPasswords(pdfBuffer, passwords = [], filename = '') {
-  const pdfParse = require('pdf-parse');
+  const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
+  const allPasswords = ['', ...passwords].filter((v, i, a) => a.indexOf(v) === i);
 
-  // Try without password first
-  try {
-    const result = await pdfParse(pdfBuffer);
-    if (result.text?.trim().length > 50) {
-      console.log(JSON.stringify({ event: 'PDF_NO_PASSWORD', filename, chars: result.text.length, preview: result.text.slice(0,100) }));
-      return { text: result.text, passwordUsed: null };
-    } else {
-      console.log(JSON.stringify({ event: 'PDF_EMPTY_NO_PASSWORD', filename, chars: result.text?.length || 0 }));
-    }
-  } catch (e) {
-    console.log(JSON.stringify({ event: 'PDF_NEEDS_PASSWORD', filename, error: e.message }));
-  }
-
-  // Try each password
-  for (const password of passwords) {
+  for (const password of allPasswords) {
     try {
-      const result = await pdfParse(pdfBuffer, { password });
-      if (result.text?.trim().length > 50) {
-        console.log(`PDF unlocked with password for: ${filename}`);
-        return { text: result.text, passwordUsed: password };
+      const loadingTask = pdfjsLib.getDocument({ 
+        data: new Uint8Array(pdfBuffer),
+        password: password || ''
+      });
+      const pdf = await loadingTask.promise;
+      let fullText = '';
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        fullText += content.items.map(item => item.str).join(' ') + '\n';
+      }
+      if (fullText.trim().length > 50) {
+        console.log(JSON.stringify({ event: 'PDF_UNLOCKED', filename, password: password ? '***' : 'none', chars: fullText.length, preview: fullText.slice(0,100).replace(/\n/g,' ') }));
+        return { text: fullText, passwordUsed: password || null };
       }
     } catch (e) {
-      // Wrong password, try next
+      if (e.name === 'PasswordException') {
+        // Wrong password, try next
+      } else {
+        console.log(JSON.stringify({ event: 'PDF_ERROR', filename, error: e.message }));
+      }
     }
   }
 
-  console.log(JSON.stringify({ 
-    event: 'PDF_ALL_PASSWORDS_FAILED', 
-    filename, 
-    tried: passwords.length,
-    passwords: passwords.slice(0, 5) // log first 5 for debugging
-  }));
+  console.log(JSON.stringify({ event: 'PDF_ALL_PASSWORDS_FAILED', filename, tried: allPasswords.length, sample: allPasswords.slice(0,3) }));
   return { text: '', passwordUsed: null, failed: true };
 }
 
