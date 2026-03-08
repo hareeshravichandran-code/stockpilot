@@ -233,9 +233,8 @@ async function fetchEmails(accessToken, refreshToken, query = '', userProfile = 
   }
 
   // Use the passed query directly — caller is responsible for building correct query
-  const searchQuery = query || 'from:(nsdl.co.in OR cdslindia.com OR cvlindia.com)';
-  console.log(JSON.stringify({ event: 'GMAIL_QUERY', query: searchQuery }));
-
+const searchQuery = query || 'from:(nsdl.co.in OR cdslindia.com OR cvlindia.com)';
+console.log(JSON.stringify({ event: 'GMAIL_QUERY', query: searchQuery }));
   const listRes = await gmail.users.messages.list({
     userId: 'me',
     q: searchQuery,
