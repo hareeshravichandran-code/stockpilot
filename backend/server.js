@@ -66,4 +66,12 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`🚀 StockPilot backend running on port ${PORT}`);
+  // Verify qpdf is available
+  const { spawnSync } = require('child_process');
+  const qpdfCheck = spawnSync('qpdf', ['--version']);
+  if (qpdfCheck.status === 0) {
+    console.log(JSON.stringify({ event: 'QPDF_AVAILABLE', version: qpdfCheck.stdout?.toString().trim() }));
+  } else {
+    console.log(JSON.stringify({ event: 'QPDF_NOT_FOUND', error: 'qpdf not installed - PDF decryption will fail' }));
+  }
 });
