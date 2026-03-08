@@ -121,16 +121,9 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
         continue;
       }
 
-      // ── Extract PDF portion only (skip HTML email body) ────────
-      const pdfMarker = '--- PDF ATTACHMENT ---';
-      const pdfIdx = email.body.indexOf(pdfMarker);
-      const textToParse = pdfIdx !== -1
-        ? email.body.slice(pdfIdx + pdfMarker.length).trim()
-        : email.body;
-
       // ── Detect and parse CAS ──────────────────────────────────
-      const casType = detectCASType(textToParse);
-      console.log(JSON.stringify({ event: 'CAS_DETECTED', type: casType, hasPdfSection: pdfIdx !== -1, textLen: textToParse.length }));
+      const casType = detectCASType(email.body);
+      console.log(JSON.stringify({ event: 'CAS_DETECTED', type: casType, bodyLen: email.body.length }));
 
       let parseResult;
       try {
