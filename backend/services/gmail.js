@@ -1,4 +1,5 @@
 const { google } = require('googleapis');
+const { resolvePDFPasswordSmart } = require('./geminiPasswordResolver');
 
 function getOAuthClient() {
   return new google.auth.OAuth2(
@@ -111,7 +112,7 @@ async function parsePdfWithPasswords(pdfBuffer, passwords = [], filename = '') {
 }
 
 // Extract text from all parts of an email (body + PDF attachments)
-async function extractEmailContent(gmail, messageId, payload, pdfPasswords = []) {
+async function extractEmailContent(gmail, messageId, payload, pdfPasswords = [], userProfile = {}, emailFrom = '', emailSubject = '') {
   let body = '';
   let pdfTexts = [];
   let pdfCount = 0;
@@ -149,12 +150,24 @@ async function extractEmailContent(gmail, messageId, payload, pdfPasswords = [])
         }
 
         if (pdfData) {
-          const { text, failed } = await parsePdfWithPasswords(pdfData, pdfPasswords, part.filename);
-          if (text) {
-            pdfTexts.push(text);
-          } else if (failed) {
+          try {
+            const text = await resolvePDFPasswordSmart(
+              pdfData,
+              body || '',        // email body for Gemini context
+              emailFrom || '',
+              emailSubject || '',
+              userProfile || {}
+            );
+            if (text && text.trim().length > 50) {
+              console.log(JSON.stringify({ event: 'PDF_UNLOCKED_GEMINI', filename: part.filename, chars: text.length }));
+              pdfTexts.push(text);
+            } else {
+              pdfFailed++;
+              pdfTexts.push(`[PDF: ${part.filename || 'attachment'} could not be unlocked. Please check your PAN/DOB in Profile settings.]`);
+            }
+          } catch (geminiErr) {
+            console.log(JSON.stringify({ event: 'PDF_GEMINI_FAILED', filename: part.filename, error: geminiErr.message }));
             pdfFailed++;
-            // Add a note so the user knows a PDF was skipped
             pdfTexts.push(`[PDF: ${part.filename || 'attachment'} could not be unlocked. Please check your PAN/DOB in Profile settings.]`);
           }
         }
@@ -226,7 +239,7 @@ async function fetchEmails(accessToken, refreshToken, query = '', userProfile = 
       const date = headers.find(h => h.name === 'Date')?.value || '';
 
       const { body, hasPdf, pdfFailed } = await extractEmailContent(
-        gmail, msg.id, detail.data.payload || {}, pdfPasswords
+        gmail, msg.id, detail.data.payload || {}, pdfPasswords, userProfile, from, subject
       );
 
       emails.push({ id: msg.id, subject, from, date, body, hasPdf, pdfFailed });

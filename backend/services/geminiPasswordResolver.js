@@ -29,41 +29,59 @@ async function resolvePasswordWithGemini(emailBody, emailFrom, emailSubject, use
     }
   }
 
+  // Derive name variants for prompt
+  const cleanName = (name || '').replace(/[^a-zA-Z ]/g, '').trim();
+  const nameParts = cleanName.split(' ').filter(Boolean);
+  const firstName = nameParts[0] || '';
+  const lastName = nameParts[nameParts.length - 1] || '';
+  const fullNameNoSpaces = nameParts.join('').toUpperCase();
+
   const prompt = `You are an expert at determining PDF passwords for Indian broker and depository documents.
 
-Read the email below carefully. Find the password instructions. Generate the exact password.
+Read the email below carefully. Find password instructions. Generate the EXACT password.
 
 EMAIL FROM: ${emailFrom}
 EMAIL SUBJECT: ${emailSubject}
 EMAIL BODY:
 ---
-${emailBody.slice(0, 1500)}
+${emailBody.slice(0, 2000)}
 ---
 
-USER DATA:
+USER PROFILE:
 - Full Name: ${name || 'not provided'}
+- First Name: ${firstName || 'not provided'}
+- Last Name: ${lastName || 'not provided'}
+- Full Name (no spaces, uppercase): ${fullNameNoSpaces || 'not provided'}
 - PAN: ${pan ? pan.toUpperCase() : 'not provided'}
-- Date of Birth: ${dobFormatted} (DD/MM/YYYY format)
-- DD=${dd}, MM=${mm}, YYYY=${yyyy}
+- Date of Birth: ${dobFormatted} (DD/MM/YYYY)
+- DD=${dd}, MM=${mm}, YYYY=${yyyy}, YY=${yy}
 - Mobile: ${mobile || 'not provided'}
+- Mobile last 4: ${mobile ? mobile.slice(-4) : 'not provided'}
 - Client Code: ${clientCode || 'not provided'}
 
-COMMON INDIAN BROKER PASSWORD PATTERNS:
-- CDSL/NSDL CAS: PAN in uppercase (e.g. ABCDE1234F)
-- ICICI Direct contract note: first 4 letters of name in lowercase + DDMM (e.g. hare0115)
-- HDFC Sec: PAN + DDMMYYYY (e.g. ABCDE1234F01011980)
-- Angel One: first 4 letters of name uppercase + DDMMYYYY
-- Zerodha: client ID (e.g. ZX1234)
-- 5paisa: last 4 digits of mobile + DDMMYYYY
+COMMON INDIAN PASSWORD PATTERNS (try in this order):
+1. NSDL/CDSL CAS: PAN uppercase → ${pan ? pan.toUpperCase() : '?'}
+2. NSDL eCAS: PAN uppercase (most common)
+3. ICICI Direct: first 4 of name lowercase + DDMM → ${firstName.slice(0,4).toLowerCase()}${dd}${mm}
+4. HDFC Sec: PAN + DDMMYYYY → ${pan ? pan.toUpperCase() : '?'}${dd}${mm}${yyyy}
+5. Angel One: first 4 of name uppercase + DDMMYYYY → ${firstName.slice(0,4).toUpperCase()}${dd}${mm}${yyyy}
+6. Zerodha: client code → ${clientCode || '?'}
+7. 5paisa: mobile last 4 + DDMMYYYY → ${mobile ? mobile.slice(-4) : '?'}${dd}${mm}${yyyy}
+8. Motilal Oswal: PAN uppercase
+9. Kotak: client code or PAN
+10. Groww: PAN uppercase
+11. Name-based: first 4-6 letters of full name (no spaces) in various cases
+12. DOB only: DDMMYYYY → ${dd}${mm}${yyyy}
 
 RULES:
-1. Read the email for EXPLICIT password instructions first
-2. If no instructions found, use the broker-specific pattern above
-3. For name-based passwords: remove spaces/dots/special chars first, then take first N letters
-4. Return ONLY valid JSON, no markdown, no explanation outside JSON
+1. Search email body for EXPLICIT password hint text first — highest priority
+2. If sender is nsdl.co.in or cdslindia.com → password is almost always PAN uppercase
+3. For name passwords: strip spaces/dots/special chars, take first N letters
+4. Generate up to 3 candidate passwords ranked by confidence
+5. Return ONLY valid JSON
 
 Return this exact JSON:
-{"password":"generated_password","logic":"brief explanation","confidence":"high/medium/low"}`;
+{"password":"best_candidate","alternatives":["pwd2","pwd3"],"logic":"brief explanation","confidence":"high/medium/low"}`;
 
   try {
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -77,7 +95,11 @@ Return this exact JSON:
     const parsed = JSON.parse(clean);
     
     if (parsed.password) {
-      console.log(`Gemini resolved password (${parsed.confidence}): ${parsed.logic}`);
+      // Add alternatives to try list
+      if (parsed.alternatives) {
+        parsed._allPasswords = [parsed.password, ...parsed.alternatives].filter(Boolean);
+      }
+      console.log(JSON.stringify({ event: 'GEMINI_PASSWORD', password: parsed.password, alternatives: parsed.alternatives, confidence: parsed.confidence, logic: parsed.logic }));
       return parsed.password;
     }
     return null;
@@ -147,18 +169,33 @@ async function resolvePDFPasswordSmart(pdfBuffer, emailBody, emailFrom, emailSub
     console.log('PDF is password protected');
   }
 
-  // Step 2: Ask Gemini for password
-  const aiPassword = await resolvePasswordWithGemini(emailBody, emailFrom, emailSubject, userProfile);
+  // Step 2: Ask Gemini for password (returns main + alternatives)
+  const aiResult = await resolvePasswordWithGemini(emailBody, emailFrom, emailSubject, userProfile);
 
-  // Step 3: Try Gemini password — decrypt then parse
-  if (aiPassword) {
-    const passwords = [aiPassword, aiPassword.toUpperCase(), aiPassword.toLowerCase()];
-    for (const pwd of passwords) {
+  // Step 3: Try ALL Gemini passwords (main + alternatives)
+  if (aiResult) {
+    const mainPwd = typeof aiResult === 'string' ? aiResult : aiResult.password;
+    const alternatives = aiResult._allPasswords || [mainPwd];
+    
+    // Build full candidate list including case variants
+    const candidates = [];
+    for (const pwd of alternatives) {
+      if (pwd) {
+        candidates.push(pwd);
+        candidates.push(pwd.toUpperCase());
+        candidates.push(pwd.toLowerCase());
+      }
+    }
+    const uniqueCandidates = [...new Set(candidates)].filter(Boolean);
+    
+    console.log(JSON.stringify({ event: 'TRYING_PASSWORDS', count: uniqueCandidates.length, passwords: uniqueCandidates }));
+
+    for (const pwd of uniqueCandidates) {
       // Try pdf-parse directly with password
       try {
         const result = await pdfParse(pdfBuffer, { password: pwd });
         if (result.text && result.text.trim().length > 100) {
-          console.log(`PDF unlocked with Gemini password`);
+          console.log(JSON.stringify({ event: 'PDF_UNLOCKED', method: 'pdf-parse', password: pwd }));
           return result.text;
         }
       } catch (e) {}
@@ -169,13 +206,13 @@ async function resolvePDFPasswordSmart(pdfBuffer, emailBody, emailFrom, emailSub
         try {
           const result = await pdfParse(decrypted);
           if (result.text && result.text.trim().length > 100) {
-            console.log(`PDF unlocked via qpdf + Gemini password`);
+            console.log(JSON.stringify({ event: 'PDF_UNLOCKED', method: 'qpdf', password: pwd }));
             return result.text;
           }
         } catch (e) {}
       }
     }
-    console.log('Gemini password did not work, trying rule-based...');
+    console.log(JSON.stringify({ event: 'ALL_GEMINI_PASSWORDS_FAILED', tried: uniqueCandidates }));
   }
 
   // Step 4: Rule-based fallback
