@@ -212,9 +212,8 @@ async function extractEmailContent(gmail, messageId, payload, pdfPasswords = [],
     body = Buffer.from(payload.body.data, 'base64').toString('utf-8');
   }
 
-  console.log(JSON.stringify({ event: 'EMAIL_ASSEMBLED', pdfCount, pdfTextsCount: pdfTexts.length, pdfFailed, bodyLen: body?.length, totalLen: combinedText?.length || 0 }));
   const combinedText = [body, ...pdfTexts].join('\n\n--- PDF ATTACHMENT ---\n\n');
-  console.log(JSON.stringify({ event: 'EMAIL_ASSEMBLED', pdfCount, pdfTextsCount: pdfTexts.length, pdfFailed, bodyLen: body?.length, combinedLen: combinedText.length }));
+  console.log(JSON.stringify({ event: 'EMAIL_ASSEMBLED', pdfCount, pdfTextsCount: pdfTexts.length, pdfFailed, bodyLen: body?.length || 0, combinedLen: combinedText.length, hasMarker: combinedText.includes('--- PDF ATTACHMENT ---'), pdfPreview: pdfTexts[0]?.slice(0,150) || 'EMPTY' }));
   return { body: combinedText, hasPdf: pdfCount > 0, pdfFailed };
 }
 
@@ -233,13 +232,14 @@ async function fetchEmails(accessToken, refreshToken, query = '', userProfile = 
     console.log(JSON.stringify({ event: 'PDF_PASSWORDS', count: pdfPasswords.length, first3: pdfPasswords.slice(0,3) }));
   }
 
-  const searchQuery = query ||
-    'from:(zerodha.com OR groww.in OR angelbroking.com OR angelone.in OR upstox.com OR icicidirect.com OR hdfcsec.com OR kotaksecurities.com OR sbisec.co.in OR motilaloswal.com OR sharekhan.com OR 5paisa.com OR axisdirect.in OR indiainfoline.com OR iifl.com OR paytmmoney.com OR dhan.co OR fyers.in OR cdsl.com OR nsdl.co.in OR cdslindia.com OR cvlindia.com OR nsdl.org.in) OR subject:(dividend OR "contract note" OR "trade confirmation" OR "order executed" OR "trade executed" OR "contract note cum bill" OR "CAS statement" OR "consolidated account statement" OR "holding statement" OR "demat account")';
+  // Use the passed query directly — caller is responsible for building correct query
+  const searchQuery = query || 'from:(nsdl.co.in OR cdslindia.com OR cvlindia.com)';
+  console.log(JSON.stringify({ event: 'GMAIL_QUERY', query: searchQuery }));
 
   const listRes = await gmail.users.messages.list({
     userId: 'me',
     q: searchQuery,
-    maxResults: 200
+    maxResults: 50
   });
 
   const messages = listRes.data.messages || [];
