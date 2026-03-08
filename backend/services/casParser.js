@@ -14,10 +14,13 @@ function parseNSDLCAS(text) {
   const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
   for (let i = 0; i < lines.length; i++) {
-    // NSDL: ISIN on its own line
-    if (!/^INE[A-Z0-9]{9}$/.test(lines[i])) continue;
+    // NSDL: ISIN on its own line OR at start of line
+    const isinLineMatch = lines[i].match(/^(INE[A-Z0-9]{9})/);
+    if (!isinLineMatch) continue;
+    // Skip header lines
+    if (lines[i].includes('Stock Symbol') || lines[i].includes('ISIN') && lines[i].length < 20) continue;
 
-    const isin = lines[i];
+    const isin = isinLineMatch[1];
     const line1 = lines[i + 1] || ''; // symbol + company start + maybe numbers
     const line2 = lines[i + 2] || ''; // company end + numbers (if company wrapped)
 

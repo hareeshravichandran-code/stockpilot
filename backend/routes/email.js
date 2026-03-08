@@ -127,7 +127,7 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
 
       let parseResult;
       try {
-        parseResult = parseCAS(email.body);
+        parseResult = parseCAS(textToParse);
       } catch (parseErr) {
         await logger.logFailure({
           ...meta, hasPdf: email.hasPdf || false,
