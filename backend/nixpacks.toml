@@ -1,5 +1,5 @@
 [phases.setup]
-nixPkgs = ["qpdf", "nodejs_20"]
+nixPkgs = ["python3", "python312Packages.pdfminer-six", "nodejs_20"]
 
 [phases.install]
 cmds = ["npm install"]

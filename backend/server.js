@@ -8,6 +8,7 @@ const rateLimit = require('express-rate-limit');
 const authRoutes = require('./routes/auth');
 const portfolioRoutes = require('./routes/portfolio');
 const emailRoutes = require('./routes/email');
+const uploadRoutes = require('./routes/upload');
 const priceRoutes = require('./routes/prices');
 
 const app = express();
@@ -45,6 +46,7 @@ app.use('/api/', limiter);
 app.use('/api/auth', authRoutes);
 app.use('/api/portfolio', portfolioRoutes);
 app.use('/api/email', emailRoutes);
+app.use('/api/upload', uploadRoutes);
 app.use('/api/prices', priceRoutes);
 
 // ── Health check ──
