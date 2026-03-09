@@ -90,9 +90,14 @@ async function parsePdfWithPasswords(pdfBuffer, passwords = [], filename = '') {
         const content = await page.getTextContent();
         fullText += content.items.map(item => item.str).join(' ') + '\n';
       }
-      if (fullText.trim().length > 50) {
-        console.log(JSON.stringify({ event: 'PDF_UNLOCKED', filename, password: password ? '***' : 'none', chars: fullText.length, preview: fullText.slice(0,100).replace(/\n/g,' ') }));
+      const textLen = fullText.trim().length;
+      // Require >3000 chars for passwordless - nomination page alone is ~500 chars, full CAS is 10000+
+      const minLen = password ? 100 : 3000;
+      if (textLen > minLen) {
+        console.log(JSON.stringify({ event: 'PDF_UNLOCKED', filename, password: password ? '***' : 'none', chars: textLen, preview: fullText.slice(0,150).replace(/\n/g,' ') }));
         return { text: fullText, passwordUsed: password || null };
+      } else {
+        console.log(JSON.stringify({ event: 'PDF_TOO_SHORT', filename, password: password ? '***' : 'none', chars: textLen, minLen }));
       }
     } catch (e) {
       if (e.name === 'PasswordException') {
