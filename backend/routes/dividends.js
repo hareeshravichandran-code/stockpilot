@@ -23,7 +23,9 @@ router.get('/', requireAuth, async (req, res) => {
 
       if (holdings?.length) {
         // Fetch from Yahoo Finance
+        console.log(JSON.stringify({ event: 'DIVIDEND_FETCH_START', holdingCount: holdings.length, symbols: holdings.slice(0,5).map(h=>h.symbol) }));
         const fetched = await fetchAllDividends(holdings);
+        console.log(JSON.stringify({ event: 'DIVIDEND_FETCH_DONE', fetchedCount: fetched.length, sample: fetched.slice(0,2).map(d=>d.symbol+':'+d.ex_date+':'+d.total_dividend) }));
 
         // Upsert into DB — UNIQUE(user_id, symbol, ex_date) prevents duplicates
         for (const d of fetched) {
