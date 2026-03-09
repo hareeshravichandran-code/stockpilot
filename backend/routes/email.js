@@ -164,11 +164,17 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
       const { holdings, summary } = parseResult;
 
       if (!holdings || holdings.length === 0) {
+        // Save text from around where ISINs should be (skip nomination page 1)
+        const isinSearch = textToParse.match(/INE[A-Z0-9]{9}/);
+        const isinPos = isinSearch ? textToParse.indexOf(isinSearch[0]) : -1;
+        const rawSnippet = isinPos > 0
+          ? 'ISIN_AT:' + isinPos + ' CTX:' + textToParse.slice(Math.max(0, isinPos - 50), isinPos + 200)
+          : 'NO_ISIN_FOUND. TEXT_END:' + textToParse.slice(-500);
         await logger.logFailure({
           ...meta, hasPdf: email.hasPdf || false,
           errorType: 'NO_ISIN',
           errorMessage: `Parsed as ${casType} but no ISINs/holdings found`,
-          rawText: textToParse.slice(0, 1000)
+          rawText: rawSnippet
         });
         continue;
       }
