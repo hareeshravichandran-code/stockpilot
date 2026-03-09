@@ -59,7 +59,9 @@ router.get('/', requireAuth, async (req, res) => {
         yieldOnCost: totalCost > 0 ? parseFloat((totalDividend / totalCost * 100).toFixed(2)) : 0,
         yieldOnMarket: totalMarket > 0 ? parseFloat((totalDividend / totalMarket * 100).toFixed(2)) : 0,
         holdingsCount: enriched.length,
-        lastUpdated: new Date().toISOString()
+        lastUpdated: new Date().toISOString(),
+        casDate: enriched[0]?.cas_updated_at || null,
+        casSource: enriched[0]?.cas_source || null
       }
     });
   } catch (err) {
@@ -161,3 +163,35 @@ router.get('/tax', requireAuth, async (req, res) => {
 });
 
 module.exports = router;
+
+// ── Asset Balances (PPF/EPF/NPS/FD/SSY) ──────────────────────────
+router.get('/assets', requireAuth, async (req, res) => {
+  const { data } = await supabase.from('asset_balances')
+    .select('*').eq('user_id', req.user.id);
+  const balances = { ppf:0, epf:0, nps:0, fd:0, ssy:0 };
+  if (data) data.forEach(r => { balances[r.asset_type.toLowerCase()] = r.balance; });
+  res.json(balances);
+});
+
+router.post('/assets', requireAuth, async (req, res) => {
+  try {
+    const { ppf=0, epf=0, nps=0, fd=0, ssy=0, homeLoan=0, creditCard=0, monthlyIncome=0 } = req.body;
+    const assets = [
+      { asset_type: 'PPF', balance: ppf },
+      { asset_type: 'EPF', balance: epf },
+      { asset_type: 'NPS', balance: nps },
+      { asset_type: 'FD', balance: fd },
+      { asset_type: 'SSY', balance: ssy },
+      { asset_type: 'HOME_LOAN', balance: homeLoan },
+      { asset_type: 'CREDIT_CARD', balance: creditCard },
+      { asset_type: 'MONTHLY_INCOME', balance: monthlyIncome },
+    ];
+    for (const a of assets) {
+      await supabase.from('asset_balances').upsert(
+        { user_id: req.user.id, asset_type: a.asset_type, balance: a.balance, updated_at: new Date().toISOString() },
+        { onConflict: 'user_id,asset_type' }
+      );
+    }
+    res.json({ success: true });
+  } catch(err) { res.status(500).json({ error: err.message }); }
+});
