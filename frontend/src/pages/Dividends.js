@@ -77,7 +77,7 @@ export default function Dividends() {
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const res = await api.get('/dividends');
+      const res = await api.get('/api/dividends');
       setData(res.data);
     } catch(e) {
       setError(e.response?.data?.error || e.message);
