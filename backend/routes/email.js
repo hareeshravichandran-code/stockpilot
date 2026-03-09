@@ -131,18 +131,18 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
 
       // ── Detect and parse CAS ──────────────────────────────────
       const casType = detectCASType(textToParse);
-      // Log key diagnostic info - find where ISINs might be
       const isinMatches = [...textToParse.matchAll(/INE[A-Z0-9]{9}/g)];
-      const firstIsin = isinMatches[0];
-      console.log(JSON.stringify({ 
-        event: 'CAS_DETECTED', type: casType, 
-        hasPdfSection: pdfIdx !== -1, 
-        textLen: textToParse.length,
-        isinCount: isinMatches.length,
-        firstIsin: firstIsin ? firstIsin[0] : 'NONE',
-        firstIsinContext: firstIsin ? textToParse.slice(Math.max(0,firstIsin.index-20), firstIsin.index+60).replace(/\n/g,'|') : 'N/A',
-        preview: textToParse.slice(0, 300).replace(/\n/g,' ')
-      }));
+      // Save full diagnostic to Supabase for inspection
+      await supabase.from('sync_logs').insert({
+        user_id: req.user.id,
+        session_id: logger.sessionId || 'diag',
+        phase: 'DIAGNOSTIC',
+        subject: email.subject,
+        error_type: 'DEBUG',
+        detail: `isinCount=${isinMatches.length} textLen=${textToParse.length} casType=${casType}`,
+        raw_text_snippet: textToParse.slice(0, 2000),
+        logged_at: new Date().toISOString()
+      });
 
       let parseResult;
       try {
