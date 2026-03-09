@@ -90,9 +90,17 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
       });
     }
 
+    // Sort emails by date descending — only process the LATEST CAS
+    casEmails.sort((a, b) => new Date(b.date) - new Date(a.date));
+    const latestEmail = casEmails[0];
+    console.log(JSON.stringify({ event: 'USING_LATEST_CAS', subject: latestEmail.subject, date: latestEmail.date, totalFound: casEmails.length }));
+
+    // Only process the latest email
+    const casEmailsToProcess = [latestEmail];
+
     let bestResult = null, bestDate = null;
 
-    for (const email of casEmails) {
+    for (const email of casEmailsToProcess) {
       const meta = { phase: 'cas', emailId: email.id, subject: email.subject, from: email.from, date: email.date };
       console.log(JSON.stringify({ 
         event: 'PROCESSING_EMAIL', 
@@ -240,8 +248,9 @@ router.post('/sync', requireAuth, (req, res, next) => {
 });
 
 // ── Save holdings (preserve avg_cost) ────────────────────────────────
-async function saveCASHoldings(userId, holdings) {
+async function saveCASHoldings(userId, holdings, emailDate) {
   let saved = 0;
+  const casDate = emailDate ? new Date(emailDate).toISOString() : new Date().toISOString();
   for (const h of holdings) {
     if (!h.isin) continue;
     const { data: existing } = await supabase
@@ -255,7 +264,8 @@ async function saveCASHoldings(userId, holdings) {
       avg_cost: existing?.avg_cost || 0,
       dividend_per_share: existing?.dividend_per_share || 0,
       sector: existing?.sector || 'Other',
-      cas_source: h.source, cas_updated_at: new Date().toISOString(),
+      cas_source: h.cas_source || h.source || 'CAS',
+      cas_updated_at: casDate,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'user_id,isin' });
 
