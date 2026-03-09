@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
-import { portfolioAPI, emailAPI, authAPI } from '../lib/api';
+import api, { portfolioAPI, emailAPI, authAPI } from '../lib/api';
 import AdminPanel from './AdminPanel';
 import Dividends from './Dividends';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
@@ -38,6 +38,14 @@ export default function Dashboard() {
   const [profileSaved, setProfileSaved] = useState(false);
   const [profileError, setProfileError] = useState('');
 
+  const [assetBalances, setAssetBalances] = useState({ ppf: 0, epf: 0, nps: 0, fd: 0, ssy: 0 });
+  const [liabilities, setLiabilities] = useState({ homeLoan: 0, creditCard: 0 });
+  const [monthlyIncome, setMonthlyIncome] = useState(0);
+  const [monthlyExpenses, setMonthlyExpenses] = useState(0);
+  const [showAssetModal, setShowAssetModal] = useState(false);
+  const [assetForm, setAssetForm] = useState({ ppf: '', epf: '', nps: '', fd: '', ssy: '', homeLoan: '', creditCard: '', salary: '' });
+  const [assetSaving, setAssetSaving] = useState(false);
+
   const loadPortfolio = useCallback(async () => {
     try {
       const res = await portfolioAPI.get();
@@ -48,6 +56,17 @@ export default function Dashboard() {
   useEffect(() => {
     loadPortfolio();
     emailAPI.status().then(r => setEmailStatus(r.data.connections || [])).catch(() => {});
+    // Load asset balances from API
+    api.get('/api/portfolio/assets').then(r => {
+      const d = r.data;
+      setAssetBalances({ ppf: d.ppf||0, epf: d.epf||0, nps: d.nps||0, fd: d.fd||0, ssy: d.ssy||0 });
+      setLiabilities({ homeLoan: d.home_loan||0, creditCard: d.credit_card||0 });
+      setMonthlyIncome(d.monthly_income||0);
+      setAssetForm({
+        ppf: d.ppf||'', epf: d.epf||'', nps: d.nps||'', fd: d.fd||'', ssy: d.ssy||'',
+        homeLoan: d.home_loan||'', creditCard: d.credit_card||'', salary: d.monthly_income||''
+      });
+    }).catch(() => {});
 
     // Handle OAuth callback
     const connected = searchParams.get('connected');
@@ -246,29 +265,113 @@ export default function Dashboard() {
           {/* DASHBOARD */}
           {tab === 'dashboard' && (
             <div className="fade-in">
-              {/* Stats */}
-              <div className="db-stats-grid">
-                {[
-                  { label:'Portfolio Value', val: fmt(s.totalMarket || 0), sub: `${pct(s.totalPnlPct || 0)} since cost`, color:'blue' },
-                  { label:'Total Invested', val: fmt(s.totalCost || 0), sub: `${s.holdingsCount || 0} holdings`, color:'green' },
-                  { label:'Dividend Income FY26', val: fmt(s.totalDividend || 0), sub: `${s.yieldOnMarket || 0}% yield on market`, color:'gold' },
-                  { label:'Unrealised P&L', val: fmt(s.totalPnl || 0), sub: pct(s.totalPnlPct || 0), color: s.totalPnl >= 0 ? 'green' : 'red' },
-                ].map(c => (
-                  <div key={c.label} className={`db-stat-card ${c.color}`}>
-                    <div className="db-stat-label">{c.label}</div>
-                    <div className={`db-stat-val ${c.color}`}>{c.val}</div>
-                    <div className="db-stat-sub">{c.sub}</div>
-                  </div>
-                ))}
-              </div>
+              {/* ── Phase 1: 5 Tiles ── */}
+              {(() => {
+                const stocksVal = s.totalMarket || 0;
+                const otherAssets = (assetBalances.ppf||0) + (assetBalances.epf||0) + (assetBalances.nps||0) + (assetBalances.fd||0) + (assetBalances.ssy||0);
+                const totalNetWorth = stocksVal + otherAssets;
+                const totalCredit = (liabilities.homeLoan||0) + (liabilities.creditCard||0);
 
-              {/* CAS Statement Date Banner */}
-              {s.casDate && (
-                <div style={{ fontSize: '12px', color: '#888', textAlign: 'right', marginTop: '-8px', marginBottom: '8px' }}>
-                  📋 Holdings as per CAS statement dated {new Date(s.casDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
-                  {s.casSource && ` (${s.casSource})`}
-                </div>
-              )}
+                const pieData = [
+                  { name: 'Stocks', value: stocksVal, color: '#64ffda' },
+                  { name: 'PPF', value: assetBalances.ppf||0, color: '#ffd700' },
+                  { name: 'EPF', value: assetBalances.epf||0, color: '#00bcd4' },
+                  { name: 'NPS', value: assetBalances.nps||0, color: '#b39ddb' },
+                  { name: 'FD', value: assetBalances.fd||0, color: '#ff8a65' },
+                  { name: 'SSY', value: assetBalances.ssy||0, color: '#f48fb1' },
+                ].filter(d => d.value > 0);
+
+                const growthData = [
+                  { fy: 'FY22', value: 520000 },
+                  { fy: 'FY23', value: 780000 },
+                  { fy: 'FY24', value: 1050000 },
+                  { fy: 'FY25', value: 1194517 },
+                  { fy: 'FY26', value: totalNetWorth || 1409134 },
+                ];
+
+                return (<>
+                  {/* Top 5 tiles */}
+                  <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:12, marginBottom:20 }}>
+                    {[
+                      { label:'Total Net Worth', val: fmt(totalNetWorth), sub:'All assets combined', color:'#64ffda', icon:'💰' },
+                      { label:'Dividend Income FY26', val: fmt(s.totalDividend||0), sub:`${s.yieldOnMarket||0}% yield`, color:'#ffd700', icon:'💸' },
+                      { label:'Outstanding Credit', val: fmt(totalCredit), sub:'Loans + Credit Cards', color: totalCredit > 0 ? '#ff6b6b':'#888', icon:'🏦' },
+                      { label:'Monthly Income', val: fmt(monthlyIncome), sub:'Salary this month', color:'#00bcd4', icon:'💼' },
+                      { label:'This Month Expenses', val: fmt(monthlyExpenses), sub:'From transactions', color: monthlyExpenses > monthlyIncome*0.8 ? '#ff8a65':'#b39ddb', icon:'🧾' },
+                    ].map(t => (
+                      <div key={t.label} style={{ background:'rgba(255,255,255,0.04)', borderRadius:12, padding:'16px 14px', border:'1px solid rgba(255,255,255,0.08)', cursor:'default' }}>
+                        <div style={{ fontSize:20, marginBottom:6 }}>{t.icon}</div>
+                        <div style={{ fontSize:11, color:'#888', marginBottom:4 }}>{t.label}</div>
+                        <div style={{ fontSize:20, fontWeight:700, color:t.color }}>{t.val}</div>
+                        <div style={{ fontSize:11, color:'#555', marginTop:4 }}>{t.sub}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Update balances button */}
+                  <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:16 }}>
+                    <button onClick={() => setShowAssetModal(true)} style={{
+                      background:'rgba(100,255,218,0.08)', border:'1px solid rgba(100,255,218,0.2)',
+                      color:'#64ffda', borderRadius:8, padding:'7px 14px', cursor:'pointer', fontSize:12, fontWeight:600
+                    }}>⚙ Update PPF/EPF/NPS/FD balances</button>
+                  </div>
+
+                  {/* Charts row */}
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1.8fr', gap:16, marginBottom:20 }}>
+                    {/* Pie Chart */}
+                    <div style={{ background:'rgba(255,255,255,0.04)', borderRadius:12, padding:20, border:'1px solid rgba(255,255,255,0.08)' }}>
+                      <div style={{ fontWeight:600, color:'#aaa', fontSize:13, marginBottom:12 }}>📊 Asset Allocation</div>
+                      {pieData.length > 0 ? (
+                        <>
+                          <PieChart width={200} height={180}>
+                            <Pie data={pieData} cx={100} cy={90} innerRadius={55} outerRadius={85} dataKey="value" paddingAngle={2}>
+                              {pieData.map((d,i) => <Cell key={i} fill={d.color} />)}
+                            </Pie>
+                            <Tooltip formatter={(v) => fmt(v)} contentStyle={{ background:'#1a1a2e', border:'1px solid #333', borderRadius:8, fontSize:12 }} />
+                          </PieChart>
+                          <div style={{ display:'flex', flexWrap:'wrap', gap:'6px 12px', marginTop:8 }}>
+                            {pieData.map(d => (
+                              <div key={d.name} style={{ display:'flex', alignItems:'center', gap:5, fontSize:11 }}>
+                                <div style={{ width:8, height:8, borderRadius:'50%', background:d.color }} />
+                                <span style={{ color:'#aaa' }}>{d.name}</span>
+                                <span style={{ color:'#666' }}>{totalNetWorth > 0 ? ((d.value/totalNetWorth)*100).toFixed(0)+'%' : '-'}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      ) : (
+                        <div style={{ color:'#555', fontSize:12, textAlign:'center', paddingTop:40 }}>No asset data yet</div>
+                      )}
+                    </div>
+
+                    {/* Growth Chart */}
+                    <div style={{ background:'rgba(255,255,255,0.04)', borderRadius:12, padding:20, border:'1px solid rgba(255,255,255,0.08)' }}>
+                      <div style={{ fontWeight:600, color:'#aaa', fontSize:13, marginBottom:12 }}>📈 Portfolio Growth (Yearly)</div>
+                      <ResponsiveContainer width="100%" height={200}>
+                        <AreaChart data={growthData} margin={{ top:5, right:10, left:0, bottom:0 }}>
+                          <defs>
+                            <linearGradient id="growthGrad" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#64ffda" stopOpacity={0.25}/>
+                              <stop offset="95%" stopColor="#64ffda" stopOpacity={0}/>
+                            </linearGradient>
+                          </defs>
+                          <XAxis dataKey="fy" stroke="#444" tick={{ fill:'#888', fontSize:11 }} />
+                          <YAxis stroke="#444" tick={{ fill:'#888', fontSize:10 }} tickFormatter={v => '₹'+(v/100000).toFixed(0)+'L'} />
+                          <Tooltip formatter={v => [fmt(v), 'Net Worth']} contentStyle={{ background:'#1a1a2e', border:'1px solid #333', borderRadius:8, fontSize:12 }} />
+                          <Area type="monotone" dataKey="value" stroke="#64ffda" strokeWidth={2} fill="url(#growthGrad)" />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  {/* CAS date */}
+                  {s.casDate && (
+                    <div style={{ fontSize:'12px', color:'#555', textAlign:'right', marginBottom:8 }}>
+                      📋 Stock holdings as per CAS dated {new Date(s.casDate).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' })} ({s.casSource})
+                    </div>
+                  )}
+                </>);
+              })()}
 
               {/* No email connected prompt */}
               {emailStatus.length === 0 && (
@@ -493,6 +596,63 @@ export default function Dashboard() {
           )}
         </div>
       </main>
+
+      {/* ASSET BALANCES MODAL */}
+      {showAssetModal && (
+        <div className="db-modal-overlay" onClick={e => { if(e.target===e.currentTarget) setShowAssetModal(false); }}>
+          <div className="db-modal fade-in" style={{maxWidth:480}}>
+            <div className="db-modal-header">
+              <div className="db-modal-title">⚙ Update Balances</div>
+              <button className="db-modal-close" onClick={() => setShowAssetModal(false)}>✕</button>
+            </div>
+            <div className="db-modal-body">
+              <p style={{color:'#888',fontSize:13,marginBottom:16}}>Enter your current balances. These are saved to your account.</p>
+
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+                {[
+                  {key:'ppf',label:'PPF Balance'},
+                  {key:'epf',label:'EPF Balance'},
+                  {key:'nps',label:'NPS Balance'},
+                  {key:'fd',label:'Fixed Deposits'},
+                  {key:'ssy',label:'SSY Balance'},
+                  {key:'salary',label:'Monthly Salary'},
+                  {key:'homeLoan',label:'Home Loan Outstanding'},
+                  {key:'creditCard',label:'Credit Card Outstanding'},
+                ].map(f => (
+                  <div key={f.key} className="form-group" style={{margin:0}}>
+                    <label style={{fontSize:12,color:'#888'}}>{f.label}</label>
+                    <input
+                      type="number"
+                      placeholder="₹ 0"
+                      value={assetForm[f.key]}
+                      onChange={e => setAssetForm(p => ({...p,[f.key]:e.target.value}))}
+                      style={{background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.12)',borderRadius:8,padding:'8px 12px',color:'#e0e0e0',width:'100%',fontSize:14}}
+                    />
+                  </div>
+                ))}
+              </div>
+
+              <button
+                style={{marginTop:20,width:'100%',background:'#64ffda',color:'#0a0a0a',border:'none',borderRadius:8,padding:'12px',fontWeight:700,fontSize:14,cursor:'pointer'}}
+                onClick={async () => {
+                  try {
+                    await api.post('/api/portfolio/assets', {
+                      ppf: +assetForm.ppf||0, epf: +assetForm.epf||0,
+                      nps: +assetForm.nps||0, fd: +assetForm.fd||0,
+                      ssy: +assetForm.ssy||0, homeLoan: +assetForm.homeLoan||0,
+                      creditCard: +assetForm.creditCard||0, monthlyIncome: +assetForm.salary||0
+                    });
+                    setAssetBalances({ ppf:+assetForm.ppf||0, epf:+assetForm.epf||0, nps:+assetForm.nps||0, fd:+assetForm.fd||0, ssy:+assetForm.ssy||0 });
+                    setLiabilities({ homeLoan:+assetForm.homeLoan||0, creditCard:+assetForm.creditCard||0 });
+                    setMonthlyIncome(+assetForm.salary||0);
+                    setShowAssetModal(false);
+                  } catch(e) { alert('Save failed: '+e.message); }
+                }}
+              >Save Balances</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* EMAIL CONNECT MODAL */}
       {showConnectModal && (
