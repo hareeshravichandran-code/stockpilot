@@ -1,111 +1,66 @@
 /**
- * Fetches dividend data from NSE and calculates per-user dividend income
+ * Fetches dividend history from Yahoo Finance for NSE stocks
+ * Uses direct HTTP like prices.js — no extra npm package needed
  */
-const { nseGet } = require('./nseClient');
+const axios = require('axios');
 
-// Parse dividend amount from NSE purpose string
-// e.g. "Interim Dividend - Rs 7.50 Per Share" → 7.50
-// "Final Dividend - Re 1/- Per Share" → 1.00
-// "Special Dividend Rs.5 Per Share" → 5.00
-function parseDividendAmount(purpose) {
-  if (!purpose) return null;
-  // Match Rs/Re followed by number
-  const match = purpose.match(/(?:Rs\.?|Re\.?|INR)\s*([\d,]+(?:\.\d+)?)/i);
-  if (match) return parseFloat(match[1].replace(/,/g, ''));
-  // Match number/- pattern like "Re 1/-"
-  const match2 = purpose.match(/([\d,]+(?:\.\d+)?)\s*\/-/);
-  if (match2) return parseFloat(match2[1].replace(/,/g, ''));
-  return null;
+function toYahooSymbol(symbol) {
+  return symbol.toUpperCase()
+    .replace('.NSE','').replace('.BSE','')
+    .trim() + '.NS';
 }
 
-// Determine dividend type from purpose string
-function getDividendType(purpose) {
-  const p = purpose.toLowerCase();
-  if (p.includes('interim')) return 'Interim';
-  if (p.includes('final')) return 'Final';
-  if (p.includes('special')) return 'Special';
-  if (p.includes('annual')) return 'Annual';
-  return 'Dividend';
+function getFY(dateStr) {
+  const d = new Date(dateStr);
+  const month = d.getMonth() + 1;
+  const year = d.getFullYear();
+  return month >= 4 ? `FY${year + 1}` : `FY${year}`;
 }
 
-// Fetch all dividends from NSE for a given date range
-async function fetchNSEDividends(fromDate, toDate) {
+async function fetchStockDividends(symbol, isin, company) {
+  const yahooSym = toYahooSymbol(symbol);
   try {
-    const url = `https://www.nseindia.com/api/corporate-actions?index=equities&from_date=${fromDate}&to_date=${toDate}`;
-    const data = await nseGet(url);
-    if (!data?.data) return [];
+    const from = Math.floor(new Date('2020-04-01').getTime() / 1000);
+    const to = Math.floor(Date.now() / 1000);
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooSym}?period1=${from}&period2=${to}&interval=1d&events=div`;
+    
+    const resp = await axios.get(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      timeout: 10000
+    });
 
-    const dividends = [];
-    for (const item of data.data) {
-      const purpose = item.purpose || '';
-      if (!purpose.toLowerCase().includes('dividend')) continue;
+    const events = resp.data?.chart?.result?.[0]?.events?.dividends;
+    if (!events) return [];
 
-      const amount = parseDividendAmount(purpose);
-      dividends.push({
-        symbol: item.symbol,
-        company: item.companyName || item.symbol,
-        isin: item.isin || null,
-        ex_date: item.exDate || null,
-        record_date: item.recordDate || null,
-        board_meeting_date: item.boardMeetingDate || null,
-        purpose: purpose,
-        dividend_type: getDividendType(purpose),
-        dividend_per_share: amount,
-      });
-    }
-    return dividends;
-  } catch (err) {
-    console.error('NSE dividend fetch error:', err.message);
+    return Object.values(events).map(d => ({
+      symbol: symbol.replace('.NSE','').replace('.BSE',''),
+      isin,
+      company,
+      ex_date: new Date(d.date * 1000).toISOString().slice(0, 10),
+      dividend_per_share: parseFloat(d.amount.toFixed(2)),
+      dividend_type: 'Dividend',
+      fy: getFY(new Date(d.date * 1000)),
+      source: 'Yahoo Finance',
+    }));
+  } catch (e) {
     return [];
   }
 }
 
-// Fetch dividends for all financial years from FY2020 onwards
-async function fetchAllDividends() {
-  const ranges = [
-    { from: '01-04-2020', to: '31-03-2021', fy: 'FY2021' },
-    { from: '01-04-2021', to: '31-03-2022', fy: 'FY2022' },
-    { from: '01-04-2022', to: '31-03-2023', fy: 'FY2023' },
-    { from: '01-04-2023', to: '31-03-2024', fy: 'FY2024' },
-    { from: '01-04-2024', to: '31-03-2025', fy: 'FY2025' },
-    { from: '01-04-2025', to: '31-03-2026', fy: 'FY2026' },
-  ];
-
-  const all = [];
-  for (const r of ranges) {
-    const divs = await fetchNSEDividends(r.from, r.to);
-    divs.forEach(d => { d.fy = r.fy; });
-    all.push(...divs);
-    await new Promise(res => setTimeout(res, 500)); // rate limit
-  }
-  return all;
-}
-
-// Calculate user's dividend income by matching holdings
-function calculateUserDividends(allDividends, holdings) {
-  const holdingMap = {};
+async function fetchAllDividends(holdings) {
+  const results = [];
   for (const h of holdings) {
-    holdingMap[h.symbol?.toUpperCase()] = h;
-    if (h.isin) holdingMap[h.isin] = h;
-  }
-
-  const income = [];
-  for (const div of allDividends) {
-    if (!div.dividend_per_share) continue;
-    const holding = holdingMap[div.symbol?.toUpperCase()] || holdingMap[div.isin];
-    if (!holding) continue;
-
-    income.push({
-      ...div,
-      quantity: holding.quantity,
-      total_dividend: parseFloat((holding.quantity * div.dividend_per_share).toFixed(2)),
-      company: holding.company || div.company,
+    if (!h.symbol || h.symbol === h.isin) continue;
+    const divs = await fetchStockDividends(h.symbol, h.isin, h.company);
+    divs.forEach(d => {
+      d.quantity = h.quantity;
+      d.total_dividend = parseFloat((h.quantity * d.dividend_per_share).toFixed(2));
     });
+    results.push(...divs);
+    await new Promise(r => setTimeout(r, 80));
   }
-
-  // Sort by ex_date descending
-  income.sort((a, b) => new Date(b.ex_date) - new Date(a.ex_date));
-  return income;
+  results.sort((a, b) => new Date(b.ex_date) - new Date(a.ex_date));
+  return results;
 }
 
-module.exports = { fetchNSEDividends, fetchAllDividends, calculateUserDividends, parseDividendAmount };
+module.exports = { fetchAllDividends };
