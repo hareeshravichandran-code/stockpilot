@@ -34,7 +34,7 @@ export const portfolioAPI = {
   get:          () => api.get('/api/portfolio'),
   addHolding:   (data) => api.post('/api/portfolio/holding', data),
   transactions: () => api.get('/api/portfolio/transactions'),
-  dividends:    () => api.get('/api/portfolio/dividends'),
+  dividends:    () => api.get('/api/dividends'),
   tax:          () => api.get('/api/portfolio/tax'),
 };
 
