@@ -74,10 +74,11 @@ export default function Dividends() {
   const [selectedFY, setSelectedFY] = useState(CURRENT_FY);
   const [sortBy, setSortBy] = useState('ex_date');
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (forceRefresh = false) => {
     setLoading(true); setError(null);
     try {
-      const res = await api.get('/api/dividends');
+      const url = forceRefresh ? '/api/dividends?refresh=1' : '/api/dividends';
+      const res = await api.get(url);
       setData(res.data);
     } catch(e) {
       setError(e.response?.data?.error || e.message);
@@ -110,9 +111,24 @@ export default function Dividends() {
   const today = new Date();
   const upcoming = income.filter(d => d.ex_date && new Date(d.ex_date) >= today).slice(0, 5);
 
+  const { fromCache, lastSynced } = data || {};
+
   return (
     <div style={{ padding: '24px', maxWidth: 1100, margin: '0 auto', color: '#e0e0e0', fontFamily: 'Inter, sans-serif' }}>
-      <h2 style={{ color: '#64ffda', marginBottom: 24, fontSize: 22 }}>💰 Dividend Income</h2>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:24 }}>
+        <h2 style={{ color: '#64ffda', margin:0, fontSize: 22 }}>💰 Dividend Income</h2>
+        <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+          {lastSynced && (
+            <span style={{ fontSize:12, color:'#666' }}>
+              {fromCache ? '📦 Cached' : '🔄 Refreshed'} · {new Date(lastSynced).toLocaleDateString('en-IN', {day:'2-digit',month:'short',year:'numeric'})}
+            </span>
+          )}
+          <button onClick={() => load(true)} disabled={loading} style={{
+            background:'rgba(100,255,218,0.08)', border:'1px solid rgba(100,255,218,0.2)',
+            color:'#64ffda', borderRadius:8, padding:'7px 14px', cursor:'pointer', fontSize:12, fontWeight:600
+          }}>{loading ? '⏳ Fetching...' : '🔄 Refresh from Yahoo'}</button>
+        </div>
+      </div>
 
       {/* Top stat tiles */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 32 }}>
