@@ -132,17 +132,22 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
       // ── Detect and parse CAS ──────────────────────────────────
       const casType = detectCASType(textToParse);
       const isinMatches = [...textToParse.matchAll(/INE[A-Z0-9]{9}/g)];
-      // Save full diagnostic to Supabase for inspection
-      await supabase.from('sync_logs').insert({
-        user_id: req.user.id,
-        session_id: logger.sessionId || 'diag',
-        phase: 'DIAGNOSTIC',
-        subject: email.subject,
-        error_type: 'DEBUG',
-        detail: `isinCount=${isinMatches.length} textLen=${textToParse.length} casType=${casType}`,
-        raw_text_snippet: textToParse.slice(0, 2000),
-        logged_at: new Date().toISOString()
-      });
+      // Find where first ISIN appears and save surrounding context
+      const diagSnippet = isinMatches.length > 0
+        ? 'FOUND_ISINS:' + isinMatches.length + ' SAMPLE:' + textToParse.slice(Math.max(0, isinMatches[0].index - 30), isinMatches[0].index + 100)
+        : 'NO_ISINS_IN_TEXT len=' + textToParse.length + ' end=' + textToParse.slice(-200);
+      try {
+        await supabase.from('sync_logs').insert({
+          user_id: req.user.id,
+          session_id: 'diag-' + Date.now(),
+          phase: 'DIAGNOSTIC',
+          email_subject: email.subject,
+          error_type: 'DEBUG',
+          error_message: diagSnippet,
+          raw_text_snippet: textToParse.slice(0, 2000),
+          logged_at: new Date().toISOString()
+        });
+      } catch(diagErr) { /* ignore */ }
 
       let parseResult;
       try {
