@@ -1,2 +1,3 @@
 # stockpilot
 stockpilot
+.
