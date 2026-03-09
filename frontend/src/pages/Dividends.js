@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { api } from '../lib/api';
+import api from '../lib/api';
 
 const CURRENT_FY = 'FY2026';
 const FY_ORDER = ['FY2026','FY2025','FY2024','FY2023','FY2022','FY2021'];
