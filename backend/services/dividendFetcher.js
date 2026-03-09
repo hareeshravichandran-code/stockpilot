@@ -43,6 +43,7 @@ async function fetchStockDividends(symbol, isin, company) {
       source: 'Yahoo Finance',
     }));
   } catch (e) {
+    console.log(JSON.stringify({ event: 'YAHOO_DIV_ERROR', symbol: yahooSym, error: e.message }));
     return [];
   }
 }
