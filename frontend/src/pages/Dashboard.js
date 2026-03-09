@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { portfolioAPI, emailAPI, authAPI } from '../lib/api';
 import AdminPanel from './AdminPanel';
+import Dividends from './Dividends';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import './Dashboard.css';
 
@@ -61,7 +62,7 @@ export default function Dashboard() {
       const r = await portfolioAPI.transactions().catch(() => ({ data: [] }));
       setTransactions(r.data);
     }
-    if (t === 'dividends' && dividends.dividends.length === 0) {
+    if (t === 'dividends') { return; // Dividends component loads its own data
       const r = await portfolioAPI.dividends().catch(() => ({ data: { dividends: [], totalIncome: 0 } }));
       setDividends(r.data);
     }
@@ -411,46 +412,7 @@ export default function Dashboard() {
           {/* DIVIDENDS */}
           {tab === 'dividends' && (
             <div className="fade-in">
-              <div className="db-stats-grid" style={{gridTemplateColumns:'repeat(3,1fr)'}}>
-                <div className="db-stat-card gold">
-                  <div className="db-stat-label">Total Dividend FY26</div>
-                  <div className="db-stat-val gold">{fmtFull(dividends.totalIncome)}</div>
-                </div>
-                <div className="db-stat-card green">
-                  <div className="db-stat-label">Yield on Cost</div>
-                  <div className="db-stat-val green">{s.yieldOnCost || 0}%</div>
-                </div>
-                <div className="db-stat-card blue">
-                  <div className="db-stat-label">Yield on Market</div>
-                  <div className="db-stat-val blue">{s.yieldOnMarket || 0}%</div>
-                </div>
-              </div>
-              <div className="db-card" style={{marginTop:20}}>
-                <div className="db-card-header">
-                  <div className="db-card-title">Dividend History</div>
-                  <div className="db-card-sub">Parsed from email alerts</div>
-                </div>
-                <table className="db-table">
-                  <thead>
-                    <tr><th>Company</th><th className="right">Amount/Share</th><th className="right">Qty</th><th className="right">Total</th><th>Date</th><th>Source</th></tr>
-                  </thead>
-                  <tbody>
-                    {dividends.dividends.map((d, i) => (
-                      <tr key={i}>
-                        <td><div className="db-stock-name">{d.company}</div></td>
-                        <td className="right mono">₹{d.dividend_per_share || '—'}</td>
-                        <td className="right">{d.quantity || '—'}</td>
-                        <td className="right mono pos">+{fmtFull(d.total_amount)}</td>
-                        <td style={{color:'var(--text3)', fontSize:12}}>{d.credit_date ? new Date(d.credit_date).toLocaleDateString('en-IN') : '—'}</td>
-                        <td style={{color:'var(--text3)', fontSize:12}}>{d.source}</td>
-                      </tr>
-                    ))}
-                    {dividends.dividends.length === 0 && (
-                      <tr><td colSpan="6" className="db-empty">No dividends synced yet. Connect your email and sync.</td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+              <Dividends />
             </div>
           )}
 
