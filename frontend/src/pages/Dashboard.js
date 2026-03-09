@@ -261,6 +261,14 @@ export default function Dashboard() {
                 ))}
               </div>
 
+              {/* CAS Statement Date Banner */}
+              {s.casDate && (
+                <div style={{ fontSize: '12px', color: '#888', textAlign: 'right', marginTop: '-8px', marginBottom: '8px' }}>
+                  📋 Holdings as per CAS statement dated {new Date(s.casDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                  {s.casSource && ` (${s.casSource})`}
+                </div>
+              )}
+
               {/* No email connected prompt */}
               {emailStatus.length === 0 && (
                 <div className="db-connect-prompt">
