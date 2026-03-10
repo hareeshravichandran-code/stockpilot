@@ -20,12 +20,28 @@ export default function Login() {
     const token = searchParams.get('token');
     const err   = searchParams.get('error');
     const reason = searchParams.get('reason');
+
     if (token) {
-      // Hard redirect so useAuth re-initializes cleanly from localStorage
+      // Set token first so API calls are authenticated
       localStorage.setItem('sp_token', token);
-      window.location.href = '/dashboard';
+      // Fetch user data NOW so sp_user is in localStorage before /dashboard loads
+      // This prevents PrivateRoute from seeing user=null on fresh page load
+      fetch(`${API}/api/auth/me`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+        .then(r => r.json())
+        .then(userData => {
+          if (userData?.id) {
+            localStorage.setItem('sp_user', JSON.stringify(userData));
+          }
+        })
+        .catch(() => {}) // if me() fails, sp_token alone will retry in useAuth
+        .finally(() => {
+          window.location.href = '/dashboard';
+        });
       return;
     }
+
     if (err) setError(
       err === 'google_denied' ? 'Google sign-in was cancelled.' :
       err === 'create_failed' ? 'Could not create account. Please try email signup.' :
