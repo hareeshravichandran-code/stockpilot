@@ -19,13 +19,8 @@ export default function Signup() {
     const err   = searchParams.get('error');
     if (token) {
       localStorage.setItem('sp_token', token);
-      fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:4000'}/api/auth/me`, {
-        headers: { Authorization: `Bearer ${token}` }
-      })
-        .then(r => r.json())
-        .then(userData => { if (userData?.id) localStorage.setItem('sp_user', JSON.stringify(userData)); })
-        .catch(() => {})
-        .finally(() => { window.location.href = '/dashboard'; });
+      localStorage.removeItem('sp_user');
+      window.location.replace('/dashboard');
       return;
     }
     if (err) setError(err === 'google_denied' ? 'Google sign-up was cancelled.' : 'Google sign-up failed. Please try again.');

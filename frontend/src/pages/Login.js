@@ -22,23 +22,11 @@ export default function Login() {
     const reason = searchParams.get('reason');
 
     if (token) {
-      // Set token first so API calls are authenticated
+      // Save token — useAuth will decode it immediately on /dashboard load
+      // No need for API call here; decodeToken() in useAuth handles it
       localStorage.setItem('sp_token', token);
-      // Fetch user data NOW so sp_user is in localStorage before /dashboard loads
-      // This prevents PrivateRoute from seeing user=null on fresh page load
-      fetch(`${API}/api/auth/me`, {
-        headers: { Authorization: `Bearer ${token}` }
-      })
-        .then(r => r.json())
-        .then(userData => {
-          if (userData?.id) {
-            localStorage.setItem('sp_user', JSON.stringify(userData));
-          }
-        })
-        .catch(() => {}) // if me() fails, sp_token alone will retry in useAuth
-        .finally(() => {
-          window.location.href = '/dashboard';
-        });
+      localStorage.removeItem('sp_user'); // force fresh decode from JWT
+      window.location.replace('/dashboard');
       return;
     }
 
@@ -47,7 +35,7 @@ export default function Login() {
       err === 'create_failed' ? 'Could not create account. Please try email signup.' :
       `Google sign-in failed${reason ? ': ' + reason : '. Please try again.'}`
     );
-  }, [searchParams, loginWithToken, nav]);
+  }, [searchParams]);
 
   const handle = e => setForm(p => ({ ...p, [e.target.name]: e.target.value }));
 
