@@ -1,64 +1,78 @@
 const router = require('express').Router();
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const nodemailer = require('nodemailer');
+const { google } = require('googleapis');
 const supabase = require('../services/supabase');
 const requireAuth = require('../middleware/requireAuth');
 
-// ── Sign Up ──
-router.post('/signup', async (req, res) => {
-  const { name, email, password } = req.body;
-  if (!name || !email || !password)
-    return res.status(400).json({ error: 'Name, email and password are required' });
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+const BACKEND_URL  = process.env.BACKEND_URL  || 'https://stockpilot.up.railway.app';
+const JWT_SECRET   = process.env.JWT_SECRET;
 
-  const { data: existing } = await supabase
-    .from('users').select('id').eq('email', email).single();
-  if (existing) return res.status(409).json({ error: 'Email already registered' });
-
-  const hashed = await bcrypt.hash(password, 12);
-  const { data, error } = await supabase
-    .from('users')
-    .insert({ name, email, password_hash: hashed })
-    .select('id, name, email, created_at')
-    .single();
-
-  if (error) return res.status(500).json({ error: error.message });
-
-  const token = jwt.sign({ id: data.id, email: data.email }, process.env.JWT_SECRET, { expiresIn: '30d' });
-  res.status(201).json({ token, user: data });
-});
-
-// ── Login ──
-router.post('/login', async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password)
-    return res.status(400).json({ error: 'Email and password are required' });
-
-  const { data: user } = await supabase
-    .from('users').select('*').eq('email', email).single();
-  if (!user) return res.status(401).json({ error: 'Invalid credentials' });
-
-  const valid = await bcrypt.compare(password, user.password_hash);
-  if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
-
-  const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET, { expiresIn: '30d' });
-  res.json({ token, user: { id: user.id, name: user.name, email: user.email, pan: user.pan ? '****' + user.pan.slice(-4) : null, dob: user.dob ? true : false, broker: user.broker } });
-});
-
-// ── Get current user ──
-router.get('/me', requireAuth, async (req, res) => {
-  const { data, error } = await supabase
-    .from('users').select('id, name, email, pan, dob, broker, created_at').eq('id', req.user.id).single();
-  if (error) return res.status(404).json({ error: 'User not found' });
-  // Mask PAN for security
-  res.json({
-    ...data,
-    pan: data.pan ? '****' + data.pan.slice(-4) : null,
-    panSet: !!data.pan,
-    dobSet: !!data.dob
+function getMailer() {
+  return nodemailer.createTransport({
+    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    port: 587, secure: false,
+    auth: { user: process.env.SMTP_EMAIL, pass: process.env.SMTP_PASSWORD }
   });
+}
+
+async function sendEmail(to, subject, html) {
+  if (!process.env.SMTP_EMAIL) { console.warn('SMTP not configured'); return; }
+  const mailer = getMailer();
+  await mailer.sendMail({ from: `"StockPilot" <${process.env.SMTP_EMAIL}>`, to, subject, html });
+}
+
+function getGoogleClient() {
+  return new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    `${BACKEND_URL}/api/auth/google/callback`
+  );
+}
+
+function makeToken(user) {
+  return jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '30d' });
+}
+
+router.post('/signup', async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+    if (!name || !email || !password) return res.status(400).json({ error: 'Name, email and password are required' });
+    const { data: existing } = await supabase.from('users').select('id').eq('email', email).single();
+    if (existing) return res.status(409).json({ error: 'Email already registered' });
+    const hashed = await bcrypt.hash(password, 12);
+    const { data, error } = await supabase.from('users')
+      .insert({ name, email, password_hash: hashed })
+      .select('id, name, email, created_at').single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.status(201).json({ token: makeToken(data), user: data });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── Update Profile (PAN, DOB, Name, Mobile, Client Code) ──
+router.post('/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
+    const { data: user } = await supabase.from('users').select('*').eq('email', email).single();
+    if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+    const valid = await bcrypt.compare(password, user.password_hash);
+    if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+    res.json({ token: makeToken(user), user: { id: user.id, name: user.name, email: user.email } });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.get('/me', requireAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('users').select('id, name, email, pan, dob, broker, created_at').eq('id', req.user.id).single();
+    if (error) return res.status(404).json({ error: 'User not found' });
+    res.json({ ...data, pan: data.pan ? '****' + data.pan.slice(-4) : null, panSet: !!data.pan, dobSet: !!data.dob });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 router.put('/profile', requireAuth, async (req, res) => {
   try {
     const { pan, dob, mobile, clientCode, name, broker } = req.body;
@@ -69,74 +83,139 @@ router.put('/profile', requireAuth, async (req, res) => {
     if (clientCode) updates.client_code = clientCode.trim();
     if (name)       updates.name        = name.trim();
     if (broker)     updates.broker      = broker;
-
-    if (Object.keys(updates).length === 0)
-      return res.status(400).json({ error: 'Nothing to update' });
-
-    const { error } = await supabase
-      .from('users').update(updates).eq('id', req.user.id);
-
+    if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'Nothing to update' });
+    const { error } = await supabase.from('users').update(updates).eq('id', req.user.id);
     if (error) throw error;
     res.json({ success: true, message: 'Profile updated' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Google OAuth — initiate ────────────────────────────────────────
+router.get('/google', (req, res) => {
+  try {
+    if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
+      return res.status(500).json({ error: 'Google OAuth not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in Railway env vars.' });
+    }
+    const client = getGoogleClient();
+    const url = client.generateAuthUrl({
+      access_type: 'offline',
+      scope: ['openid', 'email', 'profile'],
+      prompt: 'select_account'
+    });
+    res.redirect(url);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('Google initiate error:', err.message);
+    res.redirect(`${FRONTEND_URL}/login?error=google_failed`);
   }
 });
 
-// ── Get PDF passwords for this user (used by email sync) ──
-router.get('/pdf-passwords', requireAuth, async (req, res) => {
-  const { data, error } = await supabase
-    .from('users').select('pan, dob, broker, email').eq('id', req.user.id).single();
-  if (error) return res.status(404).json({ error: 'User not found' });
-
-  const passwords = generatePdfPasswords(data.pan, data.dob, data.email, data.broker);
-  res.json({ passwords });
+// ── Google OAuth — callback ────────────────────────────────────────
+router.get('/google/callback', async (req, res) => {
+  const { code, error } = req.query;
+  if (error) return res.redirect(`${FRONTEND_URL}/login?error=google_denied`);
+  try {
+    const client = getGoogleClient();
+    const { tokens } = await client.getToken(code);
+    client.setCredentials(tokens);
+    const oauth2 = google.oauth2({ version: 'v2', auth: client });
+    const { data: gUser } = await oauth2.userinfo.get();
+    let { data: user } = await supabase.from('users').select('*').eq('email', gUser.email).single();
+    if (!user) {
+      const { data: newUser, error: createErr } = await supabase.from('users')
+        .insert({ name: gUser.name, email: gUser.email, google_id: gUser.id, password_hash: '' })
+        .select('id, name, email').single();
+      if (createErr) {
+        console.error('Create user error:', createErr.message);
+        return res.redirect(`${FRONTEND_URL}/login?error=create_failed`);
+      }
+      user = newUser;
+    } else if (!user.google_id) {
+      await supabase.from('users').update({ google_id: gUser.id }).eq('id', user.id);
+    }
+    const token = makeToken(user);
+    res.redirect(`${FRONTEND_URL}/login?token=${token}&name=${encodeURIComponent(user.name)}`);
+  } catch (err) {
+    console.error('Google callback error:', err.message);
+    res.redirect(`${FRONTEND_URL}/login?error=google_failed`);
+  }
 });
 
-// Generate all possible PDF passwords for Indian brokers
+// ── Forgot Password ────────────────────────────────────────────────
+router.post('/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email is required' });
+    const { data: user } = await supabase.from('users')
+      .select('id, name').eq('email', email.toLowerCase().trim()).single();
+    if (!user) return res.json({ success: true, message: 'If that email exists, a reset code has been sent.' });
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+    await supabase.from('password_reset_tokens').delete().eq('user_id', user.id);
+    const { error } = await supabase.from('password_reset_tokens').insert({
+      user_id: user.id, email, otp_hash: await bcrypt.hash(otp, 8), expires_at: expiresAt
+    });
+    if (error) return res.status(500).json({ error: 'Could not generate reset code' });
+    try {
+      await sendEmail(email, 'StockPilot — Password Reset Code', `
+        <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;padding:32px;background:#0d1117;border-radius:12px">
+          <h2 style="color:#64ffda">StockPilot</h2>
+          <p style="color:#ccc">Hi ${user.name}, your reset code:</p>
+          <div style="background:#1a1a2e;border-radius:12px;padding:24px;text-align:center;margin:24px 0">
+            <span style="font-size:42px;font-weight:700;letter-spacing:12px;color:#64ffda">${otp}</span>
+          </div>
+          <p style="color:#888;font-size:13px">Expires in 15 minutes.</p>
+        </div>
+      `);
+    } catch (mailErr) { console.error('Email send failed:', mailErr.message); }
+    res.json({ success: true, message: 'If that email exists, a reset code has been sent.' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Reset Password ─────────────────────────────────────────────────
+router.post('/reset-password', async (req, res) => {
+  try {
+    const { email, otp, newPassword } = req.body;
+    if (!email || !otp || !newPassword)
+      return res.status(400).json({ error: 'Email, code and new password are required' });
+    if (newPassword.length < 8)
+      return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    const { data: token } = await supabase.from('password_reset_tokens')
+      .select('*').eq('email', email).order('created_at', { ascending: false }).limit(1).single();
+    if (!token) return res.status(400).json({ error: 'Invalid or expired reset code' });
+    if (new Date(token.expires_at) < new Date())
+      return res.status(400).json({ error: 'Reset code expired. Request a new one.' });
+    const valid = await bcrypt.compare(otp, token.otp_hash);
+    if (!valid) return res.status(400).json({ error: 'Invalid reset code' });
+    const hashed = await bcrypt.hash(newPassword, 12);
+    await supabase.from('users').update({ password_hash: hashed }).eq('id', token.user_id);
+    await supabase.from('password_reset_tokens').delete().eq('id', token.id);
+    res.json({ success: true, message: 'Password reset successfully. You can now log in.' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── PDF passwords ──────────────────────────────────────────────────
+router.get('/pdf-passwords', requireAuth, async (req, res) => {
+  try {
+    const { data } = await supabase.from('users')
+      .select('pan, dob, broker, email').eq('id', req.user.id).single();
+    res.json({ passwords: generatePdfPasswords(data?.pan, data?.dob, data?.email, data?.broker) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 function generatePdfPasswords(pan, dob, email, broker) {
   const passwords = [];
   if (!pan && !dob) return passwords;
-
   const p = pan?.toUpperCase() || '';
-  const d = dob || ''; // DDMMYYYY
-
-  // Parse DOB parts
-  const dd = d.slice(0, 2);
-  const mm = d.slice(2, 4);
-  const yyyy = d.slice(4, 8);
-  const yy = yyyy.slice(2, 4);
-
-  if (p) {
-    passwords.push(p);                          // ABCDE1234F
-    passwords.push(p.toLowerCase());            // abcde1234f
-  }
-
+  const d = dob || '';
+  const dd = d.slice(0,2), mm = d.slice(2,4), yyyy = d.slice(4,8), yy = yyyy.slice(2,4);
+  if (p) { passwords.push(p); passwords.push(p.toLowerCase()); }
   if (p && d) {
-    // ICICI Direct: PAN + DOB DDMMYYYY
-    passwords.push(p + d);                      // ABCDE1234F01011980
-    passwords.push(p.toLowerCase() + d);
-    // ICICI Direct variant: PAN + DD/MM/YYYY
-    passwords.push(p + dd + '/' + mm + '/' + yyyy);
-    // HDFC Securities: PAN + DDMMYYYY
-    passwords.push(p + dd + mm + yyyy);
-    // Kotak: PAN + DOB DDMMYY
-    passwords.push(p + dd + mm + yy);
-    // Motilal Oswal: PAN lowercase + DOB
-    passwords.push(p.toLowerCase() + dd + mm + yyyy);
-    // Sharekhan: DOB DDMMYYYY only
-    passwords.push(dd + mm + yyyy);
-    // DOB variants
-    passwords.push(yyyy + mm + dd);             // YYYYMMDD
-    passwords.push(dd + '-' + mm + '-' + yyyy); // DD-MM-YYYY
+    passwords.push(p+d); passwords.push(p.toLowerCase()+d);
+    passwords.push(p+dd+'/'+mm+'/'+yyyy); passwords.push(p+dd+mm+yyyy);
+    passwords.push(p+dd+mm+yy); passwords.push(p.toLowerCase()+dd+mm+yyyy);
+    passwords.push(dd+mm+yyyy); passwords.push(yyyy+mm+dd);
   }
-
-  if (d) {
-    passwords.push(d);                          // DDMMYYYY alone
-    passwords.push(dd + mm + yyyy);
-  }
-
-  // Remove duplicates and empty
+  if (d) { passwords.push(d); passwords.push(dd+mm+yyyy); }
   return [...new Set(passwords)].filter(Boolean);
 }
 
