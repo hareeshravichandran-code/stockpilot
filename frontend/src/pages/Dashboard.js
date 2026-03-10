@@ -39,7 +39,16 @@ export default function Dashboard() {
   const [profileSaved, setProfileSaved] = useState(false);
   const [profileError, setProfileError] = useState('');
 
-  const [assetBalances, setAssetBalances] = useState({ ppf: 0, epf: 0, nps: 0, fd: 0, ssy: 0 });
+  const [showAddStock, setShowAddStock]     = useState(false);
+  const [stockSearch, setStockSearch]       = useState('');
+  const [stockResults, setStockResults]     = useState([]);
+  const [selectedStock, setSelectedStock]   = useState(null);
+  const [stockQty, setStockQty]             = useState('');
+  const [stockCost, setStockCost]           = useState('');
+  const [stockSaving, setStockSaving]       = useState(false);
+  const [stockSaved, setStockSaved]         = useState(false);
+  const [stockError, setStockError]         = useState('');
+  const [searchLoading, setSearchLoading]   = useState(false);
   const [liabilities, setLiabilities] = useState({ homeLoan: 0, creditCard: 0 });
   const [monthlyIncome, setMonthlyIncome] = useState(0);
   const [monthlyExpenses, setMonthlyExpenses] = useState(0);
@@ -149,6 +158,53 @@ export default function Dashboard() {
     } catch (e) {
       setSyncResult({ success: false, message: e.response?.data?.error || 'Price sync failed' });
     } finally { setSyncingPrices(false); }
+  };
+
+  // ── Add Stock handlers ───────────────────────────────────────────
+  const handleStockSearch = async (val) => {
+    setStockSearch(val);
+    setSelectedStock(null);
+    if (val.trim().length < 1) { setStockResults([]); return; }
+    setSearchLoading(true);
+    try {
+      const r = await portfolioAPI.searchStocks(val);
+      setStockResults(r.data || []);
+    } catch(e) { setStockResults([]); }
+    finally { setSearchLoading(false); }
+  };
+
+  const handleSelectStock = (stock) => {
+    setSelectedStock(stock);
+    setStockSearch(stock.company);
+    setStockResults([]);
+  };
+
+  const handleSaveStock = async () => {
+    if (!selectedStock) { setStockError('Please select a stock from the list'); return; }
+    if (!stockQty || parseInt(stockQty) <= 0) { setStockError('Enter a valid quantity'); return; }
+    setStockSaving(true); setStockError('');
+    try {
+      await portfolioAPI.addHolding({
+        symbol:   selectedStock.symbol,
+        isin:     selectedStock.isin,
+        company:  selectedStock.company,
+        sector:   selectedStock.sector,
+        quantity: parseInt(stockQty),
+        avgCost:  stockCost ? parseFloat(stockCost) : 0,
+      });
+      setStockSaved(true);
+      await loadPortfolio();
+      setTimeout(() => {
+        setShowAddStock(false);
+        setStockSaved(false);
+        setSelectedStock(null);
+        setStockSearch('');
+        setStockQty('');
+        setStockCost('');
+      }, 1200);
+    } catch(e) {
+      setStockError(e.response?.data?.error || 'Failed to save. Try again.');
+    } finally { setStockSaving(false); }
   };
 
   const saveProfile = async () => {
@@ -611,8 +667,16 @@ export default function Dashboard() {
                 <div className="db-card">
                   <div className="db-card-header">
                     <div className="db-card-title">All Stock Holdings ({holdings.length})</div>
-                    <div style={{ fontSize:11, color:'#475569' }}>
-                      {s.casDate ? `CAS as of ${new Date(s.casDate).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' })}` : 'From CAS email'}
+                    <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                      <div style={{ fontSize:11, color:'#475569' }}>
+                        {s.casDate ? `CAS as of ${new Date(s.casDate).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' })}` : 'From CAS email'}
+                      </div>
+                      <button onClick={() => { setShowAddStock(true); setStockError(''); setStockSaved(false); }}
+                        style={{ background:'rgba(100,255,218,0.1)', border:'1px solid rgba(100,255,218,0.3)',
+                          color:'#64ffda', borderRadius:8, padding:'6px 14px', cursor:'pointer',
+                          fontSize:12, fontWeight:700, display:'flex', alignItems:'center', gap:5 }}>
+                        + Add Stock
+                      </button>
                     </div>
                   </div>
                   <div style={{ overflowX:'auto' }}>
@@ -666,7 +730,10 @@ export default function Dashboard() {
                                 </span>
                               </td>
                               <td style={{ fontSize:10, color:'#1e3a5f' }}>
-                                {h.priceSource || 'cost'}
+                                {h.source === 'manual'
+                                  ? <span style={{ background:'rgba(251,146,60,0.15)', color:'#fb923c', borderRadius:4, padding:'2px 6px', fontSize:10, fontWeight:600 }}>Manual</span>
+                                  : <span style={{ background:'rgba(100,255,218,0.08)', color:'#334155', borderRadius:4, padding:'2px 6px', fontSize:10 }}>CAS</span>
+                                }
                               </td>
                             </tr>
                           );
@@ -924,6 +991,132 @@ export default function Dashboard() {
                   4. Falls back to rule-based patterns if AI fails
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── ADD STOCK MODAL ── */}
+      {showAddStock && (
+        <div className="db-modal-overlay" onClick={e => { if(e.target===e.currentTarget){ setShowAddStock(false); setStockResults([]); }}}>
+          <div className="db-modal fade-in" style={{ maxWidth:460 }}>
+            <div className="db-modal-header">
+              <div className="db-modal-title">+ Add Stock Holding</div>
+              <button className="db-modal-close" onClick={() => { setShowAddStock(false); setStockResults([]); }}>✕</button>
+            </div>
+            <div className="db-modal-body">
+
+              {/* Stock Search */}
+              <div style={{ marginBottom:16 }}>
+                <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:6 }}>
+                  SEARCH STOCK
+                </label>
+                <div style={{ position:'relative' }}>
+                  <input
+                    className="db-input"
+                    placeholder="Type company name or NSE symbol e.g. HDFC, Infosys…"
+                    value={stockSearch}
+                    onChange={e => handleStockSearch(e.target.value)}
+                    autoFocus
+                    style={{ width:'100%', paddingRight: searchLoading ? 36 : 12 }}
+                  />
+                  {searchLoading && (
+                    <div style={{ position:'absolute', right:10, top:'50%', transform:'translateY(-50%)',
+                      width:14, height:14, border:'2px solid #334155', borderTopColor:'#64ffda',
+                      borderRadius:'50%', animation:'spin 0.6s linear infinite' }} />
+                  )}
+
+                  {/* Dropdown results */}
+                  {stockResults.length > 0 && (
+                    <div style={{ position:'absolute', top:'calc(100% + 4px)', left:0, right:0,
+                      background:'#1a2235', border:'1px solid #1e3a5f', borderRadius:8,
+                      zIndex:1000, maxHeight:260, overflowY:'auto', boxShadow:'0 8px 32px rgba(0,0,0,0.4)' }}>
+                      {stockResults.map(s => (
+                        <div key={s.symbol} onClick={() => handleSelectStock(s)}
+                          style={{ padding:'10px 14px', cursor:'pointer', borderBottom:'1px solid #0f1b2d',
+                            display:'flex', justifyContent:'space-between', alignItems:'center',
+                            transition:'background 0.1s' }}
+                          onMouseEnter={e => e.currentTarget.style.background='rgba(100,255,218,0.06)'}
+                          onMouseLeave={e => e.currentTarget.style.background='transparent'}>
+                          <div>
+                            <div style={{ color:'#e2e8f0', fontWeight:700, fontSize:13 }}>{s.symbol}</div>
+                            <div style={{ color:'#64748b', fontSize:11, marginTop:2 }}>{s.company}</div>
+                          </div>
+                          <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:3 }}>
+                            <span style={{ fontSize:10, color:'#334155', background:'rgba(255,255,255,0.05)',
+                              borderRadius:4, padding:'2px 6px' }}>{s.sector}</span>
+                            <span style={{ fontSize:9, color:'#1e3a5f' }}>{s.isin}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Selected Stock preview */}
+              {selectedStock && (
+                <div style={{ background:'rgba(100,255,218,0.06)', border:'1px solid rgba(100,255,218,0.15)',
+                  borderRadius:8, padding:'12px 14px', marginBottom:16,
+                  display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                  <div>
+                    <div style={{ color:'#64ffda', fontWeight:700, fontSize:14 }}>{selectedStock.symbol}</div>
+                    <div style={{ color:'#94a3b8', fontSize:12, marginTop:2 }}>{selectedStock.company}</div>
+                    <div style={{ color:'#334155', fontSize:10, marginTop:2 }}>{selectedStock.isin}</div>
+                  </div>
+                  <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:4 }}>
+                    <span style={{ fontSize:11, color:'#0ea5e9', background:'rgba(14,165,233,0.1)',
+                      borderRadius:4, padding:'2px 8px' }}>{selectedStock.sector}</span>
+                    <span style={{ fontSize:10, color:'#64748b' }}>NSE</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Quantity + Cost */}
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:20 }}>
+                <div>
+                  <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:6 }}>
+                    QUANTITY <span style={{ color:'#f43f5e' }}>*</span>
+                  </label>
+                  <input className="db-input" type="number" min="1" placeholder="e.g. 100"
+                    value={stockQty} onChange={e => setStockQty(e.target.value)} />
+                </div>
+                <div>
+                  <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:6 }}>
+                    AVG COST <span style={{ color:'#475569', fontWeight:400 }}>(optional)</span>
+                  </label>
+                  <input className="db-input" type="number" min="0" placeholder="₹ per share"
+                    value={stockCost} onChange={e => setStockCost(e.target.value)} />
+                </div>
+              </div>
+
+              <div style={{ background:'#0a1628', borderRadius:6, padding:'10px 12px', marginBottom:16,
+                border:'1px solid #1e3a5f', fontSize:11, color:'#475569', lineHeight:1.7 }}>
+                <span style={{ color:'#0ea5e9', fontWeight:700 }}>ℹ Auto-sync:</span> Current price &
+                sector will be fetched from Yahoo Finance automatically when you click <b style={{ color:'#94a3b8' }}>Sync Yahoo</b>.
+                Avg cost is optional — only needed for P&L tracking.
+              </div>
+
+              {stockError && (
+                <div style={{ color:'#f43f5e', fontSize:12, marginBottom:12, padding:'8px 12px',
+                  background:'rgba(244,63,94,0.08)', borderRadius:6, border:'1px solid rgba(244,63,94,0.2)' }}>
+                  ⚠ {stockError}
+                </div>
+              )}
+              {stockSaved && (
+                <div style={{ color:'#00d4a1', fontSize:12, marginBottom:12, padding:'8px 12px',
+                  background:'rgba(0,212,161,0.08)', borderRadius:6, border:'1px solid rgba(0,212,161,0.2)' }}>
+                  ✅ Stock added successfully!
+                </div>
+              )}
+
+              <button onClick={handleSaveStock} disabled={stockSaving || !selectedStock}
+                style={{ width:'100%', background: selectedStock ? '#64ffda' : '#1e2d3d',
+                  color: selectedStock ? '#0a0a0a' : '#334155',
+                  border:'none', borderRadius:8, padding:'13px', fontWeight:700,
+                  fontSize:14, cursor: selectedStock ? 'pointer' : 'not-allowed', transition:'all 0.2s' }}>
+                {stockSaving ? '⟳ Saving…' : '+ Add to Holdings'}
+              </button>
             </div>
           </div>
         </div>

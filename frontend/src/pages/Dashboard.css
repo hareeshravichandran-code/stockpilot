@@ -143,3 +143,6 @@
   .db-stats-grid { grid-template-columns: 1fr 1fr; }
   .db-grid-3 { grid-template-columns: 1fr; }
 }
+
+@keyframes spin { to { transform: translateY(-50%) rotate(360deg); } }
+
