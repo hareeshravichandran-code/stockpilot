@@ -54,6 +54,7 @@ export default function Dashboard() {
   const [monthlyExpenses, setMonthlyExpenses] = useState(0);
   const [dividendTotal, setDividendTotal] = useState(0);
   const [showAssetModal, setShowAssetModal] = useState(false);
+  const [assetBalances, setAssetBalances] = useState({ ppf: 0, epf: 0, nps: 0, fd: 0, ssy: 0 });
   const [assetForm, setAssetForm] = useState({ ppf: '', epf: '', nps: '', fd: '', ssy: '', homeLoan: '', creditCard: '', salary: '' });
   const [assetSaving, setAssetSaving] = useState(false);
 
