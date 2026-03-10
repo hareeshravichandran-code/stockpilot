@@ -14,8 +14,12 @@ api.interceptors.request.use(config => {
 api.interceptors.response.use(
   res => res,
   err => {
-    if (err.response?.status === 401) {
+    // Only force logout on 401 for non-auth endpoints
+    // Don't redirect on /me failure — useAuth handles that gracefully
+    const url = err.config?.url || '';
+    if (err.response?.status === 401 && !url.includes('/auth/me')) {
       localStorage.removeItem('sp_token');
+      localStorage.removeItem('sp_user');
       window.location.href = '/login';
     }
     return Promise.reject(err);
@@ -38,6 +42,7 @@ export const portfolioAPI = {
   assets:       () => api.get('/api/portfolio/assets'),
   saveAssets:   (d) => api.post('/api/portfolio/assets', d),
   tax:          () => api.get('/api/portfolio/tax'),
+  syncPrices:   () => api.post('/api/portfolio/sync-prices'),
 };
 
 export const emailAPI = {
