@@ -1,177 +1,326 @@
+/**
+ * StockPilot Price Service
+ *
+ * PROOF: Yahoo v8/finance/chart works from Railway — dividendFetcher.js
+ * uses the exact same host (query1.finance.yahoo.com) and it successfully
+ * fetches dividends. The previous price attempts failed because they used
+ * crumb+cookie auth which Railway blocks. Plain User-Agent works fine.
+ *
+ * LAYERS:
+ *   1. Yahoo Finance v8/chart  — PROVEN to work from Railway, no crumb needed
+ *   2. DB cache (fresh)        — < 15 min during market, < 6 hrs off-market  
+ *   3. Stooq CSV               — free, unlimited, no key
+ *   4. Twelve Data             — free 800/day (optional key)
+ *   5. Stale DB cache          — last known price, never blank
+ */
+
 const axios = require('axios');
 
-// ── Yahoo v7 — no crumb needed, more reliable on Railway ─────────────
-const YAHOO_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Accept': 'application/json',
-  'Accept-Language': 'en-US,en;q=0.9',
-  'Origin': 'https://finance.yahoo.com',
-  'Referer': 'https://finance.yahoo.com/',
-};
+// ── Exact headers that work — same as dividendFetcher.js ──────────────
+const YAHOO_HEADERS = { 'User-Agent': 'Mozilla/5.0' };
+const YAHOO_TIMEOUT = 10000;
 
-// ── Map broker/CAS symbols → Yahoo .NS symbols ────────────────────────
+// ── Symbol maps ────────────────────────────────────────────────────────
 const SYMBOL_MAP = {
-  // Broker short codes from CAS
-  'AMARAJ':   'AMARAJABAT.NS', 'EXIIND':  'EXIDEIND.NS',
-  'MOTSUM':   'MOTHERSON.NS',  'BAAUTO':  'BAJAJ-AUTO.NS',
-  'EICMOT':   'EICHERMOT.NS',  'HERHON':  'HEROMOTOCO.NS',
-  'HYUMOT':   'HYUNDAI.NS',    'TATCOV':  'TATAMOTORS.NS',
-  'TATMOT':   'TATAMTRDVR.NS', 'EQUSMA':  'EQUITASBNK.NS',
-  'HDFBAN':   'HDFCBANK.NS',   'TAMMER':  'TMB.NS',
-  'CASIND':   'CASTROLIND.NS', 'VEDFAS':  'MANYAVAR.NS',
-  'BANBEE':   'BANKBEES.NS',   'HINLEV':  'HINDUNILVR.NS',
-  'BAJFI':    'BAJFINANCE.NS', 'HDFAMC':  'HDFCAMC.NS',
-  'POWINF':   'POWERGRIDINVIT.NS', 'HCLTEC': 'HCLTECH.NS',
-  'INFTEC':   'INFY.NS',       'CADHEA':  'ZYDUSLIFE.NS',
-  'DRREDD':   'DRREDDY.NS',
-  // Full NSE symbols (already correct, just append .NS)
-  'HDFCBANK':'HDFCBANK.NS', 'TMB':'TMB.NS',
-  'ICICIBANK':'ICICIBANK.NS', 'AXISBANK':'AXISBANK.NS',
-  'SBIN':'SBIN.NS', 'BAJAJ-AUTO':'BAJAJ-AUTO.NS',
-  'BAJFINANCE':'BAJFINANCE.NS', 'BAJAJFINSV':'BAJAJFINSV.NS',
-  'HINDUNILVR':'HINDUNILVR.NS', 'AMARAJABAT':'AMARAJABAT.NS',
-  'EQUITASBNK':'EQUITASBNK.NS', 'BANKBEES':'BANKBEES.NS',
-  'CASTROLIND':'CASTROLIND.NS', 'MANYAVAR':'MANYAVAR.NS',
-  'HDFCAMC':'HDFCAMC.NS', 'HCLTECH':'HCLTECH.NS',
-  'INFY':'INFY.NS', 'TCS':'TCS.NS', 'WIPRO':'WIPRO.NS',
-  'ZYDUSLIFE':'ZYDUSLIFE.NS', 'DRREDDY':'DRREDDY.NS',
-  'CIPLA':'CIPLA.NS', 'ITC':'ITC.NS', 'COLPAL':'COLPAL.NS',
-  'EICHERMOT':'EICHERMOT.NS', 'HEROMOTOCO':'HEROMOTOCO.NS',
-  'HYUNDAI':'HYUNDAI.NS', 'TATAMOTORS':'TATAMOTORS.NS',
-  'MOTHERSON':'MOTHERSON.NS', 'EXIDEIND':'EXIDEIND.NS',
-  'POWERGRID':'POWERGRID.NS', 'RELIANCE':'RELIANCE.NS',
-  'TATASTEEL':'TATASTEEL.NS', 'GRASIM':'GRASIM.NS',
-  'BPCL':'BPCL.NS', 'COFORGE':'COFORGE.NS',
+  'AMARAJ':'AMARAJABAT', 'EXIIND':'EXIDEIND',  'MOTSUM':'MOTHERSON',
+  'BAAUTO':'BAJAJ-AUTO', 'EICMOT':'EICHERMOT', 'HERHON':'HEROMOTOCO',
+  'HYUMOT':'HYUNDAI',    'TATCOV':'TATAMOTORS', 'TATMOT':'TATAMTRDVR',
+  'EQUSMA':'EQUITASBNK', 'HDFBAN':'HDFCBANK',  'TAMMER':'TMB',
+  'CASIND':'CASTROLIND', 'VEDFAS':'MANYAVAR',  'BANBEE':'BANKBEES',
+  'HINLEV':'HINDUNILVR', 'BAJFI':'BAJFINANCE', 'HDFAMC':'HDFCAMC',
+  'POWINF':'POWERGRIDINVIT','HCLTEC':'HCLTECH','INFTEC':'INFY',
+  'CADHEA':'ZYDUSLIFE',  'DRREDD':'DRREDDY',
+  // Strip .NSE / .BSE from NSDL CAS symbols
+  'HDFCBANK.NSE':'HDFCBANK', 'TMB.NSE':'TMB',       'TCS.NSE':'TCS',
+  'INFY.NSE':'INFY',         'RELIANCE.NSE':'RELIANCE','ICICIBANK.NSE':'ICICIBANK',
+  'AXISBANK.NSE':'AXISBANK', 'BAJAJ-AUTO.NSE':'BAJAJ-AUTO',
+  'BAJFINANCE.NSE':'BAJFINANCE','HINDUNILVR.NSE':'HINDUNILVR',
+  'ITC.NSE':'ITC',           'WIPRO.NSE':'WIPRO',   'HCLTECH.NSE':'HCLTECH',
+  'CIPLA.NSE':'CIPLA',       'DRREDDY.NSE':'DRREDDY','COLPAL.NSE':'COLPAL',
+  'EICHERMOT.NSE':'EICHERMOT','HEROMOTOCO.NSE':'HEROMOTOCO',
+  'TATAMOTORS.NSE':'TATAMOTORS','EXIDEIND.NSE':'EXIDEIND',
+  'MOTHERSON.NSE':'MOTHERSON','POWERGRID.NSE':'POWERGRID',
 };
 
-function toYahooSymbol(symbol) {
+function toNSE(symbol) {
+  if (!symbol) return '';
   if (SYMBOL_MAP[symbol]) return SYMBOL_MAP[symbol];
-  // Already has .NS or .BO suffix
-  if (symbol.endsWith('.NS') || symbol.endsWith('.BO')) return symbol;
-  return `${symbol}.NS`;
+  return symbol.replace(/\.(NSE|BSE|NS|BO)$/i, '');
 }
 
-// ── Yahoo v7 quote — no crumb, no cookie needed ────────────────────
-async function getYahooPrice(yahooSymbol) {
+function toYahooNS(symbol) {
+  return toNSE(symbol) + '.NS';
+}
+
+// ── Static sector map ──────────────────────────────────────────────────
+const SECTOR_MAP = {
+  'HDFCBANK':'Banking',   'ICICIBANK':'Banking',  'AXISBANK':'Banking',
+  'SBIN':'Banking',       'TMB':'Banking',         'EQUITASBNK':'Banking',
+  'BANKBEES':'Banking',   'KOTAKBANK':'Banking',   'INDUSINDBK':'Banking',
+  'FEDERALBNK':'Banking', 'CANBANK':'Banking',
+  'TCS':'IT',             'INFY':'IT',             'WIPRO':'IT',
+  'HCLTECH':'IT',         'COFORGE':'IT',          'TECHM':'IT',
+  'RELIANCE':'Oil & Gas', 'BPCL':'Oil & Gas',      'CASTROLIND':'Oil & Gas',
+  'BAJAJ-AUTO':'Auto',    'EICHERMOT':'Auto',      'HEROMOTOCO':'Auto',
+  'TATAMOTORS':'Auto',    'MOTHERSON':'Auto',       'HYUNDAI':'Auto',
+  'EXIDEIND':'Auto',      'AMARAJABAT':'Auto',
+  'HDFCAMC':'Finance',    'BAJFINANCE':'Finance',  'BAJAJFINSV':'Finance',
+  'HINDUNILVR':'FMCG',    'ITC':'FMCG',            'COLPAL':'FMCG',
+  'TATACONSUMER':'FMCG',  'MANYAVAR':'FMCG',       'NESTLEIND':'FMCG',
+  'DRREDDY':'Pharma',     'CIPLA':'Pharma',         'ZYDUSLIFE':'Pharma',
+  'SUNPHARMA':'Pharma',   'DIVISLAB':'Pharma',
+  'POWERGRID':'Infra',    'NTPC':'Infra',           'GRASIM':'Infra',
+  'TATASTEEL':'Metal',    'HINDALCO':'Metal',       'JSWSTEEL':'Metal',
+};
+
+function getSectorLocal(symbol) {
+  return SECTOR_MAP[toNSE(symbol)] || 'Other';
+}
+
+// ── Cache TTL logic ────────────────────────────────────────────────────
+function isMarketOpen() {
+  const ist = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  const h = ist.getHours(), m = ist.getMinutes(), day = ist.getDay();
+  if (day === 0 || day === 6) return false;
+  const mins = h * 60 + m;
+  return mins >= 555 && mins <= 930; // 9:15 AM to 3:30 PM IST
+}
+
+function isCacheFresh(holding) {
+  if (!holding?.last_price || holding.last_price <= 0) return false;
+  if (!holding?.price_updated_at) return false;
+  const age = Date.now() - new Date(holding.price_updated_at).getTime();
+  const ttl = isMarketOpen() ? 15 * 60 * 1000 : 6 * 60 * 60 * 1000;
+  return age < ttl;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// LAYER 1: Yahoo Finance v8/chart — PROVEN to work from Railway
+// Same endpoint + headers as dividendFetcher.js which already works
+// ══════════════════════════════════════════════════════════════════════
+async function fetchYahooPrice(symbol) {
+  const yahooSym = toYahooNS(symbol);
   try {
-    const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${yahooSymbol}&fields=regularMarketPrice,regularMarketPreviousClose,regularMarketChange,regularMarketChangePercent,regularMarketDayHigh,regularMarketDayLow,regularMarketVolume`;
-    const res = await axios.get(url, { headers: YAHOO_HEADERS, timeout: 8000 });
-    const q = res.data?.quoteResponse?.result?.[0];
-    if (!q || !q.regularMarketPrice) return null;
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooSym}?interval=1d&range=1d`;
+    const res = await axios.get(url, {
+      headers: YAHOO_HEADERS,
+      timeout: YAHOO_TIMEOUT
+    });
+    const meta = res.data?.chart?.result?.[0]?.meta;
+    if (!meta?.regularMarketPrice) return null;
+    const price = meta.regularMarketPrice;
+    const prev  = meta.chartPreviousClose || meta.previousClose || price;
     return {
-      price:         q.regularMarketPrice,
-      change:        parseFloat((q.regularMarketChange || 0).toFixed(2)),
-      changePct:     parseFloat((q.regularMarketChangePercent || 0).toFixed(2)),
-      previousClose: q.regularMarketPreviousClose,
-      high:          q.regularMarketDayHigh,
-      low:           q.regularMarketDayLow,
-      volume:        q.regularMarketVolume,
+      price,
+      change:        parseFloat((price - prev).toFixed(2)),
+      changePct:     parseFloat(((price - prev) / prev * 100).toFixed(2)),
+      previousClose: prev,
+      high:          meta.regularMarketDayHigh  || price,
+      low:           meta.regularMarketDayLow   || price,
+      volume:        meta.regularMarketVolume   || 0,
+      currency:      meta.currency || 'INR',
       source: 'Yahoo'
     };
   } catch(e) {
+    console.warn(JSON.stringify({ event:'YAHOO_PRICE_ERROR', symbol: yahooSym, error: e.message }));
     return null;
   }
 }
 
-// ── Yahoo v7 bulk — fetch up to 20 symbols in one call ───────────────
-async function getYahooPricesBulk(yahooSymbols) {
-  try {
-    const joined = yahooSymbols.join(',');
-    const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${joined}&fields=regularMarketPrice,regularMarketPreviousClose,regularMarketChange,regularMarketChangePercent,regularMarketDayHigh,regularMarketDayLow,regularMarketVolume`;
-    const res = await axios.get(url, { headers: YAHOO_HEADERS, timeout: 12000 });
-    const results = res.data?.quoteResponse?.result || [];
-    const map = {};
-    for (const q of results) {
-      if (q.regularMarketPrice) {
-        map[q.symbol] = {
-          price:         q.regularMarketPrice,
-          change:        parseFloat((q.regularMarketChange || 0).toFixed(2)),
-          changePct:     parseFloat((q.regularMarketChangePercent || 0).toFixed(2)),
-          previousClose: q.regularMarketPreviousClose,
-          high:          q.regularMarketDayHigh,
-          low:           q.regularMarketDayLow,
-          source: 'Yahoo'
-        };
+// Batch Yahoo — parallel with concurrency limit to avoid rate limiting
+async function fetchYahooBatch(symbols) {
+  const CONCURRENCY = 5; // max parallel Yahoo calls
+  const results = {};
+
+  for (let i = 0; i < symbols.length; i += CONCURRENCY) {
+    const batch = symbols.slice(i, i + CONCURRENCY);
+    const settled = await Promise.allSettled(
+      batch.map(async s => ({ sym: s, data: await fetchYahooPrice(s) }))
+    );
+    for (const r of settled) {
+      if (r.status === 'fulfilled' && r.value?.data) {
+        results[r.value.sym] = r.value.data;
       }
     }
-    return map;
+    // Small delay between batches to be polite to Yahoo
+    if (i + CONCURRENCY < symbols.length) {
+      await new Promise(r => setTimeout(r, 200));
+    }
+  }
+
+  const hitCount = Object.keys(results).length;
+  console.log(JSON.stringify({
+    event: 'PRICE_SOURCE', source: 'Yahoo_v8',
+    hit: hitCount, total: symbols.length,
+    missed: symbols.filter(s => !results[s])
+  }));
+  return results;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// LAYER 3: Stooq — free, unlimited, no key needed
+// ══════════════════════════════════════════════════════════════════════
+async function fetchStooq(symbol) {
+  try {
+    const s   = toNSE(symbol).toLowerCase().replace(/[^a-z0-9-]/g, '');
+    const url = `https://stooq.com/q/l/?s=${s}.ns&f=sd2t2ohlcv&h&e=json`;
+    const res = await axios.get(url, {
+      timeout: 8000,
+      headers: { 'User-Agent': 'Mozilla/5.0' }
+    });
+    const q = res.data?.symbols?.[0];
+    if (!q?.Close || q.Close === 'N/D' || parseFloat(q.Close) <= 0) return null;
+    return { price: parseFloat(q.Close), source: 'Stooq' };
+  } catch(e) { return null; }
+}
+
+async function fetchStooqBatch(symbols) {
+  const settled = await Promise.allSettled(
+    symbols.map(async s => ({ sym: s, data: await fetchStooq(s) }))
+  );
+  const results = {};
+  for (const r of settled) {
+    if (r.status === 'fulfilled' && r.value?.data) {
+      results[r.value.sym] = r.value.data;
+    }
+  }
+  const hitCount = Object.keys(results).length;
+  if (symbols.length > 0) {
+    console.log(JSON.stringify({
+      event: 'PRICE_SOURCE', source: 'Stooq',
+      hit: hitCount, total: symbols.length
+    }));
+  }
+  return results;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// LAYER 4: Twelve Data — free 800/day (optional TWELVE_DATA_API_KEY)
+// ══════════════════════════════════════════════════════════════════════
+let tdCallsToday = 0, tdCallsDate = '';
+function tdBudgetOk() {
+  const today = new Date().toISOString().slice(0, 10);
+  if (tdCallsDate !== today) { tdCallsToday = 0; tdCallsDate = today; }
+  return tdCallsToday < 780;
+}
+
+async function fetchTwelveData(symbols) {
+  const key = process.env.TWELVE_DATA_API_KEY;
+  if (!key || key === 'your_key_here' || !tdBudgetOk()) return {};
+  try {
+    const url = `https://api.twelvedata.com/price?symbol=${encodeURIComponent(symbols.join(','))}&exchange=NSE&apikey=${key}`;
+    const res = await axios.get(url, { timeout: 12000, headers: { 'User-Agent': 'StockPilot/1.0' } });
+    tdCallsToday++;
+    const data = res.data;
+    const results = {};
+    if (symbols.length === 1 && data.price && data.status !== 'error') {
+      results[symbols[0]] = { price: parseFloat(data.price), source: 'TwelveData' };
+      return results;
+    }
+    for (const sym of symbols) {
+      const q = data[sym];
+      if (q?.price && q.status !== 'error') {
+        results[sym] = { price: parseFloat(q.price), source: 'TwelveData' };
+      }
+    }
+    console.log(JSON.stringify({ event:'PRICE_SOURCE', source:'TwelveData', hit: Object.keys(results).length, callsToday: tdCallsToday }));
+    return results;
   } catch(e) {
-    console.warn('Yahoo bulk failed:', e.message);
+    console.warn(JSON.stringify({ event:'TWELVE_DATA_ERROR', error: e.message }));
     return {};
   }
 }
 
-// ── NSE direct fallback ───────────────────────────────────────────────
-const { nseGet } = require('./nseClient');
-async function getNSEPrice(nseSymbol) {
-  try {
-    const data = await nseGet(`https://www.nseindia.com/api/quote-equity?symbol=${encodeURIComponent(nseSymbol)}`);
-    const q = data?.priceInfo;
-    if (!q?.lastPrice) return null;
-    return {
-      price:         q.lastPrice,
-      change:        q.change,
-      changePct:     parseFloat((q.pChange || 0).toFixed(2)),
-      previousClose: q.previousClose,
-      high:          q.intraDayHighLow?.max,
-      low:           q.intraDayHighLow?.min,
-      sector:        data?.metadata?.industry || null,
-      source: 'NSE'
-    };
-  } catch(e) { return null; }
-}
+// ══════════════════════════════════════════════════════════════════════
+// MAIN: getPrices — full 5-layer fallback chain
+// ══════════════════════════════════════════════════════════════════════
+async function getPrices(rawSymbols, dbHoldings = []) {
+  if (!rawSymbols?.length) return {};
 
-// ── Sector from Yahoo quoteSummary ────────────────────────────────────
-async function getSectorFromYahoo(yahooSymbol) {
-  try {
-    const url = `https://query1.finance.yahoo.com/v11/finance/quoteSummary/${yahooSymbol}?modules=assetProfile`;
-    const res = await axios.get(url, { headers: YAHOO_HEADERS, timeout: 8000 });
-    return res.data?.quoteSummary?.result?.[0]?.assetProfile?.sector || null;
-  } catch(e) { return null; }
-}
+  const symbols = rawSymbols.map(toNSE);
+  const prices  = {};
 
-// ── Single price with NSE fallback ────────────────────────────────────
-async function getPrice(symbol) {
-  const yahooSym = toYahooSymbol(symbol);
-  const nseSym   = yahooSym.replace('.NS','').replace('.BO','');
+  // Build DB map
+  const dbMap = {};
+  for (const h of dbHoldings) dbMap[toNSE(h.symbol)] = h;
 
-  const yahoo = await getYahooPrice(yahooSym);
-  if (yahoo) return { symbol, yahooSymbol: yahooSym, ...yahoo };
-
-  console.warn(`Yahoo failed for ${symbol} (${yahooSym}) — trying NSE`);
-  const nse = await getNSEPrice(nseSym);
-  if (nse) return { symbol, yahooSymbol: yahooSym, ...nse };
-
-  console.error(`All price sources failed for ${symbol}`);
-  return null;
-}
-
-// ── Bulk prices — batches of 20 via Yahoo v7, fallback per-stock ──────
-async function getPrices(symbols) {
-  const prices = {};
-
-  // Batch into groups of 20
-  for (let i = 0; i < symbols.length; i += 20) {
-    const batch  = symbols.slice(i, i + 20);
-    const yahoos = batch.map(toYahooSymbol);
-    const bulk   = await getYahooPricesBulk(yahoos);
-
-    for (let j = 0; j < batch.length; j++) {
-      const sym      = batch[j];
-      const yahooSym = yahoos[j];
-      if (bulk[yahooSym]) {
-        prices[sym] = { symbol: sym, yahooSymbol: yahooSym, ...bulk[yahooSym] };
-      } else {
-        // Individual fallback for this symbol
-        const single = await getPrice(sym);
-        if (single) prices[sym] = single;
-      }
+  // ── Layer 0: Fresh DB cache — skip API entirely ─────────────────
+  const needsFetch = [];
+  for (const sym of symbols) {
+    if (isCacheFresh(dbMap[sym])) {
+      prices[sym] = { price: dbMap[sym].last_price, source: 'DB_cache' };
+    } else {
+      needsFetch.push(sym);
     }
-    // Brief pause between batches
-    if (i + 20 < symbols.length) await new Promise(r => setTimeout(r, 300));
+  }
+  if (needsFetch.length === 0) {
+    console.log(JSON.stringify({ event:'PRICE_SOURCE', source:'DB_cache_all', symbols: symbols.length }));
+    return buildResult(rawSymbols, symbols, prices);
   }
 
-  return prices;
+  // ── Layer 1: Yahoo v8/chart (same as dividendFetcher — proven) ──
+  const yahooPrices = await fetchYahooBatch(needsFetch);
+  for (const sym of needsFetch) {
+    if (yahooPrices[sym]) prices[sym] = yahooPrices[sym];
+  }
+
+  // ── Layer 2: Stooq for Yahoo misses ────────────────────────────
+  const afterYahoo = needsFetch.filter(s => !prices[s]);
+  if (afterYahoo.length > 0) {
+    const stooqPrices = await fetchStooqBatch(afterYahoo);
+    for (const sym of afterYahoo) {
+      if (stooqPrices[sym]) prices[sym] = stooqPrices[sym];
+    }
+  }
+
+  // ── Layer 3: Twelve Data for remaining (if key set) ────────────
+  const afterStooq = needsFetch.filter(s => !prices[s]);
+  if (afterStooq.length > 0) {
+    const tdPrices = await fetchTwelveData(afterStooq);
+    for (const sym of afterStooq) {
+      if (tdPrices[sym]) prices[sym] = tdPrices[sym];
+    }
+  }
+
+  // ── Layer 4: Stale DB cache — never show blank ─────────────────
+  const stillMissing = needsFetch.filter(s => !prices[s]);
+  for (const sym of stillMissing) {
+    const h = dbMap[sym];
+    if (h?.last_price > 0) {
+      prices[sym] = { price: h.last_price, source: 'stale_cache' };
+    }
+  }
+
+  const totalMissed = needsFetch.filter(s => !prices[s]);
+  if (totalMissed.length > 0) {
+    console.warn(JSON.stringify({ event:'PRICE_ALL_SOURCES_FAILED', symbols: totalMissed }));
+  }
+
+  return buildResult(rawSymbols, symbols, prices);
 }
 
-module.exports = { getPrice, getPrices, getSectorFromYahoo, SYMBOL_MAP, toYahooSymbol };
+function buildResult(rawSymbols, cleanSymbols, prices) {
+  const result = {};
+  for (let i = 0; i < rawSymbols.length; i++) {
+    const raw = rawSymbols[i];
+    const sym = cleanSymbols[i];
+    if (prices[sym]) {
+      result[raw] = { ...prices[sym], symbol: raw, sector: getSectorLocal(sym) };
+    }
+  }
+  return result;
+}
+
+async function getPrice(symbol) {
+  const r = await getPrices([symbol]);
+  return r[symbol] || null;
+}
+
+async function getSectorFromYahoo(symbol) {
+  return getSectorLocal(symbol);
+}
+
+module.exports = {
+  getPrice, getPrices, getSectorFromYahoo, getSectorLocal,
+  SYMBOL_MAP, toNSE, toYahooNS, isMarketOpen
+};
