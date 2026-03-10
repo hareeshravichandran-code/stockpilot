@@ -8,3 +8,4 @@ stockpilot
 .
 .
 .
+Full deployment
