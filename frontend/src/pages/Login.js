@@ -20,7 +20,12 @@ export default function Login() {
     const token = searchParams.get('token');
     const err   = searchParams.get('error');
     const reason = searchParams.get('reason');
-    if (token) { loginWithToken(token); nav('/dashboard'); }
+    if (token) {
+      // Hard redirect so useAuth re-initializes cleanly from localStorage
+      localStorage.setItem('sp_token', token);
+      window.location.href = '/dashboard';
+      return;
+    }
     if (err) setError(
       err === 'google_denied' ? 'Google sign-in was cancelled.' :
       err === 'create_failed' ? 'Could not create account. Please try email signup.' :

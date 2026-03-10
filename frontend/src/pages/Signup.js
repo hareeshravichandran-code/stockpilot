@@ -17,8 +17,12 @@ export default function Signup() {
   useEffect(() => {
     const token = searchParams.get('token');
     const err   = searchParams.get('error');
-    if (token) { loginWithToken(token); nav('/dashboard'); }
-    if (err)   setError(err === 'google_denied' ? 'Google sign-up was cancelled.' : 'Google sign-up failed. Please try again.');
+    if (token) {
+      localStorage.setItem('sp_token', token);
+      window.location.href = '/dashboard';
+      return;
+    }
+    if (err) setError(err === 'google_denied' ? 'Google sign-up was cancelled.' : 'Google sign-up failed. Please try again.');
   }, [searchParams, loginWithToken, nav]);
 
   const handle = e => setForm(p => ({ ...p, [e.target.name]: e.target.value }));
