@@ -115,23 +115,45 @@ router.post('/sync-prices', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── Stock search autocomplete ──────────────────────────────────────
+router.get('/search', requireAuth, (req, res) => {
+  const { q } = req.query;
+  if (!q || q.trim().length < 1)
+    return res.json([]);
+  const { searchStocks } = require('../services/nseStocks');
+  res.json(searchStocks(q));
+});
+
 // ── Add holding manually ───────────────────────────────────────────
 router.post('/holding', requireAuth, async (req, res) => {
-  const { symbol, company, quantity, avgCost, sector, dividendPerShare } = req.body;
-  if (!symbol || !quantity || !avgCost)
-    return res.status(400).json({ error: 'symbol, quantity and avgCost are required' });
-  const { data, error } = await supabase.from('holdings').upsert({
-    user_id: req.user.id,
-    symbol:  symbol.toUpperCase(),
-    company: company || symbol,
-    quantity: parseInt(quantity),
-    avg_cost: parseFloat(avgCost),
-    sector:   sector || 'Other',
-    dividend_per_share: parseFloat(dividendPerShare || 0),
-    updated_at: new Date().toISOString()
-  }, { onConflict: 'user_id,symbol' }).select().single();
+  const { symbol, isin, company, quantity, avgCost, sector } = req.body;
+  if (!symbol || !quantity)
+    return res.status(400).json({ error: 'symbol and quantity are required' });
+
+  // Enrich from NSE master if not provided
+  const { getStockBySymbol } = require('../services/nseStocks');
+  const master = getStockBySymbol(symbol);
+
+  const row = {
+    user_id:    req.user.id,
+    symbol:     symbol.toUpperCase().replace(/\.(NSE|BSE)$/i, ''),
+    isin:       isin       || master?.isin    || null,
+    company:    company    || master?.company || symbol,
+    sector:     sector     || master?.sector  || 'Other',
+    quantity:   parseInt(quantity),
+    avg_cost:   avgCost ? parseFloat(avgCost) : 0,
+    last_price: avgCost ? parseFloat(avgCost) : 0,  // seed with cost until Yahoo syncs
+    source:     'manual',   // ← indicator: manually entered
+    updated_at: new Date().toISOString(),
+  };
+
+  const { data, error } = await supabase
+    .from('holdings')
+    .upsert(row, { onConflict: 'user_id,symbol' })
+    .select().single();
+
   if (error) return res.status(500).json({ error: error.message });
-  res.status(201).json(data);
+  res.status(201).json({ ...data, message: 'Holding saved. Prices will sync automatically.' });
 });
 
 // ── Transactions ───────────────────────────────────────────────────
