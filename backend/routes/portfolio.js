@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const requireAuth = require('../middleware/requireAuth');
 const supabase = require('../services/supabase');
-const { getPrices, getSectorFromYahoo, SYMBOL_MAP } = require('../services/prices');
+const { getPrices, getSectorFromYahoo, getSectorLocal, toNSE } = require('../services/prices');
 
 // ── Get full portfolio with live prices ────────────────────────────
 router.get('/', requireAuth, async (req, res) => {
@@ -10,12 +10,12 @@ router.get('/', requireAuth, async (req, res) => {
       .from('holdings')
       .select('*')
       .eq('user_id', req.user.id)
-      .order('market_value', { ascending: false });
+      .order('quantity', { ascending: false }); // market_value is computed — order by quantity instead
 
     if (error) return res.status(500).json({ error: error.message });
 
     const symbols = holdings.map(h => h.symbol);
-    const prices  = symbols.length > 0 ? await getPrices(symbols) : {};
+    const prices  = symbols.length > 0 ? await getPrices(symbols, holdings) : {};
 
     const enriched = await Promise.all(holdings.map(async h => {
       const liveData  = prices[h.symbol];
@@ -26,18 +26,21 @@ router.get('/', requireAuth, async (req, res) => {
       const pnlPct      = costValue > 0 ? (pnl / costValue * 100) : 0;
 
       let sector = h.sector || 'Other';
-      if ((sector === 'Other' || !sector) && liveData) {
-        const fetched = liveData.sector ||
-          await getSectorFromYahoo(SYMBOL_MAP[h.symbol] || `${h.symbol}.NS`).catch(() => null);
-        if (fetched && fetched !== 'Other') {
-          sector = fetched;
-          supabase.from('holdings')
-            .update({ sector, last_price: ltp })
-            .eq('user_id', req.user.id).eq('symbol', h.symbol).catch(() => {});
-        }
-      } else if (liveData?.price) {
-        supabase.from('holdings')
-          .update({ last_price: liveData.price })
+      const sectorFromMap = getSectorLocal(h.symbol);
+      if (sectorFromMap !== 'Other') sector = sectorFromMap;
+      else if (liveData?.sector) sector = liveData.sector;
+
+      // Persist live price to DB in background — never block the response
+      if (liveData?.price && liveData.source !== 'DB_cache' && liveData.source !== 'stale_cache') {
+        const patch = {
+          last_price: liveData.price,
+          updated_at: new Date().toISOString(),
+        };
+        // price_updated_at column — add via Supabase SQL if missing:
+        // ALTER TABLE holdings ADD COLUMN IF NOT EXISTS price_updated_at TIMESTAMPTZ;
+        try { patch.price_updated_at = new Date().toISOString(); } catch(e) {}
+        if (sector !== 'Other') patch.sector = sector;
+        supabase.from('holdings').update(patch)
           .eq('user_id', req.user.id).eq('symbol', h.symbol).catch(() => {});
       }
 
@@ -81,24 +84,25 @@ router.get('/', requireAuth, async (req, res) => {
 router.post('/sync-prices', requireAuth, async (req, res) => {
   try {
     const { data: holdings } = await supabase
-      .from('holdings').select('symbol').eq('user_id', req.user.id);
+      .from('holdings').select('symbol, last_price').eq('user_id', req.user.id);
 
     if (!holdings || holdings.length === 0)
       return res.json({ success: true, updated: 0, message: 'No holdings to sync' });
 
     const symbols = holdings.map(h => h.symbol);
-    const prices  = await getPrices(symbols);
+    const prices  = await getPrices(symbols, holdings);
 
     let updated = 0;
     for (const h of holdings) {
       const live = prices[h.symbol];
       if (!live?.price) continue;
 
-      const yahooSym = SYMBOL_MAP[h.symbol] || `${h.symbol}.NS`;
-      const sector   = live.sector ||
-        await getSectorFromYahoo(yahooSym).catch(() => null);
-
-      const patch = { last_price: live.price, updated_at: new Date().toISOString() };
+      const sector = live.sector || getSectorLocal(toNSE(h.symbol));
+      const patch  = {
+        last_price: live.price,
+        updated_at: new Date().toISOString(),
+      };
+      try { patch.price_updated_at = new Date().toISOString(); } catch(e) {}
       if (sector && sector !== 'Other') patch.sector = sector;
 
       await supabase.from('holdings').update(patch)
