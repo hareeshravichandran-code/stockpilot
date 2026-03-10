@@ -43,6 +43,7 @@ export default function Dashboard() {
   const [liabilities, setLiabilities] = useState({ homeLoan: 0, creditCard: 0 });
   const [monthlyIncome, setMonthlyIncome] = useState(0);
   const [monthlyExpenses, setMonthlyExpenses] = useState(0);
+  const [dividendTotal, setDividendTotal] = useState(0);
   const [showAssetModal, setShowAssetModal] = useState(false);
   const [assetForm, setAssetForm] = useState({ ppf: '', epf: '', nps: '', fd: '', ssy: '', homeLoan: '', creditCard: '', salary: '' });
   const [assetSaving, setAssetSaving] = useState(false);
@@ -57,6 +58,14 @@ export default function Dashboard() {
   useEffect(() => {
     loadPortfolio();
     emailAPI.status().then(r => setEmailStatus(r.data.connections || [])).catch(() => {});
+
+    // Load dividend total for dashboard tile — from dividend_income table
+    api.get('/api/dividends').then(r => {
+      const d = r.data;
+      // API returns summary.currentFY for FY2026 total
+      setDividendTotal(d.summary?.currentFY || d.summary?.totalAllTime || 0);
+    }).catch(() => {});
+
     // Load asset balances from API
     api.get('/api/portfolio/assets').then(r => {
       const d = r.data;
@@ -310,7 +319,7 @@ export default function Dashboard() {
                   <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:12, marginBottom:20 }}>
                     {[
                       { label:'Total Net Worth', val: fmt(totalNetWorth), sub:'All assets combined', color:'#64ffda', icon:'💰' },
-                      { label:'Dividend Income FY26', val: fmt(s.totalDividend||0), sub:`${s.yieldOnMarket||0}% yield`, color:'#ffd700', icon:'💸' },
+                      { label:'Dividend Income FY26', val: fmt(dividendTotal||0), sub: dividendTotal > 0 ? `${s.yieldOnMarket||0}% yield on market` : 'Sync dividends to update', color:'#ffd700', icon:'💸' },
                       { label:'Outstanding Credit', val: fmt(totalCredit), sub:'Loans + Credit Cards', color: totalCredit > 0 ? '#ff6b6b':'#888', icon:'🏦' },
                       { label:'Monthly Income', val: fmt(monthlyIncome), sub:'Salary this month', color:'#00bcd4', icon:'💼' },
                       { label:'This Month Expenses', val: fmt(monthlyExpenses), sub:'From transactions', color: monthlyExpenses > monthlyIncome*0.8 ? '#ff8a65':'#b39ddb', icon:'🧾' },
