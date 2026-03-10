@@ -216,3 +216,43 @@ router.post('/assets', requireAuth, async (req, res) => {
     res.json({ success: true });
   } catch(err) { res.status(500).json({ error: err.message }); }
 });
+
+// ── Sync prices + sectors from Yahoo on demand ──────────────────────
+router.post('/sync-prices', requireAuth, async (req, res) => {
+  try {
+    const { data: holdings } = await supabase
+      .from('holdings').select('symbol, isin').eq('user_id', req.user.id);
+
+    if (!holdings || holdings.length === 0)
+      return res.json({ success: true, updated: 0, message: 'No holdings to sync' });
+
+    const { getPrices, getSectorFromYahoo, SYMBOL_MAP } = require('../services/prices');
+    const symbols = holdings.map(h => h.symbol);
+    const prices  = await getPrices(symbols);
+
+    let updated = 0;
+    for (const h of holdings) {
+      const live = prices[h.symbol];
+      if (!live?.price) continue;
+
+      const yahooSym = SYMBOL_MAP[h.symbol] || `${h.symbol}.NS`;
+      const sector = live.sector ||
+        await getSectorFromYahoo(yahooSym).catch(() => null);
+
+      const patch = {
+        last_price: live.price,
+        updated_at: new Date().toISOString(),
+      };
+      if (sector && sector !== 'Other') patch.sector = sector;
+
+      await supabase.from('holdings').update(patch)
+        .eq('user_id', req.user.id).eq('symbol', h.symbol);
+      updated++;
+    }
+
+    res.json({ success: true, updated, total: holdings.length,
+      message: `Synced ${updated}/${holdings.length} holdings from Yahoo Finance` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
