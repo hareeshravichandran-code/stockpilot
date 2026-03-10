@@ -18,10 +18,14 @@ export default function Login() {
   // Handle Google OAuth callback — token in URL
   useEffect(() => {
     const token = searchParams.get('token');
-    const name = searchParams.get('name');
-    const err = searchParams.get('error');
+    const err   = searchParams.get('error');
+    const reason = searchParams.get('reason');
     if (token) { loginWithToken(token); nav('/dashboard'); }
-    if (err) setError(err === 'google_denied' ? 'Google sign-in was cancelled.' : 'Google sign-in failed. Please try again.');
+    if (err) setError(
+      err === 'google_denied' ? 'Google sign-in was cancelled.' :
+      err === 'create_failed' ? 'Could not create account. Please try email signup.' :
+      `Google sign-in failed${reason ? ': ' + reason : '. Please try again.'}`
+    );
   }, [searchParams, loginWithToken, nav]);
 
   const handle = e => setForm(p => ({ ...p, [e.target.name]: e.target.value }));
