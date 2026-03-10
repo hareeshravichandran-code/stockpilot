@@ -28,6 +28,7 @@ export default function Dashboard() {
   const [tax, setTax] = useState(null);
   const [emailStatus, setEmailStatus] = useState([]);
   const [syncing, setSyncing] = useState(false);
+  const [syncingPrices, setSyncingPrices] = useState(false);
   const [syncResult, setSyncResult] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showConnectModal, setShowConnectModal] = useState(false);
@@ -130,6 +131,17 @@ export default function Dashboard() {
     } finally { setSyncing(false); }
   };
 
+  const syncPrices = async () => {
+    setSyncingPrices(true); setSyncResult(null);
+    try {
+      const r = await portfolioAPI.syncPrices();
+      setSyncResult({ success: true, message: r.data.message });
+      await loadPortfolio();
+    } catch (e) {
+      setSyncResult({ success: false, message: e.response?.data?.error || 'Price sync failed' });
+    } finally { setSyncingPrices(false); }
+  };
+
   const saveProfile = async () => {
     setProfileSaving(true); setProfileError('');
     try {
@@ -185,7 +197,7 @@ export default function Dashboard() {
           <div className="db-nav-label">Overview</div>
           {[
             { id:'dashboard', icon:'⬡', label:'Dashboard' },
-            { id:'holdings', icon:'◈', label:'Holdings' },
+            { id:'holdings', icon:'◈', label:'Stock Holdings' },
             { id:'dividends', icon:'◎', label:'Dividends' },
             { id:'transactions', icon:'⇄', label:'Transactions' },
           ].map(n => (
@@ -233,7 +245,7 @@ export default function Dashboard() {
         <div className="db-topbar">
           <div>
             <h1 className="db-page-title">
-              {{ dashboard:'Dashboard', holdings:'Holdings', dividends:'Dividend Tracker',
+              {{ dashboard:'Dashboard', holdings:'Stock Holdings', dividends:'Dividend Tracker',
                  transactions:'Transaction History', tax:'Tax Summary' }[tab]}
             </h1>
             <p className="db-page-sub">
@@ -248,6 +260,10 @@ export default function Dashboard() {
                 {syncing ? '⟳ Syncing…' : '⟳ Sync Emails'}
               </button>
             )}
+            <button className="db-sync-btn" onClick={syncPrices} disabled={syncingPrices}
+              style={{ background: 'rgba(14,165,233,0.12)', border: '1px solid rgba(14,165,233,0.3)', color: '#0ea5e9' }}>
+              {syncingPrices ? '⟳ Syncing…' : '⟳ Sync Yahoo'}
+            </button>
             <div className="db-live-badge">● Live · NSE</div>
           </div>
         </div>
@@ -439,7 +455,7 @@ export default function Dashboard() {
               {/* Top Holdings */}
               <div className="db-card" style={{ marginTop: 20 }}>
                 <div className="db-card-header">
-                  <div className="db-card-title">Top Holdings</div>
+                  <div className="db-card-title">Top Stock Holdings</div>
                   <button className="db-card-action" onClick={() => loadTab('holdings')}>View all →</button>
                 </div>
                 <div style={{overflowX:'auto'}}>
@@ -468,49 +484,198 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* HOLDINGS */}
-          {tab === 'holdings' && (
-            <div className="fade-in db-card">
-              <div className="db-card-header">
-                <div className="db-card-title">All Holdings ({holdings.length})</div>
+          {/* STOCK HOLDINGS */}
+          {tab === 'holdings' && (() => {
+            const totalValue = holdings.reduce((s, h) => s + h.marketValue, 0);
+
+            // Sector allocation pie data
+            const sectorAlloc = Object.entries(
+              holdings.reduce((acc, h) => {
+                const sec = h.sector || 'Other';
+                acc[sec] = (acc[sec] || 0) + h.marketValue;
+                return acc;
+              }, {})
+            ).map(([name, value]) => ({ name, value: Math.round(value) }))
+             .sort((a, b) => b.value - a.value);
+
+            // Holdings growth — top 10 by value as bar-style area
+            const topHoldings = [...holdings]
+              .sort((a, b) => b.marketValue - a.marketValue)
+              .slice(0, 10)
+              .map(h => ({ name: h.symbol, value: Math.round(h.marketValue) }));
+
+            const COLORS = ['#00d4a1','#0ea5e9','#f59e0b','#a78bfa','#f43f5e',
+                            '#34d399','#fb923c','#818cf8','#e879f9','#4ade80'];
+
+            return (
+              <div className="fade-in">
+                {/* Charts row */}
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1.6fr', gap:16, marginBottom:20 }}>
+
+                  {/* Sector Allocation Pie */}
+                  <div style={{ background:'rgba(255,255,255,0.04)', borderRadius:12, padding:20, border:'1px solid rgba(255,255,255,0.08)' }}>
+                    <div style={{ fontWeight:700, color:'#e2e8f0', fontSize:14, marginBottom:16 }}>📊 Sector Allocation</div>
+                    {sectorAlloc.length > 0 ? (
+                      <>
+                        <div style={{ display:'flex', justifyContent:'center' }}>
+                          <PieChart width={200} height={200}>
+                            <Pie data={sectorAlloc} cx={100} cy={100} innerRadius={55} outerRadius={90}
+                              dataKey="value" paddingAngle={2}>
+                              {sectorAlloc.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                            </Pie>
+                            <Tooltip formatter={v => fmt(v)}
+                              contentStyle={{ background:'#1a1a2e', border:'1px solid #333', borderRadius:8, fontSize:12 }} />
+                          </PieChart>
+                        </div>
+                        <div style={{ marginTop:8, display:'flex', flexDirection:'column', gap:6 }}>
+                          {sectorAlloc.map((d, i) => (
+                            <div key={d.name} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', fontSize:12 }}>
+                              <div style={{ display:'flex', alignItems:'center', gap:7 }}>
+                                <div style={{ width:9, height:9, borderRadius:'50%', background:COLORS[i % COLORS.length], flexShrink:0 }} />
+                                <span style={{ color:'#cbd5e1' }}>{d.name}</span>
+                              </div>
+                              <div style={{ display:'flex', gap:10 }}>
+                                <span style={{ color:'#64748b', fontSize:11 }}>
+                                  {totalValue > 0 ? ((d.value / totalValue) * 100).toFixed(1) : 0}%
+                                </span>
+                                <span style={{ color:'#94a3b8', fontWeight:600 }}>{fmt(d.value)}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <div style={{ color:'#475569', fontSize:12, textAlign:'center', paddingTop:60 }}>
+                        Sync Yahoo to populate sectors
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Holdings Growth — top 10 bar chart */}
+                  <div style={{ background:'rgba(255,255,255,0.04)', borderRadius:12, padding:20, border:'1px solid rgba(255,255,255,0.08)' }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
+                      <div style={{ fontWeight:700, color:'#e2e8f0', fontSize:14 }}>📈 Top Holdings by Value</div>
+                      <div style={{ fontSize:11, color:'#475569' }}>Current market value</div>
+                    </div>
+                    {topHoldings.length > 0 ? (
+                      <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+                        {topHoldings.map((h, i) => {
+                          const pct = totalValue > 0 ? (h.value / totalValue * 100) : 0;
+                          return (
+                            <div key={h.name}>
+                              <div style={{ display:'flex', justifyContent:'space-between', fontSize:11, marginBottom:3 }}>
+                                <span style={{ color:'#cbd5e1', fontWeight:600 }}>{h.name}</span>
+                                <div style={{ display:'flex', gap:12 }}>
+                                  <span style={{ color:'#64748b' }}>{pct.toFixed(1)}%</span>
+                                  <span style={{ color:'#00d4a1', fontWeight:700 }}>{fmt(h.value)}</span>
+                                </div>
+                              </div>
+                              <div style={{ height:6, background:'rgba(255,255,255,0.06)', borderRadius:3, overflow:'hidden' }}>
+                                <div style={{
+                                  height:'100%', width:`${pct}%`, borderRadius:3,
+                                  background: COLORS[i % COLORS.length],
+                                  transition:'width 0.6s ease'
+                                }} />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div style={{ color:'#475569', fontSize:12, textAlign:'center', paddingTop:60 }}>
+                        No holdings yet. Sync your CAS email.
+                      </div>
+                    )}
+
+                    {/* Summary row */}
+                    {totalValue > 0 && (
+                      <div style={{ marginTop:16, paddingTop:12, borderTop:'1px solid rgba(255,255,255,0.06)',
+                        display:'flex', justifyContent:'space-between', fontSize:12 }}>
+                        <span style={{ color:'#64748b' }}>{holdings.length} stocks · Portfolio value</span>
+                        <span style={{ color:'#00d4a1', fontWeight:700, fontSize:14 }}>{fmt(totalValue)}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Holdings Table — clean, no Avg Cost, no P&L */}
+                <div className="db-card">
+                  <div className="db-card-header">
+                    <div className="db-card-title">All Stock Holdings ({holdings.length})</div>
+                    <div style={{ fontSize:11, color:'#475569' }}>
+                      {s.casDate ? `CAS as of ${new Date(s.casDate).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' })}` : 'From CAS email'}
+                    </div>
+                  </div>
+                  <div style={{ overflowX:'auto' }}>
+                    <table className="db-table">
+                      <thead>
+                        <tr>
+                          <th>Company</th>
+                          <th>Sector</th>
+                          <th className="right">Qty</th>
+                          <th className="right">LTP</th>
+                          <th className="right">Current Value</th>
+                          <th className="right">Allocation</th>
+                          <th className="right">Div Yield</th>
+                          <th style={{ fontSize:10, color:'#334155' }}>Source</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {holdings.map(h => {
+                          const alloc = totalValue > 0 ? (h.marketValue / totalValue * 100).toFixed(1) : 0;
+                          return (
+                            <tr key={h.symbol}>
+                              <td>
+                                <div className="db-stock-name">{h.company || h.symbol}</div>
+                                <div className="db-stock-sym">{h.symbol}</div>
+                              </td>
+                              <td>
+                                <span className={`db-tag tag-${(h.sector || 'other').toLowerCase().replace(/\s+/g,'-')}`}>
+                                  {h.sector || 'Other'}
+                                </span>
+                              </td>
+                              <td className="right">{h.quantity}</td>
+                              <td className="right mono">
+                                {h.ltp > 0 ? `₹${Number(h.ltp).toFixed(2)}` : '—'}
+                                {h.priceSource === 'Yahoo' && <span style={{ fontSize:9, color:'#334155', marginLeft:4 }}>Y</span>}
+                                {h.priceSource === 'NSE'   && <span style={{ fontSize:9, color:'#334155', marginLeft:4 }}>N</span>}
+                              </td>
+                              <td className="right mono" style={{ color:'#00d4a1', fontWeight:600 }}>
+                                {h.marketValue > 0 ? fmt(h.marketValue) : '—'}
+                              </td>
+                              <td className="right">
+                                <div style={{ display:'flex', alignItems:'center', gap:6, justifyContent:'flex-end' }}>
+                                  <div style={{ width:40, height:4, background:'rgba(255,255,255,0.06)', borderRadius:2, overflow:'hidden' }}>
+                                    <div style={{ height:'100%', width:`${alloc}%`, background:'#0ea5e9', borderRadius:2 }} />
+                                  </div>
+                                  <span style={{ fontSize:11, color:'#64748b' }}>{alloc}%</span>
+                                </div>
+                              </td>
+                              <td className="right">
+                                <span className={`db-yield-badge ${h.dividendYieldOnCost >= 3 ? 'hi' : h.dividendYieldOnCost >= 1 ? 'md' : 'lo'}`}>
+                                  {h.dividendYieldOnCost > 0 ? h.dividendYieldOnCost + '%' : '—'}
+                                </span>
+                              </td>
+                              <td style={{ fontSize:10, color:'#1e3a5f' }}>
+                                {h.priceSource || 'cost'}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        {holdings.length === 0 && (
+                          <tr>
+                            <td colSpan="8" className="db-empty">
+                              No holdings yet. Connect Gmail → Sync Emails → your CAS holdings will appear here.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
-              <div style={{overflowX:'auto'}}>
-              <table className="db-table">
-                <thead>
-                  <tr>
-                    <th>Stock</th><th>Sector</th><th className="right">Qty</th>
-                    <th className="right">Avg Cost</th><th className="right">LTP</th>
-                    <th className="right">Market Val</th><th className="right">P&L</th>
-                    <th className="right">Div Yield</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {holdings.map(h => (
-                    <tr key={h.symbol}>
-                      <td><div className="db-stock-name">{h.company || h.symbol}</div><div className="db-stock-sym">{h.symbol}</div></td>
-                      <td><span className={`db-tag tag-${(h.sector||'').toLowerCase()}`}>{h.sector}</span></td>
-                      <td className="right">{h.quantity}</td>
-                      <td className="right mono">₹{Number(h.avg_cost).toFixed(2)}</td>
-                      <td className="right mono">₹{Number(h.ltp).toFixed(2)}</td>
-                      <td className="right mono">{fmt(h.marketValue)}</td>
-                      <td className={`right mono ${h.pnl >= 0 ? 'pos' : 'neg'}`}>
-                        {h.pnl >= 0 ? '+' : ''}{fmt(h.pnl)} ({pct(h.pnlPct)})
-                      </td>
-                      <td className="right">
-                        <span className={`db-yield-badge ${h.dividendYieldOnCost >= 3 ? 'hi' : h.dividendYieldOnCost >= 1 ? 'md' : 'lo'}`}>
-                          {h.dividendYieldOnCost > 0 ? h.dividendYieldOnCost + '%' : '—'}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                  {holdings.length === 0 && (
-                    <tr><td colSpan="8" className="db-empty">No holdings yet. Connect your email to sync automatically.</td></tr>
-                  )}
-                </tbody>
-              </table>
-              </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* DIVIDENDS */}
           {tab === 'dividends' && (
