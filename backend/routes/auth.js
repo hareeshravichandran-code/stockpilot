@@ -1,29 +1,14 @@
 const router = require('express').Router();
-const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const nodemailer = require('nodemailer');
 const { google } = require('googleapis');
 const supabase = require('../services/supabase');
 const requireAuth = require('../middleware/requireAuth');
+const { sendPasswordResetEmail } = require('../services/mailer');
 
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 const BACKEND_URL  = process.env.BACKEND_URL  || 'https://stockpilot.up.railway.app';
 const JWT_SECRET   = process.env.JWT_SECRET;
-
-function getMailer() {
-  return nodemailer.createTransport({
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: 587, secure: false,
-    auth: { user: process.env.SMTP_EMAIL, pass: process.env.SMTP_PASSWORD }
-  });
-}
-
-async function sendEmail(to, subject, html) {
-  if (!process.env.SMTP_EMAIL) { console.warn('SMTP not configured'); return; }
-  const mailer = getMailer();
-  await mailer.sendMail({ from: `"StockPilot" <${process.env.SMTP_EMAIL}>`, to, subject, html });
-}
 
 function getGoogleClient() {
   return new google.auth.OAuth2(
@@ -37,10 +22,12 @@ function makeToken(user) {
   return jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '30d' });
 }
 
+// ── Sign Up ────────────────────────────────────────────────────────
 router.post('/signup', async (req, res) => {
   try {
     const { name, email, password } = req.body;
-    if (!name || !email || !password) return res.status(400).json({ error: 'Name, email and password are required' });
+    if (!name || !email || !password)
+      return res.status(400).json({ error: 'Name, email and password are required' });
     const { data: existing } = await supabase.from('users').select('id').eq('email', email).single();
     if (existing) return res.status(409).json({ error: 'Email already registered' });
     const hashed = await bcrypt.hash(password, 12);
@@ -52,10 +39,12 @@ router.post('/signup', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── Login ──────────────────────────────────────────────────────────
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
+    if (!email || !password)
+      return res.status(400).json({ error: 'Email and password are required' });
     const { data: user } = await supabase.from('users').select('*').eq('email', email).single();
     if (!user) return res.status(401).json({ error: 'Invalid credentials' });
     const valid = await bcrypt.compare(password, user.password_hash);
@@ -64,6 +53,7 @@ router.post('/login', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── Get current user ───────────────────────────────────────────────
 router.get('/me', requireAuth, async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -73,6 +63,7 @@ router.get('/me', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── Update Profile ─────────────────────────────────────────────────
 router.put('/profile', requireAuth, async (req, res) => {
   try {
     const { pan, dob, mobile, clientCode, name, broker } = req.body;
@@ -83,7 +74,8 @@ router.put('/profile', requireAuth, async (req, res) => {
     if (clientCode) updates.client_code = clientCode.trim();
     if (name)       updates.name        = name.trim();
     if (broker)     updates.broker      = broker;
-    if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'Nothing to update' });
+    if (Object.keys(updates).length === 0)
+      return res.status(400).json({ error: 'Nothing to update' });
     const { error } = await supabase.from('users').update(updates).eq('id', req.user.id);
     if (error) throw error;
     res.json({ success: true, message: 'Profile updated' });
@@ -94,7 +86,7 @@ router.put('/profile', requireAuth, async (req, res) => {
 router.get('/google', (req, res) => {
   try {
     if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
-      return res.status(500).json({ error: 'Google OAuth not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in Railway env vars.' });
+      return res.status(500).json({ error: 'Google OAuth not configured on server.' });
     }
     const client = getGoogleClient();
     const url = client.generateAuthUrl({
@@ -156,16 +148,8 @@ router.post('/forgot-password', async (req, res) => {
     });
     if (error) return res.status(500).json({ error: 'Could not generate reset code' });
     try {
-      await sendEmail(email, 'StockPilot — Password Reset Code', `
-        <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;padding:32px;background:#0d1117;border-radius:12px">
-          <h2 style="color:#64ffda">StockPilot</h2>
-          <p style="color:#ccc">Hi ${user.name}, your reset code:</p>
-          <div style="background:#1a1a2e;border-radius:12px;padding:24px;text-align:center;margin:24px 0">
-            <span style="font-size:42px;font-weight:700;letter-spacing:12px;color:#64ffda">${otp}</span>
-          </div>
-          <p style="color:#888;font-size:13px">Expires in 15 minutes.</p>
-        </div>
-      `);
+      const resetLink = `${FRONTEND_URL}/login?mode=reset&email=${encodeURIComponent(email)}`;
+      await sendPasswordResetEmail(email, resetLink, user.name);
     } catch (mailErr) { console.error('Email send failed:', mailErr.message); }
     res.json({ success: true, message: 'If that email exists, a reset code has been sent.' });
   } catch (err) { res.status(500).json({ error: err.message }); }
