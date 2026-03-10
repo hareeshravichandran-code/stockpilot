@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const requireAuth = require('../middleware/requireAuth');
 const supabase = require('../services/supabase');
-const { getPrices } = require('../services/prices');
+const { getPrices, getSectorFromYahoo, SYMBOL_MAP } = require('../services/prices');
 
 // ── Get full portfolio with live prices ──
 router.get('/', requireAuth, async (req, res) => {
@@ -18,14 +18,33 @@ router.get('/', requireAuth, async (req, res) => {
     const symbols = holdings.map(h => h.symbol);
     const prices = symbols.length > 0 ? await getPrices(symbols) : {};
 
-    // Enrich holdings with live data
-    const enriched = holdings.map(h => {
+    // Enrich holdings with live data + auto-fill sector/last_price
+    const enriched = await Promise.all(holdings.map(async h => {
       const liveData = prices[h.symbol];
-      const ltp = liveData?.price || h.last_price || h.avg_cost;
+      // ltp: live price → last stored price → avg_cost (never 0 if CAS populated)
+      const ltp = liveData?.price || h.last_price || h.avg_cost || 0;
       const marketValue = h.quantity * ltp;
-      const costValue = h.quantity * h.avg_cost;
-      const pnl = marketValue - costValue;
+      const costValue   = h.quantity * (h.avg_cost || ltp);
+      const pnl    = marketValue - costValue;
       const pnlPct = costValue > 0 ? (pnl / costValue * 100) : 0;
+
+      // Auto-fill sector if still 'Other' and we got live data
+      let sector = h.sector || 'Other';
+      if ((sector === 'Other' || !sector) && liveData) {
+        // Try from NSE response first, then Yahoo quoteSummary
+        const fetchedSector = liveData.sector ||
+          await getSectorFromYahoo(SYMBOL_MAP[h.symbol] || `${h.symbol}.NS`).catch(() => null);
+        if (fetchedSector && fetchedSector !== 'Other') {
+          sector = fetchedSector;
+          // Persist sector to DB so we don't fetch every time
+          supabase.from('holdings').update({ sector, last_price: ltp })
+            .eq('user_id', req.user.id).eq('symbol', h.symbol).catch(() => {});
+        }
+      } else if (liveData?.price) {
+        // Always update last_price when we have live data
+        supabase.from('holdings').update({ last_price: liveData.price })
+          .eq('user_id', req.user.id).eq('symbol', h.symbol).catch(() => {});
+      }
 
       return {
         ...h,
@@ -33,19 +52,21 @@ router.get('/', requireAuth, async (req, res) => {
         marketValue,
         costValue,
         pnl,
-        pnlPct: parseFloat(pnlPct.toFixed(2)),
-        change: liveData?.change || 0,
+        pnlPct:   parseFloat(pnlPct.toFixed(2)),
+        change:   liveData?.change   || 0,
         changePct: liveData?.changePct || 0,
+        sector,
+        priceSource: liveData?.source || (h.last_price ? 'cached' : 'cost'),
         dividendYieldOnCost: h.dividend_per_share > 0
-          ? parseFloat((h.dividend_per_share / h.avg_cost * 100).toFixed(2))
+          ? parseFloat((h.dividend_per_share / (h.avg_cost || ltp) * 100).toFixed(2))
           : 0
       };
-    });
+    }));
 
     // Portfolio summary
-    const totalCost = enriched.reduce((s, h) => s + h.costValue, 0);
+    const totalCost   = enriched.reduce((s, h) => s + h.costValue, 0);
     const totalMarket = enriched.reduce((s, h) => s + h.marketValue, 0);
-    const totalPnl = totalMarket - totalCost;
+    const totalPnl    = totalMarket - totalCost;
     const totalDividend = enriched.reduce((s, h) => s + (h.quantity * (h.dividend_per_share || 0)), 0);
 
     res.json({
