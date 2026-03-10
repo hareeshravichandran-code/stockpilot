@@ -37,6 +37,7 @@ export const authAPI = {
 export const portfolioAPI = {
   get:          () => api.get('/api/portfolio'),
   addHolding:   (data) => api.post('/api/portfolio/holding', data),
+  searchStocks: (q)    => api.get(`/api/portfolio/search?q=${encodeURIComponent(q)}`),
   transactions: () => api.get('/api/portfolio/transactions'),
   dividends:    () => api.get('/api/dividends'),
   assets:       () => api.get('/api/portfolio/assets'),
