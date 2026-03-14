@@ -9,7 +9,9 @@ const authRoutes = require('./routes/auth');
 const portfolioRoutes = require('./routes/portfolio');
 const emailRoutes = require('./routes/email');
 const dividendRoutes = require('./routes/dividends');
-const priceRoutes = require('./routes/prices');
+const priceRoutes  = require('./routes/prices');
+const incomeRoutes = require('./routes/income');
+const mfRoutes     = require('./routes/mf');
 
 const app = express();
 
@@ -47,7 +49,9 @@ app.use('/api/auth', authRoutes);
 app.use('/api/portfolio', portfolioRoutes);
 app.use('/api/email', emailRoutes);
 app.use('/api/dividends', dividendRoutes);
-app.use('/api/prices', priceRoutes);
+app.use('/api/prices',  priceRoutes);
+app.use('/api/income',  incomeRoutes);
+app.use('/api/mf',      mfRoutes);
 
 // ── Health check ──
 // Debug endpoint - check PDF tools
@@ -83,14 +87,20 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
-  console.log(`🚀 StockPilot backend running on port ${PORT}`);
-  // Verify qpdf is available
-  const { spawnSync } = require('child_process');
-  const qpdfCheck = spawnSync('qpdf', ['--version']);
-  if (qpdfCheck.status === 0) {
-    console.log(JSON.stringify({ event: 'QPDF_AVAILABLE', version: qpdfCheck.stdout?.toString().trim() }));
-  } else {
-    console.log(JSON.stringify({ event: 'QPDF_NOT_FOUND', error: 'qpdf not installed - PDF decryption will fail' }));
-  }
-});
+
+// Export for Vercel serverless
+module.exports = app;
+
+// Listen for Railway/local (not needed on Vercel)
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`🚀 StockPilot backend running on port ${PORT}`);
+    const { spawnSync } = require('child_process');
+    const qpdfCheck = spawnSync('qpdf', ['--version']);
+    if (qpdfCheck.status === 0) {
+      console.log(JSON.stringify({ event: 'QPDF_AVAILABLE', version: qpdfCheck.stdout?.toString().trim() }));
+    } else {
+      console.log(JSON.stringify({ event: 'QPDF_NOT_FOUND', error: 'qpdf not installed' }));
+    }
+  });
+}
