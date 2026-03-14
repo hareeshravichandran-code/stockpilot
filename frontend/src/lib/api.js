@@ -48,7 +48,8 @@ export const portfolioAPI = {
 
 export const emailAPI = {
   connectGmail: () => api.get('/api/email/gmail/connect'),
-  syncCAS:      () => api.post('/api/email/sync/cas'),
+  // syncCAS can take 60s+ (PDF download + password cracking) — override global 30s timeout
+  syncCAS:      () => api.post('/api/email/sync/cas', {}, { timeout: 120000 }),
   status:       () => api.get('/api/email/status'),
   // Admin panel
   sessions:     ()            => api.get('/api/email/sessions'),
@@ -59,6 +60,18 @@ export const emailAPI = {
 export const priceAPI = {
   get:  (symbol)  => api.get(`/api/prices/${symbol}`),
   bulk: (symbols) => api.post('/api/prices/bulk', { symbols }),
+};
+
+export const incomeAPI = {
+  getRules:     ()     => api.get('/api/income/rules'),
+  createRule:   (data) => api.post('/api/income/rules', data),
+  updateRule:   (id, data) => api.put(`/api/income/rules/${id}`, data),
+  deleteRule:   (id)   => api.delete(`/api/income/rules/${id}`),
+  scan:         ()     => api.post('/api/income/scan'),
+  getEntries:   ()     => api.get('/api/income/entries'),
+  addEntry:     (data) => api.post('/api/income/entries', data),
+  deleteEntry:  (id)   => api.delete(`/api/income/entries/${id}`),
+  categories:   ()     => api.get('/api/income/categories'),
 };
 
 export default api;
