@@ -84,13 +84,27 @@ router.post('/upload', requireAuth, upload.single('pdf'), async (req, res) => {
       ? [userProfile.pan.toUpperCase(), ...(generatePdfPasswords(userProfile.pan, userProfile.dob) || [])]
       : [];
 
-    // Extract text from PDF
-    const { parsePdfWithPasswords } = require('../services/gmail');
-    const { text, passwordUsed, failed } = await parsePdfWithPasswords(
-      req.file.buffer, passwords, req.file.originalname
-    );
+    // Extract text from PDF — use pdfjs directly
+    const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
+    let text = '';
+    try {
+      const allPasswords = ['', ...passwords];
+      for (const pwd of allPasswords) {
+        try {
+          const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(req.file.buffer), password: pwd || '' });
+          const pdf = await loadingTask.promise;
+          let fullText = '';
+          for (let i = 1; i <= pdf.numPages; i++) {
+            const page = await pdf.getPage(i);
+            const content = await page.getTextContent();
+            fullText += content.items.map(item => item.str).join(' ') + '\n';
+          }
+          if (fullText.trim().length > 200) { text = fullText; break; }
+        } catch(e) { if (e.name !== 'PasswordException') break; }
+      }
+    } catch(e) { /* handled below */ }
 
-    if (failed || !text || text.trim().length < 200) {
+    if (!text || text.trim().length < 200) {
       return res.status(422).json({
         error: 'Could not read PDF',
         message: 'PDF could not be unlocked. The password for MFCentral CAS is your PAN in UPPERCASE (e.g. ABCDE1234F). Please set your PAN in Profile & PAN settings.',
