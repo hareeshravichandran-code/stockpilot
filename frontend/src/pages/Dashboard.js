@@ -166,17 +166,18 @@ export default function Dashboard() {
     try {
       const r = await emailAPI.syncCAS();
       setSyncResult(r.data);
-      // Reload portfolio regardless of tab — holdings should appear immediately
-      await loadPortfolio();
-      if (tab === 'holdings') await loadTab('holdings');
     } catch (e) {
-      // e.response is undefined on timeout (no response) → show timeout hint
       const isTimeout = !e.response || e.code === 'ECONNABORTED';
       const msg = isTimeout
         ? 'Sync timed out — please try again. First sync can take up to a minute.'
         : (e.response?.data?.message || e.response?.data?.error || 'Sync failed');
       setSyncResult({ success: false, message: msg });
-    } finally { setSyncing(false); }
+    } finally {
+      setSyncing(false);
+      // Always reload — holdings may have been saved even if sync returned an error
+      await loadPortfolio();
+      if (tab === 'holdings') await loadTab('holdings');
+    }
   };
 
   const syncPrices = async () => {
