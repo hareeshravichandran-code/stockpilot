@@ -5,84 +5,99 @@ const { getPrices, getSectorFromYahoo, getSectorLocal, toNSE } = require('../ser
 const { searchStocks, getStockBySymbol } = require('../services/nseStocks');
 
 // ── Get full portfolio with live prices ────────────────────────────
+// SAFE portfolio route - logs full errors, never crashes
 router.get('/', requireAuth, async (req, res) => {
   try {
+    console.log(JSON.stringify({ event: 'PORTFOLIO_START', userId: req.user.id }));
+    
     const { data: holdings, error } = await supabase
       .from('holdings')
       .select('*')
       .eq('user_id', req.user.id)
-      .order('quantity', { ascending: false }); // market_value is computed — order by quantity instead
+      .order('quantity', { ascending: false });
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      console.error(JSON.stringify({ event: 'PORTFOLIO_DB_ERROR', error: error.message, code: error.code, details: error.details }));
+      return res.status(500).json({ error: error.message });
+    }
+    
+    console.log(JSON.stringify({ event: 'PORTFOLIO_ROWS', count: holdings?.length || 0 }));
+    
     if (!holdings || holdings.length === 0)
       return res.json({ holdings: [], summary: { totalCost:0, totalMarket:0, totalPnl:0, totalPnlPct:0, totalDividend:0, yieldOnCost:0, yieldOnMarket:0, holdingsCount:0, lastUpdated: new Date().toISOString(), casDate:null, casSource:null } });
 
-    // Only fetch prices for equity symbols — MF/ETF (INF ISINs) have no NSE equity ticker
     const equityHoldings = holdings.filter(h => !h.isin?.startsWith('INF'));
-    const symbols = equityHoldings.map(h => h.symbol);
+    const symbols = equityHoldings.map(h => h.symbol).filter(Boolean);
+    
+    console.log(JSON.stringify({ event: 'PORTFOLIO_SYMBOLS', count: symbols.length, sample: symbols.slice(0,5) }));
+    
     let prices = {};
     try {
       prices = symbols.length > 0 ? await getPrices(symbols, equityHoldings) : {};
     } catch (priceErr) {
-      // Price fetch failing must never block holdings from showing
-      console.error(JSON.stringify({ event: 'PRICE_FETCH_ERROR', error: priceErr.message }));
+      console.error(JSON.stringify({ event: 'PRICE_FETCH_ERROR', error: priceErr.message, stack: priceErr.stack?.split('\n')[1] }));
       prices = {};
     }
 
     const enriched = await Promise.all(holdings.map(async h => {
-      const liveData  = prices[h.symbol];
-      const ltp       = liveData?.price || h.last_price || h.avg_cost || 0;
-      const marketValue = h.quantity * ltp;
-      const costValue   = h.quantity * (h.avg_cost || ltp);
-      const pnl         = marketValue - costValue;
-      const pnlPct      = costValue > 0 ? (pnl / costValue * 100) : 0;
+      try {
+        const liveData    = prices[h.symbol] || {};
+        const ltp         = liveData.price || h.last_price || h.avg_cost || 0;
+        const marketValue = (h.quantity || 0) * ltp;
+        const costValue   = (h.quantity || 0) * (h.avg_cost || ltp || 0);
+        const pnl         = marketValue - costValue;
+        const pnlPct      = costValue > 0 ? (pnl / costValue * 100) : 0;
 
-      let sector = h.sector || 'Other';
-      const sectorFromMap = getSectorLocal(h.symbol);
-      if (sectorFromMap !== 'Other') sector = sectorFromMap;
-      else if (liveData?.sector) sector = liveData.sector;
+        let sector = h.sector || 'Other';
+        const sectorFromMap = getSectorLocal(h.symbol);
+        if (sectorFromMap !== 'Other') sector = sectorFromMap;
+        else if (liveData.sector) sector = liveData.sector;
 
-      // Persist live price to DB in background — never block the response
-      if (liveData?.price && liveData.source !== 'DB_cache' && liveData.source !== 'stale_cache') {
-        const patch = {
-          last_price: liveData.price,
-          updated_at: new Date().toISOString(),
+        if (liveData.price && liveData.source !== 'DB_cache' && liveData.source !== 'stale_cache') {
+          const patch = { last_price: liveData.price, updated_at: new Date().toISOString() };
+          try { patch.price_updated_at = new Date().toISOString(); } catch(e) {}
+          if (sector !== 'Other') patch.sector = sector;
+          supabase.from('holdings').update(patch).eq('user_id', req.user.id).eq('symbol', h.symbol).catch(() => {});
+        }
+
+        return {
+          ...h,
+          ltp:          Number(ltp)         || 0,
+          marketValue:  Number(marketValue)  || 0,
+          costValue:    Number(costValue)    || 0,
+          pnl:          Number(pnl)          || 0,
+          pnlPct:       parseFloat((Number(pnlPct) || 0).toFixed(2)),
+          change:       liveData.change      || 0,
+          changePct:    liveData.changePct   || 0,
+          sector,
+          asset_type:   h.isin?.startsWith('INF') ? 'MF/ETF' : 'Equity',
+          priceSource:  liveData.source || (h.last_price ? 'cached' : 'cost'),
+          dividendYieldOnCost: (h.dividend_per_share > 0 && (h.avg_cost || ltp) > 0)
+            ? parseFloat((h.dividend_per_share / (h.avg_cost || ltp) * 100).toFixed(2)) : 0
         };
-        // price_updated_at column — add via Supabase SQL if missing:
-        // ALTER TABLE holdings ADD COLUMN IF NOT EXISTS price_updated_at TIMESTAMPTZ;
-        try { patch.price_updated_at = new Date().toISOString(); } catch(e) {}
-        if (sector !== 'Other') patch.sector = sector;
-        supabase.from('holdings').update(patch)
-          .eq('user_id', req.user.id).eq('symbol', h.symbol).catch(() => {});
+      } catch (rowErr) {
+        console.error(JSON.stringify({ event: 'ROW_ENRICH_ERROR', symbol: h.symbol, isin: h.isin, error: rowErr.message }));
+        // Return safe fallback instead of crashing
+        return { ...h, ltp: 0, marketValue: 0, costValue: 0, pnl: 0, pnlPct: 0, change: 0, changePct: 0, sector: h.sector || 'Other', asset_type: 'Equity', priceSource: 'error', dividendYieldOnCost: 0 };
       }
-
-      return {
-        ...h, ltp, marketValue, costValue, pnl,
-        pnlPct:    parseFloat(pnlPct.toFixed(2)),
-        change:    liveData?.change    || 0,
-        changePct: liveData?.changePct || 0,
-        sector,
-        asset_type: h.isin?.startsWith('INF') ? 'MF/ETF' : 'Equity',
-        priceSource: liveData?.source || (h.last_price ? 'cached' : 'cost'),
-        dividendYieldOnCost: h.dividend_per_share > 0
-          ? parseFloat((h.dividend_per_share / (h.avg_cost || ltp) * 100).toFixed(2)) : 0
-      };
     }));
 
-    const totalCost    = enriched.reduce((s, h) => s + h.costValue, 0);
-    const totalMarket  = enriched.reduce((s, h) => s + h.marketValue, 0);
-    const totalPnl     = totalMarket - totalCost;
-    const totalDividend = enriched.reduce((s, h) => s + (h.quantity * (h.dividend_per_share || 0)), 0);
+    const totalCost     = enriched.reduce((s, h) => s + (h.costValue   || 0), 0);
+    const totalMarket   = enriched.reduce((s, h) => s + (h.marketValue || 0), 0);
+    const totalPnl      = totalMarket - totalCost;
+    const totalDividend = enriched.reduce((s, h) => s + ((h.quantity || 0) * (h.dividend_per_share || 0)), 0);
+
+    console.log(JSON.stringify({ event: 'PORTFOLIO_OK', count: enriched.length, totalMarket, totalCost }));
 
     res.json({
       holdings: enriched,
       summary: {
-        totalCost:     parseFloat(totalCost.toFixed(2)),
-        totalMarket:   parseFloat(totalMarket.toFixed(2)),
-        totalPnl:      parseFloat(totalPnl.toFixed(2)),
+        totalCost:     parseFloat((totalCost     || 0).toFixed(2)),
+        totalMarket:   parseFloat((totalMarket   || 0).toFixed(2)),
+        totalPnl:      parseFloat((totalPnl      || 0).toFixed(2)),
         totalPnlPct:   totalCost > 0 ? parseFloat((totalPnl / totalCost * 100).toFixed(2)) : 0,
-        totalDividend: parseFloat(totalDividend.toFixed(2)),
-        yieldOnCost:   totalCost > 0   ? parseFloat((totalDividend / totalCost   * 100).toFixed(2)) : 0,
+        totalDividend: parseFloat((totalDividend || 0).toFixed(2)),
+        yieldOnCost:   totalCost   > 0 ? parseFloat((totalDividend / totalCost   * 100).toFixed(2)) : 0,
         yieldOnMarket: totalMarket > 0 ? parseFloat((totalDividend / totalMarket * 100).toFixed(2)) : 0,
         holdingsCount: enriched.length,
         lastUpdated:   new Date().toISOString(),
@@ -90,8 +105,12 @@ router.get('/', requireAuth, async (req, res) => {
         casSource:     enriched[0]?.cas_source     || null
       }
     });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    console.error(JSON.stringify({ event: 'PORTFOLIO_CRASH', error: String(err?.message || err), stack: err?.stack?.split('\n').slice(0,3).join(' | ') }));
+    res.status(500).json({ error: err?.message || 'Portfolio load failed' });
+  }
 });
+
 
 // ── Sync prices + sectors from Yahoo on demand ─────────────────────
 router.post('/sync-prices', requireAuth, async (req, res) => {
