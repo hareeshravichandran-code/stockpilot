@@ -59,44 +59,65 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
 
     await logger.startSession();
 
-    // ── Fetch CAS emails (gmail.js extracts PDF text into body) ──────
-    // Only fetch actual CAS statement emails — exclude e-voting, newsletters
-    const casQuery = 'from:(cdslindia.com OR cvlindia.com OR nsdl.co.in OR nsdlindia.com) subject:("CAS" OR "account statement" OR "consolidated account") -subject:("e-Voting" OR "Newsletter" OR "Kaleidoscope")';
-    console.log(JSON.stringify({ event: 'GMAIL_SEARCH', query: casQuery }));
+    // ── Gmail search: find CAS email, pick the latest ────────────────
+    //
+    // Confirmed CDSL sender: eCAS@cdslstatement.com  (NOT cdslindia.com)
+    // NSDL sender:           cas@nsdl.co.in  /  nsdlindia.com
+    // CVL sender:            cvlindia.com
+    // No date filter — we want ALL historical CAS emails so we always find
+    // at least one, then sort by date and take the latest.
 
-    // Only fetch last 3 months of CAS emails
-    const threeMonthsAgo = new Date();
-    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
-    const afterDate = threeMonthsAgo.toISOString().split('T')[0].replace(/-/g, '/');
-    const casQueryWithDate = casQuery + ` after:${afterDate}`;
+    const searchAttempts = [
+      // Attempt 1: confirmed exact senders (covers CDSL + NSDL + CVL)
+      { label: 'EXACT_SENDERS',     q: `from:(cdslstatement.com OR nsdl.co.in OR nsdlindia.com OR cvlindia.com OR cdslindia.com) has:attachment` },
+      // Attempt 2: subject fallback — catches any new/unknown sender domain
+      { label: 'SUBJECT_EXACT',     q: `subject:"Consolidated Account Statement" has:attachment` },
+      // Attempt 3: broadest — any PDF mentioning CAS keywords
+      { label: 'SUBJECT_BROAD',     q: `subject:"account statement" (cdsl OR nsdl OR cvl) has:attachment` },
+    ];
 
     let casEmails = [];
-    try {
-      casEmails = await fetchEmails(conn.access_token, conn.refresh_token, casQueryWithDate, userProfile || {});
-      console.log(JSON.stringify({ event: 'GMAIL_FOUND', count: casEmails.length }));
-    } catch (gmailErr) {
-      await logger.logFailure({ phase: 'cas', errorType: 'GMAIL_ERROR', errorMessage: gmailErr.message, errorStack: gmailErr.stack });
-      await logger.failSession(gmailErr);
-      return res.status(500).json({ error: 'Gmail fetch failed', message: gmailErr.message });
+    let usedQuery = null;
+
+    for (const attempt of searchAttempts) {
+      console.log(JSON.stringify({ event: 'GMAIL_SEARCH', label: attempt.label, q: attempt.q }));
+      try {
+        const results = await fetchEmails(conn.access_token, conn.refresh_token, attempt.q, userProfile || {});
+        console.log(JSON.stringify({ event: 'GMAIL_SEARCH_RESULT', label: attempt.label, count: results?.length || 0 }));
+        if (results && results.length > 0) {
+          casEmails = results;
+          usedQuery = attempt.label;
+          break;
+        }
+      } catch (gmailErr) {
+        console.log(JSON.stringify({ event: 'GMAIL_SEARCH_ERROR', label: attempt.label, error: gmailErr.message }));
+        await logger.logFailure({ phase: 'cas', errorType: 'GMAIL_SEARCH_ERROR',
+          errorMessage: `${attempt.label}: ${gmailErr.message}` });
+      }
     }
 
     if (casEmails.length === 0) {
-      await logger.logSkipped({ phase: 'cas', reason: 'NO_EMAILS', detail: 'No CAS emails found from CDSL/NSDL senders' });
+      await logger.logSkipped({ phase: 'cas', reason: 'NO_EMAILS',
+        detail: 'No CAS emails found after 4 search attempts (SENDER+PDF, SUBJECT_EXACT, SUBJECT_BROAD, SENDER_ALLTIME)' });
       await logger.finishSession({ message: 'No CAS emails found' });
       return res.json({
         success: false,
-        message: 'No CAS emails found in Gmail. Make sure CDSL/NSDL statements are sent to this account.',
+        message: 'No CAS emails found in this Gmail. Please check: (1) Your demat account is registered with this email. (2) You have opted-in for eCAS on cdslindia.com. (3) Check Gmail spam for emails from cdslindia.com or cvlindia.com.',
+        tip: 'You can also download CAS manually from cdslindia.com and upload the PDF here.',
         sessionId: logger.sessionId, ...logger.counts
       });
     }
 
+    console.log(JSON.stringify({ event: 'GMAIL_FOUND', count: casEmails.length, via: usedQuery }));
+
     // Sort emails by date descending — only process the LATEST CAS
     casEmails.sort((a, b) => new Date(b.date) - new Date(a.date));
     const latestEmail = casEmails[0];
-    console.log(JSON.stringify({ event: 'USING_LATEST_CAS', subject: latestEmail.subject, date: latestEmail.date, totalFound: casEmails.length }));
+    console.log(JSON.stringify({ event: 'USING_LATEST_CAS', subject: latestEmail.subject, date: latestEmail.date, from: latestEmail.from, totalFound: casEmails.length }));
 
     // Only process the latest email
     const casEmailsToProcess = [latestEmail];
+
 
     let bestResult = null, bestDate = null;
 
@@ -283,6 +304,74 @@ router.get('/status', requireAuth, async (req, res) => {
     .select('provider, connected_at, last_synced, emails_parsed')
     .eq('user_id', req.user.id);
   res.json({ connections: data || [] });
+});
+
+// ── CDSL Debug — shows exactly what text is extracted from the PDF ────
+// Call GET /api/email/debug-cdsl to diagnose CAS issues
+router.get('/debug-cdsl', requireAuth, async (req, res) => {
+  try {
+    const { data: conn } = await supabase.from('email_connections')
+      .select('access_token, refresh_token').eq('user_id', req.user.id)
+      .eq('provider', 'gmail').single();
+    if (!conn) return res.status(400).json({ error: 'Gmail not connected' });
+
+    const { data: userRow } = await supabase.from('users')
+      .select('pan, dob, name, mobile').eq('id', req.user.id).single();
+
+    const { fetchEmails } = require('../services/gmail');
+    const { parseCAS, detectCASType } = require('../services/casParser');
+
+    // Broad search — confirmed CDSL sender is eCAS@cdslstatement.com
+    const query = 'from:(cdslstatement.com OR nsdl.co.in OR nsdlindia.com OR cvlindia.com OR cdslindia.com) has:attachment';
+    const emails = await fetchEmails(conn.access_token, conn.refresh_token, query, userRow || {});
+
+    if (!emails || emails.length === 0) {
+      return res.json({
+        status: 'NO_EMAILS',
+        message: 'No emails found from CDSL/NSDL/CAMS with attachments',
+        tip: 'Check your Gmail — search: from:cdsl has:attachment'
+      });
+    }
+
+    // Sort latest first, take top 3
+    emails.sort((a, b) => new Date(b.date) - new Date(a.date));
+    const results = [];
+
+    for (const email of emails.slice(0, 3)) {
+      const pdfMarker = '--- PDF ATTACHMENT ---';
+      const pdfIdx = email.body?.indexOf(pdfMarker) ?? -1;
+      const textToParse = pdfIdx !== -1
+        ? email.body.slice(pdfIdx + pdfMarker.length).trim()
+        : (email.body || '');
+
+      const isinMatches = [...textToParse.matchAll(/INE[A-Z0-9]{9}/g)];
+      const parseResult = parseCAS(textToParse);
+
+      results.push({
+        subject:      email.subject,
+        from:         email.from,
+        date:         email.date,
+        hasPdf:       email.hasPdf,
+        pdfFailed:    email.pdfFailed,
+        bodyLength:   email.body?.length || 0,
+        textLength:   textToParse.length,
+        casType:      detectCASType(textToParse),
+        isinsFound:   isinMatches.length,
+        holdingsParsed: parseResult.holdings.length,
+        // First 2000 chars of extracted text — THIS IS THE KEY DIAGNOSTIC
+        rawTextStart: textToParse.slice(0, 2000),
+        // 200 chars around the first ISIN
+        firstIsinContext: isinMatches.length > 0
+          ? textToParse.slice(Math.max(0, isinMatches[0].index - 50), isinMatches[0].index + 200)
+          : null,
+        parsedHoldings: parseResult.holdings.slice(0, 5),
+      });
+    }
+
+    res.json({ emailsFound: emails.length, results });
+  } catch (err) {
+    res.status(500).json({ error: err.message, stack: err.stack?.slice(0, 500) });
+  }
 });
 
 // ── Sync sessions (Admin panel) ───────────────────────────────────────
