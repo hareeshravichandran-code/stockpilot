@@ -10,8 +10,6 @@ const portfolioRoutes = require('./routes/portfolio');
 const emailRoutes = require('./routes/email');
 const dividendRoutes = require('./routes/dividends');
 const priceRoutes  = require('./routes/prices');
-const incomeRoutes = require('./routes/income');
-const mfRoutes     = require('./routes/mf');
 
 const app = express();
 
@@ -50,8 +48,6 @@ app.use('/api/portfolio', portfolioRoutes);
 app.use('/api/email', emailRoutes);
 app.use('/api/dividends', dividendRoutes);
 app.use('/api/prices',  priceRoutes);
-app.use('/api/income',  incomeRoutes);
-app.use('/api/mf',      mfRoutes);
 
 // ── Health check ──
 // Debug endpoint - check PDF tools
