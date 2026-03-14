@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
-import api, { portfolioAPI, emailAPI, authAPI, incomeAPI } from '../lib/api';
+import api, { portfolioAPI, emailAPI, authAPI, incomeAPI, mfAPI } from '../lib/api';
 import AdminPanel from './AdminPanel';
 import Dividends from './Dividends';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
@@ -49,6 +49,12 @@ export default function Dashboard() {
   const [stockSaved, setStockSaved]         = useState(false);
   const [stockError, setStockError]         = useState('');
   const [searchLoading, setSearchLoading]   = useState(false);
+
+  // ── Mutual Funds state ───────────────────────────────────────────
+  const [mfData, setMfData]               = useState(null);
+  const [mfLoading, setMfLoading]         = useState(false);
+  const [mfRequestSent, setMfRequestSent] = useState(null);
+  const [mfSyncing, setMfSyncing]         = useState(false);
 
   // ── Income Settings state ────────────────────────────────────────
   const [showIncomeSettings, setShowIncomeSettings] = useState(false);
@@ -130,6 +136,10 @@ export default function Dashboard() {
     if (t === 'tax' && !tax) {
       const r = await portfolioAPI.tax().catch(() => ({ data: {} }));
       setTax(r.data);
+    }
+    if (t === 'mutualfunds' && !mfData) {
+      setMfLoading(true);
+      mfAPI.get().then(r => setMfData(r.data)).catch(() => {}).finally(() => setMfLoading(false));
     }
   };
 
@@ -364,8 +374,9 @@ export default function Dashboard() {
           <div className="db-nav-label">Overview</div>
           {[
             { id:'dashboard', icon:'⬡', label:'Dashboard' },
-            { id:'holdings', icon:'◈', label:'Stock Holdings' },
-            { id:'dividends', icon:'◎', label:'Dividends' },
+            { id:'holdings',     icon:'◈', label:'Stock Holdings' },
+            { id:'mutualfunds',  icon:'◉', label:'Mutual Funds' },
+            { id:'dividends',    icon:'◎', label:'Dividends' },
             { id:'transactions', icon:'⇄', label:'Transactions' },
           ].map(n => (
             <div key={n.id} className={`db-nav-item ${tab === n.id ? 'active' : ''}`}
@@ -413,7 +424,7 @@ export default function Dashboard() {
           <div>
             <h1 className="db-page-title">
               {{ dashboard:'Dashboard', holdings:'Stock Holdings', dividends:'Dividend Tracker',
-                 transactions:'Transaction History', tax:'Tax Summary' }[tab]}
+                 transactions:'Transaction History', tax:'Tax Summary', mutualfunds:'Mutual Funds' }[tab]}
             </h1>
             <p className="db-page-sub">
               {emailStatus.length > 0
@@ -855,6 +866,280 @@ export default function Dashboard() {
                     </table>
                   </div>
                 </div>
+              </div>
+            );
+          })()}
+
+          {/* MUTUAL FUNDS */}
+          {tab === 'mutualfunds' && (() => {
+            const mf       = mfData;
+            const holdings = mf?.holdings || [];
+            const summary  = mf?.summary  || {};
+            const fmt      = (v) => v >= 10000000 ? `₹${(v/10000000).toFixed(2)}Cr` : v >= 100000 ? `₹${(v/100000).toFixed(2)}L` : `₹${Number(v||0).toLocaleString('en-IN',{maximumFractionDigits:0})}`;
+            const COLORS   = ['#00d4a1','#0ea5e9','#f59e0b','#a78bfa','#f43f5e','#34d399','#fb923c','#818cf8','#e879f9','#4ade80'];
+            const pieData  = summary.byFundHouse || [];
+            const gainPct  = summary.gainLossPct || 0;
+
+            return (
+              <div className="fade-in">
+
+                {/* ── Top action bar ── */}
+                <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:20, flexWrap:'wrap' }}>
+                  <div style={{ flex:1, minWidth:200 }}>
+                    <div style={{ color:'#94a3b8', fontSize:12 }}>
+                      {holdings.length} funds · Last synced from {[...new Set(holdings.map(h=>h.source))].join(', ') || 'CDSL'}
+                    </div>
+                  </div>
+                  {/* Request CAMS + KFintech statement */}
+                  <button
+                    onClick={async () => {
+                      setMfRequestSent(null);
+                      try {
+                        const r = await mfAPI.requestCAS();
+                        setMfRequestSent({ success: true, message: r.data.message });
+                      } catch(e) {
+                        setMfRequestSent({ success: false, message: e.response?.data?.error || 'Request failed' });
+                      }
+                    }}
+                    style={{ padding:'8px 16px', background:'rgba(14,165,233,0.12)', border:'1px solid rgba(14,165,233,0.3)',
+                      color:'#0ea5e9', borderRadius:8, fontSize:12, fontWeight:700, cursor:'pointer' }}>
+                    📧 Request CAMS + KFintech Statement
+                  </button>
+                  {/* Sync received statement PDFs */}
+                  <button
+                    disabled={mfSyncing}
+                    onClick={async () => {
+                      setMfSyncing(true); setMfRequestSent(null);
+                      try {
+                        const r = await mfAPI.syncStatements();
+                        setMfRequestSent({ success: r.data.success, message: r.data.message });
+                        if (r.data.savedCount > 0) {
+                          const r2 = await mfAPI.get();
+                          setMfData(r2.data);
+                        }
+                      } catch(e) {
+                        setMfRequestSent({ success: false, message: e.response?.data?.error || 'Sync failed' });
+                      } finally { setMfSyncing(false); }
+                    }}
+                    style={{ padding:'8px 16px', background: mfSyncing ? '#1e2d3d' : 'rgba(100,255,218,0.1)',
+                      border:'1px solid rgba(100,255,218,0.3)', color:'#64ffda',
+                      borderRadius:8, fontSize:12, fontWeight:700, cursor: mfSyncing ? 'not-allowed' : 'pointer' }}>
+                    {mfSyncing ? '⟳ Syncing…' : '⟳ Sync MF Statements'}
+                  </button>
+                </div>
+
+                {/* Status banner */}
+                {mfRequestSent && (
+                  <div style={{ marginBottom:16, padding:'10px 14px', borderRadius:8, fontSize:13,
+                    background: mfRequestSent.success ? 'rgba(0,212,161,0.08)' : 'rgba(244,63,94,0.08)',
+                    border: `1px solid ${mfRequestSent.success ? 'rgba(0,212,161,0.2)' : 'rgba(244,63,94,0.2)'}`,
+                    color: mfRequestSent.success ? '#00d4a1' : '#f43f5e',
+                    display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                    <span>{mfRequestSent.success ? '✅' : '❌'} {mfRequestSent.message}</span>
+                    <button onClick={() => setMfRequestSent(null)} style={{ background:'none', border:'none', color:'inherit', cursor:'pointer' }}>✕</button>
+                  </div>
+                )}
+
+                {mfLoading ? (
+                  <div style={{ textAlign:'center', padding:60, color:'#334155' }}>Loading mutual funds…</div>
+                ) : holdings.length === 0 ? (
+                  <div style={{ textAlign:'center', padding:60, color:'#334155', lineHeight:2 }}>
+                    <div style={{ fontSize:32, marginBottom:12 }}>📊</div>
+                    <div style={{ color:'#64748b', fontSize:14, marginBottom:8 }}>No mutual fund holdings yet</div>
+                    <div style={{ color:'#334155', fontSize:12 }}>
+                      CDSL demat MF units sync automatically with CAS.<br/>
+                      For SIP folios (CAMS/KFintech), click <b style={{color:'#0ea5e9'}}>Request CAMS + KFintech Statement</b> above,<br/>
+                      wait 5–30 minutes for the email, then click <b style={{color:'#64ffda'}}>Sync MF Statements</b>.
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {/* ── Summary tiles ── */}
+                    <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12, marginBottom:20 }}>
+                      {[
+                        { label:'Current Value',   val: fmt(summary.totalValue),    color:'#64ffda' },
+                        { label:'Invested',         val: fmt(summary.totalInvested || 0), color:'#0ea5e9' },
+                        { label:'Gain / Loss',      val: fmt(Math.abs(summary.totalGainLoss||0)),
+                          color: (summary.totalGainLoss||0) >= 0 ? '#00d4a1' : '#f43f5e',
+                          prefix: (summary.totalGainLoss||0) >= 0 ? '+' : '-' },
+                        { label:'Returns',          val: `${gainPct >= 0 ? '+' : ''}${gainPct.toFixed(2)}%`,
+                          color: gainPct >= 0 ? '#00d4a1' : '#f43f5e' },
+                      ].map(t => (
+                        <div key={t.label} style={{ background:'rgba(255,255,255,0.04)', borderRadius:10,
+                          padding:'14px 16px', border:'1px solid rgba(255,255,255,0.06)' }}>
+                          <div style={{ color:'#64748b', fontSize:11, marginBottom:6 }}>{t.label}</div>
+                          <div style={{ color: t.color, fontWeight:700, fontSize:18 }}>{t.prefix||''}{t.val}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* ── Charts row ── */}
+                    <div style={{ display:'grid', gridTemplateColumns:'1fr 1.6fr', gap:16, marginBottom:20 }}>
+
+                      {/* Pie — by fund house */}
+                      <div style={{ background:'rgba(255,255,255,0.04)', borderRadius:12, padding:20,
+                        border:'1px solid rgba(255,255,255,0.08)' }}>
+                        <div style={{ fontWeight:700, color:'#e2e8f0', fontSize:14, marginBottom:16 }}>
+                          📊 By Fund House
+                        </div>
+                        {pieData.length > 0 ? (
+                          <>
+                            <div style={{ display:'flex', justifyContent:'center' }}>
+                              <PieChart width={200} height={200}>
+                                <Pie data={pieData} cx={100} cy={100} innerRadius={55} outerRadius={90}
+                                  dataKey="value" paddingAngle={2}>
+                                  {pieData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                                </Pie>
+                                <Tooltip formatter={v => fmt(v)}
+                                  contentStyle={{ background:'#1a1a2e', border:'1px solid #333', borderRadius:8, fontSize:12 }} />
+                              </PieChart>
+                            </div>
+                            <div style={{ display:'flex', flexDirection:'column', gap:5, marginTop:4 }}>
+                              {pieData.slice(0,6).map((d, i) => (
+                                <div key={d.name} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', fontSize:11 }}>
+                                  <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+                                    <div style={{ width:8, height:8, borderRadius:'50%', background:COLORS[i % COLORS.length], flexShrink:0 }} />
+                                    <span style={{ color:'#cbd5e1' }}>{d.name}</span>
+                                  </div>
+                                  <span style={{ color:'#94a3b8', fontWeight:600 }}>{fmt(d.value)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </>
+                        ) : null}
+                      </div>
+
+                      {/* Bar — top holdings by value */}
+                      <div style={{ background:'rgba(255,255,255,0.04)', borderRadius:12, padding:20,
+                        border:'1px solid rgba(255,255,255,0.08)' }}>
+                        <div style={{ fontWeight:700, color:'#e2e8f0', fontSize:14, marginBottom:16 }}>
+                          📈 Holdings by Value
+                        </div>
+                        <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+                          {holdings.slice(0,8).map((h, i) => {
+                            const pct = summary.totalValue > 0 ? (h.current_value / summary.totalValue * 100) : 0;
+                            return (
+                              <div key={h.id}>
+                                <div style={{ display:'flex', justifyContent:'space-between', fontSize:11, marginBottom:3 }}>
+                                  <span style={{ color:'#cbd5e1', fontWeight:600, maxWidth:220,
+                                    overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                                    {h.fund_name}
+                                  </span>
+                                  <div style={{ display:'flex', gap:10, flexShrink:0 }}>
+                                    <span style={{ color:'#64748b' }}>{pct.toFixed(1)}%</span>
+                                    <span style={{ color:'#00d4a1', fontWeight:700 }}>{fmt(h.current_value||0)}</span>
+                                  </div>
+                                </div>
+                                <div style={{ height:5, background:'rgba(255,255,255,0.06)', borderRadius:3, overflow:'hidden' }}>
+                                  <div style={{ height:'100%', width:`${pct}%`, borderRadius:3,
+                                    background: COLORS[i % COLORS.length], transition:'width 0.6s ease' }} />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* ── Holdings table ── */}
+                    <div style={{ background:'rgba(255,255,255,0.03)', borderRadius:12,
+                      border:'1px solid rgba(255,255,255,0.07)', overflow:'hidden' }}>
+                      <div style={{ padding:'16px 20px', borderBottom:'1px solid rgba(255,255,255,0.06)',
+                        display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                        <div style={{ fontWeight:700, color:'#e2e8f0', fontSize:14 }}>
+                          All Mutual Fund Holdings ({holdings.length})
+                        </div>
+                        <div style={{ color:'#64748b', fontSize:12 }}>
+                          Total: <span style={{ color:'#64ffda', fontWeight:700 }}>{fmt(summary.totalValue)}</span>
+                        </div>
+                      </div>
+                      <div style={{ overflowX:'auto' }}>
+                        <table className="db-table">
+                          <thead>
+                            <tr>
+                              <th>Fund</th>
+                              <th>Category</th>
+                              <th className="right">Units</th>
+                              <th className="right">NAV</th>
+                              <th className="right">Current Value</th>
+                              <th className="right">Invested</th>
+                              <th className="right">Gain/Loss</th>
+                              <th>Folio / ISIN</th>
+                              <th>Source</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {holdings.map(h => {
+                              const gl    = (h.current_value||0) - (h.invested_value||0);
+                              const glPct = h.invested_value > 0 ? (gl / h.invested_value * 100) : null;
+                              return (
+                                <tr key={h.id}>
+                                  <td>
+                                    <div style={{ fontWeight:600, color:'#e2e8f0', fontSize:12,
+                                      maxWidth:220, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                                      {h.fund_name}
+                                    </div>
+                                    <div style={{ color:'#475569', fontSize:10, marginTop:1 }}>{h.fund_house}</div>
+                                  </td>
+                                  <td>
+                                    <span style={{ fontSize:10, background:'rgba(14,165,233,0.1)', color:'#0ea5e9',
+                                      borderRadius:4, padding:'2px 7px', fontWeight:600, whiteSpace:'nowrap' }}>
+                                      {h.fund_category || 'Equity'}
+                                    </span>
+                                  </td>
+                                  <td className="right mono" style={{ color:'#e2e8f0' }}>
+                                    {Number(h.units||0).toLocaleString('en-IN',{maximumFractionDigits:3})}
+                                  </td>
+                                  <td className="right mono" style={{ color:'#94a3b8' }}>
+                                    {h.nav ? `₹${Number(h.nav).toFixed(2)}` : '—'}
+                                  </td>
+                                  <td className="right mono" style={{ color:'#64ffda', fontWeight:700 }}>
+                                    {h.current_value ? fmt(h.current_value) : '—'}
+                                  </td>
+                                  <td className="right mono" style={{ color:'#64748b' }}>
+                                    {h.invested_value ? fmt(h.invested_value) : '—'}
+                                  </td>
+                                  <td className="right mono">
+                                    {h.invested_value ? (
+                                      <div>
+                                        <span style={{ color: gl >= 0 ? '#00d4a1' : '#f43f5e', fontWeight:600 }}>
+                                          {gl >= 0 ? '+' : ''}{fmt(Math.abs(gl))}
+                                        </span>
+                                        {glPct !== null && (
+                                          <div style={{ color: glPct >= 0 ? '#00d4a1' : '#f43f5e', fontSize:10 }}>
+                                            {glPct >= 0 ? '+' : ''}{glPct.toFixed(2)}%
+                                          </div>
+                                        )}
+                                      </div>
+                                    ) : '—'}
+                                  </td>
+                                  <td style={{ fontSize:10, color:'#475569', maxWidth:120,
+                                    overflow:'hidden', textOverflow:'ellipsis' }}>
+                                    {h.folio_number
+                                      ? <span title={h.folio_number}>📁 {h.folio_number}</span>
+                                      : h.isin
+                                      ? <span title={h.isin} style={{ color:'#1e3a5f' }}>{h.isin}</span>
+                                      : '—'}
+                                  </td>
+                                  <td>
+                                    <span style={{ fontSize:10, borderRadius:4, padding:'2px 6px', fontWeight:600,
+                                      background: h.source === 'CDSL' ? 'rgba(100,255,218,0.08)' :
+                                                  h.source === 'CAMS' ? 'rgba(251,146,60,0.12)' :
+                                                  'rgba(167,139,250,0.12)',
+                                      color: h.source === 'CDSL' ? '#334155' :
+                                             h.source === 'CAMS' ? '#fb923c' : '#a78bfa' }}>
+                                      {h.source || 'CDSL'}
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             );
           })()}
