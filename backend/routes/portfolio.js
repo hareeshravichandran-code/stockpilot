@@ -2,6 +2,7 @@ const router = require('express').Router();
 const requireAuth = require('../middleware/requireAuth');
 const supabase = require('../services/supabase');
 const { getPrices, getSectorFromYahoo, getSectorLocal, toNSE } = require('../services/prices');
+const { searchStocks, getStockBySymbol } = require('../services/nseStocks');
 
 // ── Get full portfolio with live prices ────────────────────────────
 router.get('/', requireAuth, async (req, res) => {
@@ -13,9 +14,20 @@ router.get('/', requireAuth, async (req, res) => {
       .order('quantity', { ascending: false }); // market_value is computed — order by quantity instead
 
     if (error) return res.status(500).json({ error: error.message });
+    if (!holdings || holdings.length === 0)
+      return res.json({ holdings: [], summary: { totalCost:0, totalMarket:0, totalPnl:0, totalPnlPct:0, totalDividend:0, yieldOnCost:0, yieldOnMarket:0, holdingsCount:0, lastUpdated: new Date().toISOString(), casDate:null, casSource:null } });
 
-    const symbols = holdings.map(h => h.symbol);
-    const prices  = symbols.length > 0 ? await getPrices(symbols, holdings) : {};
+    // Only fetch prices for equity symbols — MF/ETF (INF ISINs) have no NSE equity ticker
+    const equityHoldings = holdings.filter(h => !h.isin?.startsWith('INF'));
+    const symbols = equityHoldings.map(h => h.symbol);
+    let prices = {};
+    try {
+      prices = symbols.length > 0 ? await getPrices(symbols, equityHoldings) : {};
+    } catch (priceErr) {
+      // Price fetch failing must never block holdings from showing
+      console.error(JSON.stringify({ event: 'PRICE_FETCH_ERROR', error: priceErr.message }));
+      prices = {};
+    }
 
     const enriched = await Promise.all(holdings.map(async h => {
       const liveData  = prices[h.symbol];
@@ -50,6 +62,7 @@ router.get('/', requireAuth, async (req, res) => {
         change:    liveData?.change    || 0,
         changePct: liveData?.changePct || 0,
         sector,
+        asset_type: h.isin?.startsWith('INF') ? 'MF/ETF' : 'Equity',
         priceSource: liveData?.source || (h.last_price ? 'cached' : 'cost'),
         dividendYieldOnCost: h.dividend_per_share > 0
           ? parseFloat((h.dividend_per_share / (h.avg_cost || ltp) * 100).toFixed(2)) : 0
@@ -120,7 +133,6 @@ router.get('/search', requireAuth, (req, res) => {
   const { q } = req.query;
   if (!q || q.trim().length < 1)
     return res.json([]);
-  const { searchStocks } = require('../services/nseStocks');
   res.json(searchStocks(q));
 });
 
@@ -131,7 +143,6 @@ router.post('/holding', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'symbol and quantity are required' });
 
   // Enrich from NSE master if not provided
-  const { getStockBySymbol } = require('../services/nseStocks');
   const master = getStockBySymbol(symbol);
 
   const row = {
@@ -143,7 +154,7 @@ router.post('/holding', requireAuth, async (req, res) => {
     quantity:   parseInt(quantity),
     avg_cost:   avgCost ? parseFloat(avgCost) : 0,
     last_price: avgCost ? parseFloat(avgCost) : 0,  // seed with cost until Yahoo syncs
-    source:     'manual',   // ← indicator: manually entered
+    cas_source: 'manual',   // ← indicator: manually entered
     updated_at: new Date().toISOString(),
   };
 
