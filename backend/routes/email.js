@@ -522,23 +522,33 @@ router.get('/debug-cdsl', requireAuth, async (req, res) => {
       const parseResult = parseCAS(textToParse);
 
       results.push({
-        subject:      email.subject,
-        from:         email.from,
-        date:         email.date,
-        hasPdf:       email.hasPdf,
-        pdfFailed:    email.pdfFailed,
-        bodyLength:   email.body?.length || 0,
-        textLength:   textToParse.length,
-        casType:      detectCASType(textToParse),
-        isinsFound:   isinMatches.length,
-        holdingsParsed: parseResult.holdings.length,
-        // First 2000 chars of extracted text — THIS IS THE KEY DIAGNOSTIC
-        rawTextStart: textToParse.slice(0, 2000),
-        // 200 chars around the first ISIN
+        subject:       email.subject,
+        from:          email.from,
+        date:          email.date,
+        hasPdf:        email.hasPdf,
+        pdfFailed:     email.pdfFailed,
+        bodyLength:    email.body?.length || 0,
+        textLength:    textToParse.length,
+        casType:       detectCASType(textToParse),
+        casDate:       parseResult.summary?.statementDate,
+        isinsFound:    isinMatches.length,
+        equityParsed:  parseResult.holdings.length,
+        mfParsed:      parseResult.mfHoldings.length,
+        // First 3000 chars — includes MF section if present
+        rawTextStart:  textToParse.slice(0, 3000),
+        // Context around first ISIN
         firstIsinContext: isinMatches.length > 0
           ? textToParse.slice(Math.max(0, isinMatches[0].index - 50), isinMatches[0].index + 200)
           : null,
-        parsedHoldings: parseResult.holdings.slice(0, 5),
+        // MF section context — look for NAV date pattern
+        mfSectionContext: (() => {
+          const navDateIdx = textToParse.search(/\d{2}-(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-\d{4}/);
+          return navDateIdx >= 0
+            ? textToParse.slice(Math.max(0, navDateIdx - 200), navDateIdx + 300)
+            : 'No NAV date found in text';
+        })(),
+        parsedEquity: parseResult.holdings.slice(0, 5),
+        parsedMF:     parseResult.mfHoldings.slice(0, 5),
       });
     }
 
