@@ -219,10 +219,12 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
         continue;
       }
 
-      const { holdings, summary } = parseResult;
+      const { holdings, mfHoldings, summary } = parseResult;
 
-      if (!holdings || holdings.length === 0) {
-        // Save text from around where ISINs should be (skip nomination page 1)
+      // Consider success if we found equity holdings OR SOA MF holdings
+      const totalFound = (holdings?.length || 0) + (mfHoldings?.length || 0);
+
+      if (totalFound === 0) {
         const isinSearch = textToParse.match(/IN[A-Z0-9]{10}/);
         const isinPos = isinSearch ? textToParse.indexOf(isinSearch[0]) : -1;
         const rawSnippet = isinPos > 0
@@ -230,8 +232,8 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
           : 'NO_ISIN_FOUND. TEXT_END:' + textToParse.slice(-500);
         await logger.logFailure({
           ...meta, hasPdf: email.hasPdf || false,
-          errorType: 'NO_ISIN',
-          errorMessage: `Parsed as ${casType} but no ISINs/holdings found`,
+          errorType: 'NO_HOLDINGS',
+          errorMessage: `Parsed as ${casType} but no equity or MF holdings found`,
           rawText: rawSnippet
         });
         continue;
@@ -241,7 +243,7 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
       await logger.logSuccess({
         ...meta, hasPdf: email.hasPdf || false,
         pdfUnlocked: email.hasPdf || false,
-        itemsFound: holdings.length,
+        itemsFound: totalFound,
         parsedData: holdings,
         rawText: textToParse.slice(0, 1000)
       });
@@ -249,11 +251,12 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
       const d = new Date(email.date);
       if (!bestDate || d > bestDate) {
         bestDate   = d;
-        bestResult = { email, holdings, summary, casType };
+        bestResult = { email, holdings, mfHoldings, summary, casType };
       }
 
-      // Save immediately — accumulate across CDSL + NSDL
-      const saved = await saveCASHoldings(req.user.id, holdings, email.date);
+      // Save immediately — use statement date from PDF, not email date
+      const casDate = summary?.statementDate || null;
+      const saved = await saveCASHoldings(req.user.id, holdings, mfHoldings, casDate);
       totalSaved += saved;
       casTypesSeen.push(casType);
     }
@@ -284,7 +287,7 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
     return res.json({
       success: totalSaved > 0,
       message: totalSaved > 0
-        ? `✓ Synced ${totalSaved} holdings from ${casTypesLabel}`
+        ? `✓ Synced ${totalSaved} holdings from ${casTypesLabel} (statement date: ${bestResult?.summary?.statementDate || 'unknown'})`
         : !profileComplete
           ? 'CAS email found but PDF could not be unlocked. Please set your PAN and Date of Birth in ⚙ Profile & PAN settings, then sync again.'
           : 'CAS email found but no holdings parsed. Check ⚙ Sync Logs for details.',
@@ -309,52 +312,125 @@ router.post('/sync', requireAuth, (req, res, next) => {
   next('route');
 });
 
-// ── Save holdings (preserve avg_cost) ────────────────────────────────
-async function saveCASHoldings(userId, holdings, emailDate) {
-  const { saveMFHolding } = require('./mf');
+// ── Save holdings (equity → holdings table, MF → mf_holdings table) ──
+// casDate = statement date from PDF ("As on Date"), NOT email/sync date
+async function saveCASHoldings(userId, holdings, mfHoldings, casDate) {
+  const supabase   = require('../services/supabase');
   let saved = 0;
-  const casDate = emailDate ? new Date(emailDate).toISOString() : new Date().toISOString();
 
+  // cas_date is the statement date extracted from PDF (YYYY-MM-DD)
+  // Fall back to today only if not available
+  const statementDate = casDate || new Date().toISOString().split('T')[0];
+
+  // ── Step 1: Equity holdings → holdings table ──────────────────
   for (const h of holdings) {
     if (!h.isin) continue;
 
-    // ── MF / ETF (INF prefix) → mf_holdings table ────────────
+    // INF (demat MF/ETF) also go to mf_holdings, not equity table
     if (h.isin.startsWith('INF')) {
-      const ok = await saveMFHolding(userId, {
+      const saved_ok = await saveSingleMF(userId, {
         isin:          h.isin,
+        folio_number:  null,
         fund_name:     h.company || h.isin,
         units:         h.quantity,
         nav:           h.market_price || null,
         current_value: h.market_value || (h.quantity * (h.market_price || 0)),
-      }, emailDate, 'CDSL');
-      if (ok) saved++;
+        invested_value:null,
+        gain_loss:     null,
+        source:        h.cas_source || 'CDSL',
+      }, statementDate);
+      if (saved_ok) saved++;
       continue;
     }
 
-    // ── Equity (INE prefix) → holdings table ─────────────────
+    // INE equity → holdings table
     const { data: existing } = await supabase
       .from('holdings').select('avg_cost, dividend_per_share, sector')
       .eq('user_id', userId).eq('isin', h.isin).maybeSingle();
 
     const { error } = await supabase.from('holdings').upsert({
-      user_id: userId, isin: h.isin,
-      symbol: h.symbol || h.isin, company: h.company || h.isin,
-      quantity: h.quantity, market_value: h.marketValue || null,
-      avg_cost: existing?.avg_cost || h.market_price || 0,
+      user_id:            userId,
+      isin:               h.isin,
+      symbol:             h.symbol  || h.isin,
+      company:            h.company || h.isin,
+      quantity:           h.quantity,
+      market_value:       h.market_value || null,
+      avg_cost:           existing?.avg_cost || h.market_price || 0,
       dividend_per_share: existing?.dividend_per_share || 0,
-      sector: existing?.sector || 'Other',
-      last_price: h.market_price || null,
-      cas_source: h.cas_source || h.source || 'CAS',
-      cas_updated_at: casDate,
-      updated_at: new Date().toISOString(),
+      sector:             existing?.sector || 'Other',
+      last_price:         h.market_price || null,
+      cas_source:         h.cas_source || 'CAS',
+      cas_updated_at:     new Date().toISOString(),
+      updated_at:         new Date().toISOString(),
     }, { onConflict: 'user_id,isin' });
 
     if (error) console.error(JSON.stringify({ event: 'HOLDING_SAVE_ERROR', isin: h.isin, error: error.message }));
     else saved++;
   }
 
-  console.log(JSON.stringify({ event: 'HOLDINGS_SAVED', saved, total: holdings.length }));
+  // ── Step 2: SOA MF holdings → mf_holdings table ───────────────
+  // These are folio-based (no ISIN) from NSDL MF SOA section
+  for (const h of (mfHoldings || [])) {
+    const saved_ok = await saveSingleMF(userId, h, statementDate);
+    if (saved_ok) saved++;
+  }
+
+  console.log(JSON.stringify({
+    event:          'HOLDINGS_SAVED',
+    saved,
+    equity:         holdings.filter(h => !h.isin?.startsWith('INF')).length,
+    dematMF:        holdings.filter(h => h.isin?.startsWith('INF')).length,
+    soaMF:          (mfHoldings || []).length,
+    statementDate,
+  }));
   return saved;
+}
+
+// ── Save a single MF holding to mf_holdings table ─────────────────
+async function saveSingleMF(userId, h, statementDate) {
+  const supabase = require('../services/supabase');
+  const record = {
+    user_id:        userId,
+    isin:           h.isin           || null,
+    folio_number:   h.folio_number   || null,
+    fund_name:      h.fund_name      || h.company || 'Unknown Fund',
+    fund_house:     h.fund_house     || null,
+    fund_category:  h.fund_category  || null,
+    units:          h.units          || h.quantity || 0,
+    nav:            h.nav            || h.market_price || null,
+    current_value:  h.current_value  || null,
+    invested_value: h.invested_value || null,
+    gain_loss:      h.gain_loss      || null,
+    source:         h.source         || 'NSDL',
+    statement_date: statementDate,
+    cas_updated_at: new Date().toISOString(),
+    updated_at:     new Date().toISOString(),
+  };
+
+  let error;
+
+  // Upsert by ISIN (demat MF) or folio (SOA MF)
+  if (record.isin) {
+    ({ error } = await supabase.from('mf_holdings')
+      .upsert(record, { onConflict: 'user_id,isin' }));
+  } else if (record.folio_number) {
+    // Check if folio already exists
+    const { data: existing } = await supabase.from('mf_holdings')
+      .select('id').eq('user_id', userId).eq('folio_number', record.folio_number).maybeSingle();
+    if (existing) {
+      ({ error } = await supabase.from('mf_holdings').update(record).eq('id', existing.id));
+    } else {
+      ({ error } = await supabase.from('mf_holdings').insert(record));
+    }
+  } else {
+    return false; // no identifier — skip
+  }
+
+  if (error) {
+    console.error(JSON.stringify({ event: 'MF_SAVE_ERROR', fund: record.fund_name, error: error.message }));
+    return false;
+  }
+  return true;
 }
 
 // ── Email connection status ───────────────────────────────────────────
