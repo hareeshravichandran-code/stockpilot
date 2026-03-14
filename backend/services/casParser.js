@@ -302,10 +302,11 @@ function parseNSDLMF(text) {
   const mfHoldings = [];
   const seen = new Set(); // dedup by folio
 
-  // Primary regex — anchored ONLY on NAV date (DD-Mon-YYYY) which is unique to MF rows
-  // Fund name: any text between folio and the invested value number
-  // We removed the Fund/Scheme/Growth keyword requirement — too many real fund names lack these
-  const MF_ROW_RE = /(\d[\d\/\s]{3,14})\s+([A-Z][A-Za-z0-9\s\-&().,]{5,100}?)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{3})\s+(\d{2}-(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-\d{4})\s+([\d,]+\.\d{2,4})\s+([\d,]+\.\d{2})/gm;
+  // Primary regex — folio anchored at line start to prevent cross-line digit bleeding
+  // e.g. "13,319.73\n9876543210 Fund..." must NOT match as folio "73\n9876543210"
+  // Folio: 7-16 pure digits optionally followed by /N suffix
+  // Anchor: NAV date DD-Mon-YYYY is unique to MF rows
+  const MF_ROW_RE = /(?:^|\n)\s*(\d{7,16}(?:\/\d+)?)\s+([A-Z][A-Za-z0-9\s\-&().,]{5,100}?)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{3})\s+(\d{2}-(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-\d{4})\s+([\d,]+\.\d{2,4})\s+([\d,]+\.\d{2})/gm;
 
   // Folio validation — must be 7-16 pure digits, optionally with /N suffix
   function validFolio(raw) {
