@@ -71,6 +71,13 @@ const ISIN_TO_SYMBOL = {
   'INE002A01018': { symbol: 'RELIANCE',    company: 'Reliance Industries Limited' },
   'INE079A01024': { symbol: 'POWERGRID',   company: 'Power Grid Corporation of India' },
   'INE053F01010': { symbol: 'IRFC',        company: 'Indian Railway Finance Corporation Ltd' },
+  // InvITs & REITs
+  'INE0GGX23010': { symbol: 'PGINVIT',     company: 'PowerGrid Infrastructure Investment Trust' },
+  'INE230O23011': { symbol: 'INDIGRID',    company: 'India Grid Trust InvIT' },
+  'INE465L23012': { symbol: 'STOVIND',     company: 'Stove Kraft Limited' },
+  'INE098L23018': { symbol: 'MINDSPACE',   company: 'Mindspace Business Parks REIT' },
+  'INE0J1Y23023': { symbol: 'EMBASSY',     company: 'Embassy Office Parks REIT' },
+  'INE752O23027': { symbol: 'NEXUS',       company: 'Nexus Select Trust REIT' },
   'INE040H01021': { symbol: 'SUZLON',      company: 'Suzlon Energy Limited' },
   'INE047A01021': { symbol: 'TATASTEEL',   company: 'Tata Steel Limited' },
   'INE081A01020': { symbol: 'TATASTEEL',   company: 'Tata Steel Limited' },
