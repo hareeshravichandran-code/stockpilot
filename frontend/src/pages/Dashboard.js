@@ -53,10 +53,6 @@ export default function Dashboard() {
   // ── Mutual Funds state ───────────────────────────────────────────
   const [mfData, setMfData]                   = useState(null);
   const [mfLoading, setMfLoading]             = useState(false);
-  const [showMFUploadModal, setShowMFUploadModal] = useState(false);
-  const [mfPdfFile, setMfPdfFile]             = useState(null);
-  const [mfUploading, setMfUploading]         = useState(false);
-  const [mfUploadResult, setMfUploadResult]   = useState(null);
 
   // ── Income Settings state ────────────────────────────────────────
   const [showIncomeSettings, setShowIncomeSettings] = useState(false);
@@ -117,6 +113,9 @@ export default function Dashboard() {
     incomeAPI.getEntries().then(r => {
       setIncomeSummary(r.data.summary || { currentFYTotal:0, thisMonthTotal:0, byCategory:{} });
     }).catch(() => {});
+
+    // Load MF total for net worth tile
+    mfAPI.get().then(r => setMfData(r.data)).catch(() => {});
 
     // Handle OAuth callback
     const connected = searchParams.get('connected');
@@ -469,13 +468,15 @@ export default function Dashboard() {
             <div className="fade-in">
               {/* ── Phase 1: 5 Tiles ── */}
               {(() => {
-                const stocksVal = s.totalMarket || 0;
+                const stocksVal   = s.totalMarket || 0;
+                const mfVal       = mfData?.summary?.totalValue || 0;
                 const otherAssets = (assetBalances.ppf||0) + (assetBalances.epf||0) + (assetBalances.nps||0) + (assetBalances.fd||0) + (assetBalances.ssy||0);
-                const totalNetWorth = stocksVal + otherAssets;
+                const totalNetWorth = stocksVal + mfVal + otherAssets;
                 const totalCredit = (liabilities.homeLoan||0) + (liabilities.creditCard||0);
 
                 const pieData = [
                   { name: 'Stocks', value: stocksVal, color: '#64ffda' },
+                  { name: 'Mutual Funds', value: mfVal, color: '#a78bfa' },
                   { name: 'PPF', value: assetBalances.ppf||0, color: '#ffd700' },
                   { name: 'EPF', value: assetBalances.epf||0, color: '#00bcd4' },
                   { name: 'NPS', value: assetBalances.nps||0, color: '#b39ddb' },
@@ -886,111 +887,6 @@ export default function Dashboard() {
             return (
               <div className="fade-in">
 
-                {/* ── Instruction modal for MFCentral upload ── */}
-                {showMFUploadModal && (
-                  <div className="db-modal-overlay" onClick={e => { if(e.target===e.currentTarget) setShowMFUploadModal(false); }}>
-                    <div className="db-modal fade-in" style={{ maxWidth:560, maxHeight:'90vh', overflowY:'auto' }}>
-                      <div className="db-modal-header">
-                        <div>
-                          <div className="db-modal-title">📥 Import CAMS / KFintech Holdings</div>
-                          <div style={{ color:'#64748b', fontSize:12, marginTop:2 }}>via MFCentral CAS (SOA Mutual Funds)</div>
-                        </div>
-                        <button className="db-modal-close" onClick={() => setShowMFUploadModal(false)}>✕</button>
-                      </div>
-                      <div className="db-modal-body">
-
-                        {/* Prerequisites */}
-                        <div style={{ background:'rgba(14,165,233,0.06)', border:'1px solid rgba(14,165,233,0.2)',
-                          borderRadius:8, padding:'12px 14px', marginBottom:16 }}>
-                          <div style={{ color:'#0ea5e9', fontWeight:700, fontSize:11, marginBottom:8 }}>PREREQUISITES</div>
-                          <div style={{ color:'#94a3b8', fontSize:12, lineHeight:1.8 }}>
-                            ✓ Your PAN must be saved in <b style={{color:'#e2e8f0'}}>Profile & PAN</b> settings (used to unlock the PDF)<br/>
-                            ✓ Register once at <a href="https://www.mfcentral.com" target="_blank" rel="noreferrer"
-                              style={{ color:'#0ea5e9' }}>mfcentral.com</a> using your PAN + registered mobile number
-                          </div>
-                        </div>
-
-                        {/* Steps */}
-                        <div style={{ color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:10 }}>HOW TO DOWNLOAD YOUR CAS</div>
-                        {[
-                          { step:'1', text: 'Open MFCentral CAS page', sub: 'Click the link below — it opens the SEBI CAS download page directly', link: 'https://app.mfcentral.com/portal/sebi-cas', linkLabel: '→ Open MFCentral CAS Page' },
-                          { step:'2', text: 'Log in with PAN + OTP', sub: 'Enter your PAN number, then verify with OTP sent to your registered mobile' },
-                          { step:'3', text: 'Select period & download', sub: 'Choose "Detailed" statement, select date range (e.g. current financial year), click Download. A PDF will be emailed/downloaded.' },
-                          { step:'4', text: 'Upload PDF below', sub: 'The PDF password is your PAN in uppercase (e.g. ABCDE1234F). We unlock it automatically using your saved PAN.' },
-                        ].map(s => (
-                          <div key={s.step} style={{ display:'flex', gap:12, marginBottom:14, alignItems:'flex-start' }}>
-                            <div style={{ width:24, height:24, borderRadius:'50%', background:'rgba(100,255,218,0.15)',
-                              color:'#64ffda', fontSize:11, fontWeight:700, display:'flex', alignItems:'center',
-                              justifyContent:'center', flexShrink:0, marginTop:2 }}>{s.step}</div>
-                            <div>
-                              <div style={{ color:'#e2e8f0', fontSize:13, fontWeight:600 }}>{s.text}</div>
-                              <div style={{ color:'#64748b', fontSize:11, marginTop:2 }}>{s.sub}</div>
-                              {s.link && (
-                                <a href={s.link} target="_blank" rel="noreferrer"
-                                  style={{ display:'inline-block', marginTop:6, padding:'5px 12px',
-                                    background:'rgba(14,165,233,0.12)', border:'1px solid rgba(14,165,233,0.3)',
-                                    borderRadius:6, color:'#0ea5e9', fontSize:11, fontWeight:700, textDecoration:'none' }}>
-                                  {s.linkLabel}
-                                </a>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-
-                        {/* File upload */}
-                        <div style={{ borderTop:'1px solid #1e3a5f', paddingTop:16, marginTop:4 }}>
-                          <div style={{ color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:10 }}>UPLOAD YOUR CAS PDF</div>
-                          <input
-                            type="file" accept=".pdf"
-                            onChange={e => setMfPdfFile(e.target.files[0])}
-                            style={{ display:'block', color:'#94a3b8', fontSize:12, marginBottom:10,
-                              background:'#0a1628', border:'1px solid #1e3a5f', borderRadius:6,
-                              padding:'8px 10px', width:'100%', boxSizing:'border-box', cursor:'pointer' }}
-                          />
-                          {mfPdfFile && (
-                            <div style={{ color:'#64748b', fontSize:11, marginBottom:10 }}>
-                              📄 {mfPdfFile.name} ({(mfPdfFile.size/1024).toFixed(0)} KB)
-                            </div>
-                          )}
-
-                          {mfUploadResult && (
-                            <div style={{ marginBottom:12, padding:'9px 12px', borderRadius:6, fontSize:12,
-                              background: mfUploadResult.success ? 'rgba(0,212,161,0.08)' : 'rgba(244,63,94,0.08)',
-                              border: `1px solid ${mfUploadResult.success ? 'rgba(0,212,161,0.2)' : 'rgba(244,63,94,0.2)'}`,
-                              color: mfUploadResult.success ? '#00d4a1' : '#f43f5e' }}>
-                              {mfUploadResult.success ? '✅' : '❌'} {mfUploadResult.message}
-                            </div>
-                          )}
-
-                          <button
-                            disabled={!mfPdfFile || mfUploading}
-                            onClick={async () => {
-                              if (!mfPdfFile) return;
-                              setMfUploading(true); setMfUploadResult(null);
-                              try {
-                                const fd = new FormData();
-                                fd.append('pdf', mfPdfFile);
-                                const r = await mfAPI.uploadPDF(fd);
-                                setMfUploadResult({ success: true, message: r.data.message });
-                                const r2 = await mfAPI.get();
-                                setMfData(r2.data);
-                                // Close modal after 2s on success
-                                setTimeout(() => { setShowMFUploadModal(false); setMfUploadResult(null); setMfPdfFile(null); }, 2000);
-                              } catch(e) {
-                                setMfUploadResult({ success: false, message: e.response?.data?.error || 'Upload failed' });
-                              } finally { setMfUploading(false); }
-                            }}
-                            style={{ width:'100%', padding:'11px', borderRadius:8, fontWeight:700,
-                              fontSize:13, cursor: mfPdfFile && !mfUploading ? 'pointer' : 'not-allowed',
-                              background: mfPdfFile && !mfUploading ? '#64ffda' : '#1e2d3d',
-                              border:'none', color: mfPdfFile && !mfUploading ? '#0a0a0a' : '#334155' }}>
-                            {mfUploading ? '⟳ Parsing PDF…' : '⬆ Upload & Import Holdings'}
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
 
                 {/* ── Action bar ── */}
                 <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:20, flexWrap:'wrap' }}>
@@ -998,7 +894,7 @@ export default function Dashboard() {
                     <div style={{ color:'#64748b', fontSize:12 }}>
                       {holdings.length > 0
                         ? `${holdings.length} funds · Statement date: ${summary.lastStatement || '—'} · Sources: ${[...new Set(holdings.map(h=>h.source))].join(', ')}`
-                        : 'No holdings yet — sync from Gmail (CDSL/NSDL) or upload MFCentral CAS'}
+                        : 'No holdings yet — sync Gmail to import from CDSL/NSDL CAS emails'}
                     </div>
                   </div>
                   {/* DEMAT MFs — sync from Gmail (CDSL/NSDL CAS) */}
@@ -1007,13 +903,6 @@ export default function Dashboard() {
                       border:'1px solid rgba(100,255,218,0.2)', color:'#64ffda',
                       borderRadius:8, fontSize:12, fontWeight:700, cursor:'pointer' }}>
                     {syncing ? '⟳ Syncing…' : '⟳ Sync Gmail (CDSL/NSDL)'}
-                  </button>
-                  {/* SOA MFs — MFCentral PDF upload */}
-                  <button onClick={() => { setShowMFUploadModal(true); setMfUploadResult(null); }}
-                    style={{ padding:'8px 16px', background:'rgba(14,165,233,0.12)',
-                      border:'1px solid rgba(14,165,233,0.3)', color:'#0ea5e9',
-                      borderRadius:8, fontSize:12, fontWeight:700, cursor:'pointer' }}>
-                    📥 Import CAMS / KFintech (MFCentral)
                   </button>
                 </div>
 
@@ -1024,8 +913,7 @@ export default function Dashboard() {
                     <div style={{ fontSize:40, marginBottom:12 }}>📊</div>
                     <div style={{ color:'#64748b', fontSize:14, fontWeight:600, marginBottom:8 }}>No mutual fund holdings yet</div>
                     <div style={{ color:'#334155', fontSize:12, maxWidth:420, margin:'0 auto' }}>
-                      <b style={{color:'#64ffda'}}>DEMAT MFs</b> (held via Zerodha Coin, Groww Demat etc.) sync automatically — click <b style={{color:'#64ffda'}}>Sync Gmail (CDSL/NSDL)</b> above.<br/><br/>
-                      <b style={{color:'#0ea5e9'}}>SIP / SOA folios</b> (CAMS, KFintech) — click <b style={{color:'#0ea5e9'}}>Import CAMS / KFintech</b> to download and upload your MFCentral CAS statement.
+                      Mutual funds sync automatically from your CDSL and NSDL CAS emails. Click <b style={{color:'#64ffda'}}>Sync Gmail (CDSL/NSDL)</b> above.
                     </div>
                   </div>
                 ) : (
