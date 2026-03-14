@@ -196,7 +196,13 @@ function parseCDSLCAS(text) {
     if (seen.has(isin)) continue;
     seen.add(isin);
 
-    const quantity     = parseFloat(match[2].replace(/,/g, ''));
+    // match[2] = current_balance (may be 0 for pledged/T2 stocks)
+    // match[3] = free_balance    ← ACTUAL holding per Python script analysis
+    // match[4] = market_price
+    // match[5] = total value
+    const currentBal   = parseFloat(match[2].replace(/,/g, ''));
+    const freeBal      = parseFloat(match[3].replace(/,/g, ''));
+    const quantity     = freeBal > 0 ? freeBal : currentBal;  // prefer free_bal
     const market_price = parseFloat(match[4].replace(/,/g, ''));
     const market_value = parseFloat(match[5].replace(/,/g, ''));
 
