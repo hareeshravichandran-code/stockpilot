@@ -62,7 +62,12 @@ export const priceAPI = {
   bulk: (symbols) => api.post('/api/prices/bulk', { symbols }),
 };
 
-export const incomeAPI = {
+export const mfAPI = {
+  get:             () => api.get('/api/mf'),
+  requestCAS:      () => api.post('/api/mf/request-cas'),
+  syncStatements:  () => api.post('/api/mf/sync-statements', {}, { timeout: 120000 }),
+  delete:          (id) => api.delete(`/api/mf/${id}`),
+};
   getRules:     ()     => api.get('/api/income/rules'),
   createRule:   (data) => api.post('/api/income/rules', data),
   updateRule:   (id, data) => api.put(`/api/income/rules/${id}`, data),
