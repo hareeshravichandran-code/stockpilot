@@ -91,8 +91,8 @@ async function parsePdfWithPasswords(pdfBuffer, passwords = [], filename = '') {
         fullText += content.items.map(item => item.str).join(' ') + '\n';
       }
       const textLen = fullText.trim().length;
-      // Require >3000 chars for passwordless - nomination page alone is ~500 chars, full CAS is 10000+
-      const minLen = password ? 100 : 3000;
+      // Require >500 chars for passwordless - nomination page alone is ~200 chars, full CAS is 5000+
+      const minLen = password ? 100 : 500;
       if (textLen > minLen) {
         console.log(JSON.stringify({ event: 'PDF_UNLOCKED', filename, password: password ? '***' : 'none', chars: textLen, preview: fullText.slice(0,150).replace(/\n/g,' ') }));
         return { text: fullText, passwordUsed: password || null };
@@ -238,26 +238,28 @@ async function fetchEmails(accessToken, refreshToken, query = '', userProfile = 
   const listRes = await gmail.users.messages.list({
     userId: 'me',
     q: searchQuery,
-    maxResults: 50
+    maxResults: 5  // CAS: only need latest 1-2 per depository; 5 is safe ceiling
   });
 
   const messages = listRes.data.messages || [];
   const emails = [];
 
-  console.log(`Found ${messages.length} matching emails`);
+  console.log(JSON.stringify({ event: 'GMAIL_MESSAGES_FOUND', count: messages.length }));
 
-  for (const msg of messages.slice(0, 100)) {
+  for (const msg of messages.slice(0, 5)) {
     try {
-      const detail = await gmail.users.messages.get({
-        userId: 'me',
-        id: msg.id,
-        format: 'full'
-      });
+      // Fetch full message with hard 15s per-email timeout (prevents Railway timeout)
+      const detail = await Promise.race([
+        gmail.users.messages.get({ userId: 'me', id: msg.id, format: 'full' }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Email fetch timed out after 15s')), 15000))
+      ]);
 
       const headers = detail.data.payload?.headers || [];
       const subject = headers.find(h => h.name === 'Subject')?.value || '';
-      const from = headers.find(h => h.name === 'From')?.value || '';
-      const date = headers.find(h => h.name === 'Date')?.value || '';
+      const from    = headers.find(h => h.name === 'From')?.value    || '';
+      const date    = headers.find(h => h.name === 'Date')?.value    || '';
+
+      console.log(JSON.stringify({ event: 'EMAIL_PROCESSING', subject, from, date }));
 
       const { body, hasPdf, pdfFailed } = await extractEmailContent(
         gmail, msg.id, detail.data.payload || {}, pdfPasswords, userProfile, from, subject
@@ -266,7 +268,7 @@ async function fetchEmails(accessToken, refreshToken, query = '', userProfile = 
       emails.push({ id: msg.id, subject, from, date, body, hasPdf, pdfFailed });
 
     } catch (e) {
-      console.error('Error fetching email:', msg.id, e.message);
+      console.error(JSON.stringify({ event: 'EMAIL_FETCH_ERROR', msgId: msg.id, error: e.message }));
     }
   }
 
