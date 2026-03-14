@@ -115,11 +115,27 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
     const latestEmail = casEmails[0];
     console.log(JSON.stringify({ event: 'USING_LATEST_CAS', subject: latestEmail.subject, date: latestEmail.date, from: latestEmail.from, totalFound: casEmails.length }));
 
-    // Only process the latest email
-    const casEmailsToProcess = [latestEmail];
+    // Process latest email per depository source (CDSL + NSDL can both exist)
+    // Group by sender domain → take latest from each → process all
+    const bySource = {};
+    for (const email of casEmails) {
+      const domain = (email.from || '').toLowerCase();
+      const key = domain.includes('cdslstatement') || domain.includes('cdslindia') ? 'CDSL'
+                : domain.includes('nsdl') ? 'NSDL'
+                : domain.includes('cvl')  ? 'CVL'
+                : 'OTHER';
+      // Keep only latest per source
+      if (!bySource[key] || new Date(email.date) > new Date(bySource[key].date)) {
+        bySource[key] = email;
+      }
+    }
+    const casEmailsToProcess = Object.values(bySource);
+    console.log(JSON.stringify({ event: 'PROCESSING_SOURCES', sources: Object.keys(bySource), count: casEmailsToProcess.length }));
 
 
     let bestResult = null, bestDate = null;
+    let totalSaved = 0;
+    let casTypesSeen = [];
 
     for (const email of casEmailsToProcess) {
       const meta = { phase: 'cas', emailId: email.id, subject: email.subject, from: email.from, date: email.date };
@@ -160,7 +176,7 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
 
       // ── Detect and parse CAS ──────────────────────────────────
       const casType = detectCASType(textToParse);
-      const isinMatches = [...textToParse.matchAll(/INE[A-Z0-9]{9}/g)];
+      const isinMatches = [...textToParse.matchAll(/IN[A-Z0-9]{10}/g)];
       // Find where first ISIN appears and save surrounding context
       const diagSnippet = isinMatches.length > 0
         ? 'FOUND_ISINS:' + isinMatches.length + ' SAMPLE:' + textToParse.slice(Math.max(0, isinMatches[0].index - 30), isinMatches[0].index + 100)
@@ -194,7 +210,7 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
 
       if (!holdings || holdings.length === 0) {
         // Save text from around where ISINs should be (skip nomination page 1)
-        const isinSearch = textToParse.match(/INE[A-Z0-9]{9}/);
+        const isinSearch = textToParse.match(/IN[A-Z0-9]{10}/);
         const isinPos = isinSearch ? textToParse.indexOf(isinSearch[0]) : -1;
         const rawSnippet = isinPos > 0
           ? 'ISIN_AT:' + isinPos + ' CTX:' + textToParse.slice(Math.max(0, isinPos - 50), isinPos + 200)
@@ -222,10 +238,15 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
         bestDate   = d;
         bestResult = { email, holdings, summary, casType };
       }
+
+      // Save immediately — accumulate across CDSL + NSDL
+      const saved = await saveCASHoldings(req.user.id, holdings, email.date);
+      totalSaved += saved;
+      casTypesSeen.push(casType);
     }
 
-    // ── Save best CAS to DB ───────────────────────────────────────
-    if (!bestResult) {
+    // ── Final response ───────────────────────────────────────────
+    if (totalSaved === 0 && !bestResult) {
       await logger.finishSession({ message: 'Emails found but none parsed successfully' });
       return res.json({
         success: false,
@@ -234,23 +255,24 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
       });
     }
 
-    const savedCount = await saveCASHoldings(req.user.id, bestResult.holdings);
-
     await supabase.from('email_connections')
       .update({ last_synced: new Date().toISOString(), emails_parsed: casEmails.length })
       .eq('id', conn.id);
 
+    const casTypesLabel = [...new Set(casTypesSeen)].join(' + ') || 'CAS';
+
     await logger.finishSession({
-      casType: bestResult.casType,
-      holdingsSaved: savedCount,
-      statementDate: bestResult.summary?.statementDate,
+      casType: casTypesLabel,
+      holdingsSaved: totalSaved,
+      statementDate: bestResult?.summary?.statementDate,
       profileComplete
     });
 
     return res.json({
       success: true,
-      message: `✓ Synced ${savedCount} holdings from ${bestResult.casType}`,
-      casType: bestResult.casType, holdingsSaved: savedCount,
+      message: `✓ Synced ${totalSaved} holdings from ${casTypesLabel}`,
+      casType: casTypesLabel,
+      holdingsSaved: totalSaved,
       sessionId: logger.sessionId, profileComplete,
       scanned: logger.counts.scanned, parsed: logger.counts.parsed, failed: logger.counts.failed,
     });
@@ -270,10 +292,27 @@ router.post('/sync', requireAuth, (req, res, next) => {
 
 // ── Save holdings (preserve avg_cost) ────────────────────────────────
 async function saveCASHoldings(userId, holdings, emailDate) {
+  const { saveMFHolding } = require('./mf');
   let saved = 0;
   const casDate = emailDate ? new Date(emailDate).toISOString() : new Date().toISOString();
+
   for (const h of holdings) {
     if (!h.isin) continue;
+
+    // ── MF / ETF (INF prefix) → mf_holdings table ────────────
+    if (h.isin.startsWith('INF')) {
+      const ok = await saveMFHolding(userId, {
+        isin:          h.isin,
+        fund_name:     h.company || h.isin,
+        units:         h.quantity,
+        nav:           h.market_price || null,
+        current_value: h.market_value || (h.quantity * (h.market_price || 0)),
+      }, emailDate, 'CDSL');
+      if (ok) saved++;
+      continue;
+    }
+
+    // ── Equity (INE prefix) → holdings table ─────────────────
     const { data: existing } = await supabase
       .from('holdings').select('avg_cost, dividend_per_share, sector')
       .eq('user_id', userId).eq('isin', h.isin).maybeSingle();
@@ -294,6 +333,7 @@ async function saveCASHoldings(userId, holdings, emailDate) {
     if (error) console.error(JSON.stringify({ event: 'HOLDING_SAVE_ERROR', isin: h.isin, error: error.message }));
     else saved++;
   }
+
   console.log(JSON.stringify({ event: 'HOLDINGS_SAVED', saved, total: holdings.length }));
   return saved;
 }
@@ -344,7 +384,7 @@ router.get('/debug-cdsl', requireAuth, async (req, res) => {
         ? email.body.slice(pdfIdx + pdfMarker.length).trim()
         : (email.body || '');
 
-      const isinMatches = [...textToParse.matchAll(/INE[A-Z0-9]{9}/g)];
+      const isinMatches = [...textToParse.matchAll(/IN[A-Z0-9]{10}/g)];
       const parseResult = parseCAS(textToParse);
 
       results.push({
