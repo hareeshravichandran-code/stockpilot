@@ -228,7 +228,9 @@ async function fetchEmails(accessToken, refreshToken, query = '', userProfile = 
   // Generate PDF passwords from user's PAN + DOB
   const pdfPasswords = generatePdfPasswords(userProfile.pan, userProfile.dob);
   if (pdfPasswords.length > 0) {
-    console.log(JSON.stringify({ event: 'PDF_PASSWORDS', count: pdfPasswords.length, first3: pdfPasswords.slice(0,3) }));
+    console.log(JSON.stringify({ event: 'PDF_PASSWORDS_READY', count: pdfPasswords.length, panSet: !!userProfile.pan, dobSet: !!userProfile.dob }));
+  } else {
+    console.log(JSON.stringify({ event: 'PDF_PASSWORDS_MISSING', warning: 'PAN and DOB not set — password-protected PDFs will fail. Ask user to set in Profile & PAN settings.' }));
   }
 
   // Use the passed query directly — caller is responsible for building correct query
