@@ -196,22 +196,31 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
       // ── Detect and parse CAS ──────────────────────────────────
       const casType = detectCASType(textToParse);
       const isinMatches = [...textToParse.matchAll(/IN[A-Z0-9]{10}/g)];
-      // Find where first ISIN appears and save surrounding context
-      const diagSnippet = isinMatches.length > 0
-        ? 'FOUND_ISINS:' + isinMatches.length + ' SAMPLE:' + textToParse.slice(Math.max(0, isinMatches[0].index - 30), isinMatches[0].index + 100)
-        : 'NO_ISINS_IN_TEXT len=' + textToParse.length + ' end=' + textToParse.slice(-200);
-      try {
-        await supabase.from('sync_logs').insert({
-          user_id: req.user.id,
-          session_id: 'diag-' + Date.now(),
-          phase: 'DIAGNOSTIC',
-          email_subject: email.subject,
-          error_type: 'DEBUG',
-          error_message: diagSnippet,
-          raw_text_snippet: textToParse.slice(0, 2000),
-          logged_at: new Date().toISOString()
-        });
-      } catch(diagErr) { /* ignore */ }
+
+      // ── MF DIAGNOSTIC: log text stats before parsing ──────────
+      // Find NAV date pattern — presence confirms MF section exists
+      const navDateMatch = textToParse.match(/\d{2}-(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-\d{4}/);
+      const folioMatch   = textToParse.match(/(?:^|\n)\s*(\d{7,16})/m);
+      const asOnDate     = textToParse.match(/[Aa]s\s+[Oo]n\s+[Dd]ate\s*:?\s*(\d{2}[-\/][A-Za-z\d]{2,3}[-\/]\d{4})/);
+      console.log(JSON.stringify({
+        event:         'MF_DIAG_PRE_PARSE',
+        subject:       email.subject,
+        casType,
+        textLen:       textToParse.length,
+        isinsFound:    isinMatches.length,
+        hasNavDate:    !!navDateMatch,
+        navDateSample: navDateMatch?.[0],
+        hasFolio:      !!folioMatch,
+        folioSample:   folioMatch?.[1],
+        hasAsOnDate:   !!asOnDate,
+        asOnDate:      asOnDate?.[1],
+        // Show 400 chars around first NAV date — this is the MF table area
+        mfContext:     navDateMatch
+          ? textToParse.slice(Math.max(0, textToParse.indexOf(navDateMatch[0]) - 200), textToParse.indexOf(navDateMatch[0]) + 200)
+          : 'NO_NAV_DATE_IN_TEXT',
+        // Last 500 chars of text (MF section often at end)
+        textTail:      textToParse.slice(-500),
+      }));
 
       let parseResult;
       try {
@@ -226,6 +235,18 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
       }
 
       const { holdings, mfHoldings, summary } = parseResult;
+
+      // ── MF DIAGNOSTIC: log parse results ─────────────────────
+      console.log(JSON.stringify({
+        event:       'MF_DIAG_POST_PARSE',
+        subject:     email.subject,
+        casType,
+        equityCount: holdings.length,
+        mfCount:     mfHoldings.length,
+        casDate:     summary?.statementDate,
+        equitySample: holdings.slice(0,3).map(h => `${h.symbol}(${h.isin}):${h.quantity}`),
+        mfSample:    mfHoldings.slice(0,3).map(h => `${h.fund_name?.slice(0,30)}:${h.units}u@${h.nav}`),
+      }));
 
       // Consider success if we found equity holdings OR SOA MF holdings
       const totalFound = (holdings?.length || 0) + (mfHoldings?.length || 0);
@@ -263,6 +284,18 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
       // Save immediately — use statement date from PDF, not email date
       const casDate = summary?.statementDate || null;
       const saved = await saveCASHoldings(req.user.id, holdings, mfHoldings, casDate);
+
+      // ── MF DIAGNOSTIC: log save results ──────────────────────
+      console.log(JSON.stringify({
+        event:     'MF_DIAG_SAVE_DONE',
+        subject:   email.subject,
+        savedTotal: saved,
+        equityCount: holdings.filter(h => !h.isin?.startsWith('INF')).length,
+        dematMF:    holdings.filter(h => h.isin?.startsWith('INF')).length,
+        soaMF:      mfHoldings.length,
+        casDate,
+      }));
+
       totalSaved += saved;
       casTypesSeen.push(casType);
     }
@@ -466,9 +499,10 @@ async function saveSingleMF(userId, h, statementDate) {
   }
 
   if (error) {
-    console.error(JSON.stringify({ event: 'MF_SAVE_ERROR', fund: record.fund_name, error: error.message }));
+    console.error(JSON.stringify({ event: 'MF_SAVE_ERROR', fund: record.fund_name, folio: record.folio_number, isin: record.isin, error: error.message, errorCode: error.code }));
     return false;
   }
+  console.log(JSON.stringify({ event: 'MF_SAVE_OK', fund: record.fund_name?.slice(0,40), folio: record.folio_number, isin: record.isin, units: record.units, statementDate: record.statement_date }));
   return true;
 }
 
