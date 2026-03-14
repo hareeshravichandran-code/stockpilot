@@ -151,9 +151,15 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
       }));
 
       // ── Check for PDF failure ─────────────────────────────────
-      // If PDF was found but couldn't be unlocked, NEVER fall through to
-      // parse the HTML email body — it contains no ISINs and wastes time.
-      if (email.pdfFailed) {
+      // pdfFailed is a COUNT not a boolean — only skip if PDF failed
+      // AND the body contains no usable PDF text (marker missing or error placeholder)
+      // A pdfFailed > 0 can happen even when the main PDF unlocked fine
+      // (e.g. a secondary inline attachment failed)
+      const hasPdfMarkerInBody = email.body?.includes('--- PDF ATTACHMENT ---');
+      const hasPdfErrorPlaceholder = email.body?.includes('could not be unlocked');
+      const pdfReallyFailed = email.pdfFailed > 0 && (!hasPdfMarkerInBody || hasPdfErrorPlaceholder);
+
+      if (pdfReallyFailed) {
         await logger.logFailure({
           ...meta, hasPdf: true,
           errorType:    'PDF_LOCKED',
