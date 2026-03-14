@@ -150,13 +150,15 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
         bodyPreview: email.body?.slice(0, 100).replace(/\n/g,' ')
       }));
 
-      // ── Check for PDF failure hint ────────────────────────────
-      if (email.pdfFailed && (!email.body || email.body.length < 200)) {
+      // ── Check for PDF failure ─────────────────────────────────
+      // If PDF was found but couldn't be unlocked, NEVER fall through to
+      // parse the HTML email body — it contains no ISINs and wastes time.
+      if (email.pdfFailed) {
         await logger.logFailure({
           ...meta, hasPdf: true,
           errorType:    'PDF_LOCKED',
-          errorMessage: 'PDF found but could not be unlocked. Please set your PAN and Date of Birth in Profile & PAN settings.',
-          rawText:      email.body?.slice(0, 500) || ''
+          errorMessage: 'PDF found but password failed. Please verify your PAN is set correctly in ⚙ Profile & PAN settings. NSDL password = PAN in UPPERCASE.',
+          rawText:      email.body?.slice(0, 200) || ''
         });
         continue;
       }
@@ -168,8 +170,19 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
       }
 
       // ── Extract PDF portion only (skip HTML email body) ────────
+      // If a PDF was extracted, it's marked with --- PDF ATTACHMENT ---
+      // If there's no marker and no PDF, we're looking at the raw email body
       const pdfMarker = '--- PDF ATTACHMENT ---';
       const pdfIdx = email.body.indexOf(pdfMarker);
+
+      // If there's a PDF marker, use only the PDF text
+      // If no PDF and no marker, use the body (rare — some NSDL emails embed text directly)
+      if (email.hasPdf && pdfIdx === -1) {
+        // PDF was detected but text extraction produced no marker — skip
+        await logger.logSkipped({ ...meta, hasPdf: true, reason: 'PDF_NO_TEXT', detail: 'PDF found but text extraction returned no content' });
+        continue;
+      }
+
       const textToParse = pdfIdx !== -1
         ? email.body.slice(pdfIdx + pdfMarker.length).trim()
         : email.body;
@@ -269,11 +282,17 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
     });
 
     return res.json({
-      success: true,
-      message: `✓ Synced ${totalSaved} holdings from ${casTypesLabel}`,
+      success: totalSaved > 0,
+      message: totalSaved > 0
+        ? `✓ Synced ${totalSaved} holdings from ${casTypesLabel}`
+        : !profileComplete
+          ? 'CAS email found but PDF could not be unlocked. Please set your PAN and Date of Birth in ⚙ Profile & PAN settings, then sync again.'
+          : 'CAS email found but no holdings parsed. Check ⚙ Sync Logs for details.',
       casType: casTypesLabel,
       holdingsSaved: totalSaved,
-      sessionId: logger.sessionId, profileComplete,
+      profileComplete,
+      pdfLocked: !profileComplete,
+      sessionId: logger.sessionId,
       scanned: logger.counts.scanned, parsed: logger.counts.parsed, failed: logger.counts.failed,
     });
 
