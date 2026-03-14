@@ -51,10 +51,12 @@ export default function Dashboard() {
   const [searchLoading, setSearchLoading]   = useState(false);
 
   // ── Mutual Funds state ───────────────────────────────────────────
-  const [mfData, setMfData]               = useState(null);
-  const [mfLoading, setMfLoading]         = useState(false);
-  const [mfRequestSent, setMfRequestSent] = useState(null);
-  const [mfSyncing, setMfSyncing]         = useState(false);
+  const [mfData, setMfData]                   = useState(null);
+  const [mfLoading, setMfLoading]             = useState(false);
+  const [showMFUploadModal, setShowMFUploadModal] = useState(false);
+  const [mfPdfFile, setMfPdfFile]             = useState(null);
+  const [mfUploading, setMfUploading]         = useState(false);
+  const [mfUploadResult, setMfUploadResult]   = useState(null);
 
   // ── Income Settings state ────────────────────────────────────────
   const [showIncomeSettings, setShowIncomeSettings] = useState(false);
@@ -447,11 +449,13 @@ export default function Dashboard() {
         </div>
 
         {syncResult && (
-          <div className={`db-banner ${syncResult.success === true ? 'success' : syncResult.success === false ? 'error' : 'info'}`}>
+          <div className={`db-banner ${syncResult.success === true ? 'success' : syncResult.pdfLocked ? 'info' : syncResult.success === false ? 'error' : 'info'}`}>
             {syncResult.success === true
               ? syncResult.holdingsSaved != null
                 ? `✅ Synced ${syncResult.holdingsSaved} holdings from ${syncResult.casType || 'CAS'}`
                 : `✅ ${syncResult.message || 'Sync complete!'}`
+              : syncResult.pdfLocked
+              ? `🔒 ${syncResult.message}`
               : syncResult.success === false
               ? `❌ ${syncResult.message}`
               : `ℹ️ ${syncResult.message}`}
@@ -869,7 +873,6 @@ export default function Dashboard() {
               </div>
             );
           })()}
-
           {/* MUTUAL FUNDS */}
           {tab === 'mutualfunds' && (() => {
             const mf       = mfData;
@@ -883,73 +886,146 @@ export default function Dashboard() {
             return (
               <div className="fade-in">
 
-                {/* ── Top action bar ── */}
-                <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:20, flexWrap:'wrap' }}>
-                  <div style={{ flex:1, minWidth:200 }}>
-                    <div style={{ color:'#94a3b8', fontSize:12 }}>
-                      {holdings.length} funds · Last synced from {[...new Set(holdings.map(h=>h.source))].join(', ') || 'CDSL'}
+                {/* ── Instruction modal for MFCentral upload ── */}
+                {showMFUploadModal && (
+                  <div className="db-modal-overlay" onClick={e => { if(e.target===e.currentTarget) setShowMFUploadModal(false); }}>
+                    <div className="db-modal fade-in" style={{ maxWidth:560, maxHeight:'90vh', overflowY:'auto' }}>
+                      <div className="db-modal-header">
+                        <div>
+                          <div className="db-modal-title">📥 Import CAMS / KFintech Holdings</div>
+                          <div style={{ color:'#64748b', fontSize:12, marginTop:2 }}>via MFCentral CAS (SOA Mutual Funds)</div>
+                        </div>
+                        <button className="db-modal-close" onClick={() => setShowMFUploadModal(false)}>✕</button>
+                      </div>
+                      <div className="db-modal-body">
+
+                        {/* Prerequisites */}
+                        <div style={{ background:'rgba(14,165,233,0.06)', border:'1px solid rgba(14,165,233,0.2)',
+                          borderRadius:8, padding:'12px 14px', marginBottom:16 }}>
+                          <div style={{ color:'#0ea5e9', fontWeight:700, fontSize:11, marginBottom:8 }}>PREREQUISITES</div>
+                          <div style={{ color:'#94a3b8', fontSize:12, lineHeight:1.8 }}>
+                            ✓ Your PAN must be saved in <b style={{color:'#e2e8f0'}}>Profile & PAN</b> settings (used to unlock the PDF)<br/>
+                            ✓ Register once at <a href="https://www.mfcentral.com" target="_blank" rel="noreferrer"
+                              style={{ color:'#0ea5e9' }}>mfcentral.com</a> using your PAN + registered mobile number
+                          </div>
+                        </div>
+
+                        {/* Steps */}
+                        <div style={{ color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:10 }}>HOW TO DOWNLOAD YOUR CAS</div>
+                        {[
+                          { step:'1', text: 'Open MFCentral CAS page', sub: 'Click the link below — it opens the SEBI CAS download page directly', link: 'https://app.mfcentral.com/portal/sebi-cas', linkLabel: '→ Open MFCentral CAS Page' },
+                          { step:'2', text: 'Log in with PAN + OTP', sub: 'Enter your PAN number, then verify with OTP sent to your registered mobile' },
+                          { step:'3', text: 'Select period & download', sub: 'Choose "Detailed" statement, select date range (e.g. current financial year), click Download. A PDF will be emailed/downloaded.' },
+                          { step:'4', text: 'Upload PDF below', sub: 'The PDF password is your PAN in uppercase (e.g. ABCDE1234F). We unlock it automatically using your saved PAN.' },
+                        ].map(s => (
+                          <div key={s.step} style={{ display:'flex', gap:12, marginBottom:14, alignItems:'flex-start' }}>
+                            <div style={{ width:24, height:24, borderRadius:'50%', background:'rgba(100,255,218,0.15)',
+                              color:'#64ffda', fontSize:11, fontWeight:700, display:'flex', alignItems:'center',
+                              justifyContent:'center', flexShrink:0, marginTop:2 }}>{s.step}</div>
+                            <div>
+                              <div style={{ color:'#e2e8f0', fontSize:13, fontWeight:600 }}>{s.text}</div>
+                              <div style={{ color:'#64748b', fontSize:11, marginTop:2 }}>{s.sub}</div>
+                              {s.link && (
+                                <a href={s.link} target="_blank" rel="noreferrer"
+                                  style={{ display:'inline-block', marginTop:6, padding:'5px 12px',
+                                    background:'rgba(14,165,233,0.12)', border:'1px solid rgba(14,165,233,0.3)',
+                                    borderRadius:6, color:'#0ea5e9', fontSize:11, fontWeight:700, textDecoration:'none' }}>
+                                  {s.linkLabel}
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+
+                        {/* File upload */}
+                        <div style={{ borderTop:'1px solid #1e3a5f', paddingTop:16, marginTop:4 }}>
+                          <div style={{ color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:10 }}>UPLOAD YOUR CAS PDF</div>
+                          <input
+                            type="file" accept=".pdf"
+                            onChange={e => setMfPdfFile(e.target.files[0])}
+                            style={{ display:'block', color:'#94a3b8', fontSize:12, marginBottom:10,
+                              background:'#0a1628', border:'1px solid #1e3a5f', borderRadius:6,
+                              padding:'8px 10px', width:'100%', boxSizing:'border-box', cursor:'pointer' }}
+                          />
+                          {mfPdfFile && (
+                            <div style={{ color:'#64748b', fontSize:11, marginBottom:10 }}>
+                              📄 {mfPdfFile.name} ({(mfPdfFile.size/1024).toFixed(0)} KB)
+                            </div>
+                          )}
+
+                          {mfUploadResult && (
+                            <div style={{ marginBottom:12, padding:'9px 12px', borderRadius:6, fontSize:12,
+                              background: mfUploadResult.success ? 'rgba(0,212,161,0.08)' : 'rgba(244,63,94,0.08)',
+                              border: `1px solid ${mfUploadResult.success ? 'rgba(0,212,161,0.2)' : 'rgba(244,63,94,0.2)'}`,
+                              color: mfUploadResult.success ? '#00d4a1' : '#f43f5e' }}>
+                              {mfUploadResult.success ? '✅' : '❌'} {mfUploadResult.message}
+                            </div>
+                          )}
+
+                          <button
+                            disabled={!mfPdfFile || mfUploading}
+                            onClick={async () => {
+                              if (!mfPdfFile) return;
+                              setMfUploading(true); setMfUploadResult(null);
+                              try {
+                                const fd = new FormData();
+                                fd.append('pdf', mfPdfFile);
+                                const r = await mfAPI.uploadPDF(fd);
+                                setMfUploadResult({ success: true, message: r.data.message });
+                                const r2 = await mfAPI.get();
+                                setMfData(r2.data);
+                                // Close modal after 2s on success
+                                setTimeout(() => { setShowMFUploadModal(false); setMfUploadResult(null); setMfPdfFile(null); }, 2000);
+                              } catch(e) {
+                                setMfUploadResult({ success: false, message: e.response?.data?.error || 'Upload failed' });
+                              } finally { setMfUploading(false); }
+                            }}
+                            style={{ width:'100%', padding:'11px', borderRadius:8, fontWeight:700,
+                              fontSize:13, cursor: mfPdfFile && !mfUploading ? 'pointer' : 'not-allowed',
+                              background: mfPdfFile && !mfUploading ? '#64ffda' : '#1e2d3d',
+                              border:'none', color: mfPdfFile && !mfUploading ? '#0a0a0a' : '#334155' }}>
+                            {mfUploading ? '⟳ Parsing PDF…' : '⬆ Upload & Import Holdings'}
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                  {/* Request CAMS + KFintech statement */}
-                  <button
-                    onClick={async () => {
-                      setMfRequestSent(null);
-                      try {
-                        const r = await mfAPI.requestCAS();
-                        setMfRequestSent({ success: true, message: r.data.message });
-                      } catch(e) {
-                        setMfRequestSent({ success: false, message: e.response?.data?.error || 'Request failed' });
-                      }
-                    }}
-                    style={{ padding:'8px 16px', background:'rgba(14,165,233,0.12)', border:'1px solid rgba(14,165,233,0.3)',
-                      color:'#0ea5e9', borderRadius:8, fontSize:12, fontWeight:700, cursor:'pointer' }}>
-                    📧 Request CAMS + KFintech Statement
+                )}
+
+                {/* ── Action bar ── */}
+                <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:20, flexWrap:'wrap' }}>
+                  <div style={{ flex:1 }}>
+                    <div style={{ color:'#64748b', fontSize:12 }}>
+                      {holdings.length > 0
+                        ? `${holdings.length} funds · Statement date: ${summary.lastStatement || '—'} · Sources: ${[...new Set(holdings.map(h=>h.source))].join(', ')}`
+                        : 'No holdings yet — sync from Gmail (CDSL/NSDL) or upload MFCentral CAS'}
+                    </div>
+                  </div>
+                  {/* DEMAT MFs — sync from Gmail (CDSL/NSDL CAS) */}
+                  <button onClick={syncEmails} disabled={syncing}
+                    style={{ padding:'8px 16px', background:'rgba(100,255,218,0.08)',
+                      border:'1px solid rgba(100,255,218,0.2)', color:'#64ffda',
+                      borderRadius:8, fontSize:12, fontWeight:700, cursor:'pointer' }}>
+                    {syncing ? '⟳ Syncing…' : '⟳ Sync Gmail (CDSL/NSDL)'}
                   </button>
-                  {/* Sync received statement PDFs */}
-                  <button
-                    disabled={mfSyncing}
-                    onClick={async () => {
-                      setMfSyncing(true); setMfRequestSent(null);
-                      try {
-                        const r = await mfAPI.syncStatements();
-                        setMfRequestSent({ success: r.data.success, message: r.data.message });
-                        if (r.data.savedCount > 0) {
-                          const r2 = await mfAPI.get();
-                          setMfData(r2.data);
-                        }
-                      } catch(e) {
-                        setMfRequestSent({ success: false, message: e.response?.data?.error || 'Sync failed' });
-                      } finally { setMfSyncing(false); }
-                    }}
-                    style={{ padding:'8px 16px', background: mfSyncing ? '#1e2d3d' : 'rgba(100,255,218,0.1)',
-                      border:'1px solid rgba(100,255,218,0.3)', color:'#64ffda',
-                      borderRadius:8, fontSize:12, fontWeight:700, cursor: mfSyncing ? 'not-allowed' : 'pointer' }}>
-                    {mfSyncing ? '⟳ Syncing…' : '⟳ Sync MF Statements'}
+                  {/* SOA MFs — MFCentral PDF upload */}
+                  <button onClick={() => { setShowMFUploadModal(true); setMfUploadResult(null); }}
+                    style={{ padding:'8px 16px', background:'rgba(14,165,233,0.12)',
+                      border:'1px solid rgba(14,165,233,0.3)', color:'#0ea5e9',
+                      borderRadius:8, fontSize:12, fontWeight:700, cursor:'pointer' }}>
+                    📥 Import CAMS / KFintech (MFCentral)
                   </button>
                 </div>
-
-                {/* Status banner */}
-                {mfRequestSent && (
-                  <div style={{ marginBottom:16, padding:'10px 14px', borderRadius:8, fontSize:13,
-                    background: mfRequestSent.success ? 'rgba(0,212,161,0.08)' : 'rgba(244,63,94,0.08)',
-                    border: `1px solid ${mfRequestSent.success ? 'rgba(0,212,161,0.2)' : 'rgba(244,63,94,0.2)'}`,
-                    color: mfRequestSent.success ? '#00d4a1' : '#f43f5e',
-                    display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-                    <span>{mfRequestSent.success ? '✅' : '❌'} {mfRequestSent.message}</span>
-                    <button onClick={() => setMfRequestSent(null)} style={{ background:'none', border:'none', color:'inherit', cursor:'pointer' }}>✕</button>
-                  </div>
-                )}
 
                 {mfLoading ? (
                   <div style={{ textAlign:'center', padding:60, color:'#334155' }}>Loading mutual funds…</div>
                 ) : holdings.length === 0 ? (
-                  <div style={{ textAlign:'center', padding:60, color:'#334155', lineHeight:2 }}>
-                    <div style={{ fontSize:32, marginBottom:12 }}>📊</div>
-                    <div style={{ color:'#64748b', fontSize:14, marginBottom:8 }}>No mutual fund holdings yet</div>
-                    <div style={{ color:'#334155', fontSize:12 }}>
-                      CDSL demat MF units sync automatically with CAS.<br/>
-                      For SIP folios (CAMS/KFintech), click <b style={{color:'#0ea5e9'}}>Request CAMS + KFintech Statement</b> above,<br/>
-                      wait 5–30 minutes for the email, then click <b style={{color:'#64ffda'}}>Sync MF Statements</b>.
+                  <div style={{ textAlign:'center', padding:'50px 20px', lineHeight:2 }}>
+                    <div style={{ fontSize:40, marginBottom:12 }}>📊</div>
+                    <div style={{ color:'#64748b', fontSize:14, fontWeight:600, marginBottom:8 }}>No mutual fund holdings yet</div>
+                    <div style={{ color:'#334155', fontSize:12, maxWidth:420, margin:'0 auto' }}>
+                      <b style={{color:'#64ffda'}}>DEMAT MFs</b> (held via Zerodha Coin, Groww Demat etc.) sync automatically — click <b style={{color:'#64ffda'}}>Sync Gmail (CDSL/NSDL)</b> above.<br/><br/>
+                      <b style={{color:'#0ea5e9'}}>SIP / SOA folios</b> (CAMS, KFintech) — click <b style={{color:'#0ea5e9'}}>Import CAMS / KFintech</b> to download and upload your MFCentral CAS statement.
                     </div>
                   </div>
                 ) : (
@@ -958,81 +1034,73 @@ export default function Dashboard() {
                     <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12, marginBottom:20 }}>
                       {[
                         { label:'Current Value',   val: fmt(summary.totalValue),    color:'#64ffda' },
-                        { label:'Invested',         val: fmt(summary.totalInvested || 0), color:'#0ea5e9' },
-                        { label:'Gain / Loss',      val: fmt(Math.abs(summary.totalGainLoss||0)),
-                          color: (summary.totalGainLoss||0) >= 0 ? '#00d4a1' : '#f43f5e',
-                          prefix: (summary.totalGainLoss||0) >= 0 ? '+' : '-' },
-                        { label:'Returns',          val: `${gainPct >= 0 ? '+' : ''}${gainPct.toFixed(2)}%`,
+                        { label:'Amount Invested',  val: fmt(summary.totalInvested || 0), color:'#0ea5e9' },
+                        { label:'Gain / Loss',
+                          val: `${(summary.totalGainLoss||0) >= 0 ? '+' : '-'}${fmt(Math.abs(summary.totalGainLoss||0))}`,
+                          color: (summary.totalGainLoss||0) >= 0 ? '#00d4a1' : '#f43f5e' },
+                        { label:'Overall Returns',
+                          val: `${gainPct >= 0 ? '+' : ''}${gainPct.toFixed(2)}%`,
                           color: gainPct >= 0 ? '#00d4a1' : '#f43f5e' },
                       ].map(t => (
                         <div key={t.label} style={{ background:'rgba(255,255,255,0.04)', borderRadius:10,
                           padding:'14px 16px', border:'1px solid rgba(255,255,255,0.06)' }}>
                           <div style={{ color:'#64748b', fontSize:11, marginBottom:6 }}>{t.label}</div>
-                          <div style={{ color: t.color, fontWeight:700, fontSize:18 }}>{t.prefix||''}{t.val}</div>
+                          <div style={{ color:t.color, fontWeight:700, fontSize:18 }}>{t.val}</div>
                         </div>
                       ))}
                     </div>
 
                     {/* ── Charts row ── */}
                     <div style={{ display:'grid', gridTemplateColumns:'1fr 1.6fr', gap:16, marginBottom:20 }}>
-
                       {/* Pie — by fund house */}
                       <div style={{ background:'rgba(255,255,255,0.04)', borderRadius:12, padding:20,
                         border:'1px solid rgba(255,255,255,0.08)' }}>
-                        <div style={{ fontWeight:700, color:'#e2e8f0', fontSize:14, marginBottom:16 }}>
-                          📊 By Fund House
+                        <div style={{ fontWeight:700, color:'#e2e8f0', fontSize:14, marginBottom:12 }}>By Fund House</div>
+                        <div style={{ display:'flex', justifyContent:'center' }}>
+                          <PieChart width={180} height={180}>
+                            <Pie data={pieData} cx={90} cy={90} innerRadius={48} outerRadius={82}
+                              dataKey="value" paddingAngle={2}>
+                              {pieData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                            </Pie>
+                            <Tooltip formatter={v => fmt(v)}
+                              contentStyle={{ background:'#1a1a2e', border:'1px solid #333', borderRadius:8, fontSize:11 }} />
+                          </PieChart>
                         </div>
-                        {pieData.length > 0 ? (
-                          <>
-                            <div style={{ display:'flex', justifyContent:'center' }}>
-                              <PieChart width={200} height={200}>
-                                <Pie data={pieData} cx={100} cy={100} innerRadius={55} outerRadius={90}
-                                  dataKey="value" paddingAngle={2}>
-                                  {pieData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                                </Pie>
-                                <Tooltip formatter={v => fmt(v)}
-                                  contentStyle={{ background:'#1a1a2e', border:'1px solid #333', borderRadius:8, fontSize:12 }} />
-                              </PieChart>
+                        <div style={{ display:'flex', flexDirection:'column', gap:5, marginTop:6 }}>
+                          {pieData.slice(0,5).map((d, i) => (
+                            <div key={d.name} style={{ display:'flex', justifyContent:'space-between', fontSize:11, alignItems:'center' }}>
+                              <div style={{ display:'flex', gap:6, alignItems:'center' }}>
+                                <div style={{ width:8, height:8, borderRadius:'50%', background:COLORS[i%COLORS.length], flexShrink:0 }}/>
+                                <span style={{ color:'#cbd5e1' }}>{d.name}</span>
+                              </div>
+                              <span style={{ color:'#94a3b8', fontWeight:600 }}>{fmt(d.value)}</span>
                             </div>
-                            <div style={{ display:'flex', flexDirection:'column', gap:5, marginTop:4 }}>
-                              {pieData.slice(0,6).map((d, i) => (
-                                <div key={d.name} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', fontSize:11 }}>
-                                  <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-                                    <div style={{ width:8, height:8, borderRadius:'50%', background:COLORS[i % COLORS.length], flexShrink:0 }} />
-                                    <span style={{ color:'#cbd5e1' }}>{d.name}</span>
-                                  </div>
-                                  <span style={{ color:'#94a3b8', fontWeight:600 }}>{fmt(d.value)}</span>
-                                </div>
-                              ))}
-                            </div>
-                          </>
-                        ) : null}
+                          ))}
+                        </div>
                       </div>
 
-                      {/* Bar — top holdings by value */}
+                      {/* Bar — top holdings */}
                       <div style={{ background:'rgba(255,255,255,0.04)', borderRadius:12, padding:20,
                         border:'1px solid rgba(255,255,255,0.08)' }}>
-                        <div style={{ fontWeight:700, color:'#e2e8f0', fontSize:14, marginBottom:16 }}>
-                          📈 Holdings by Value
-                        </div>
-                        <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+                        <div style={{ fontWeight:700, color:'#e2e8f0', fontSize:14, marginBottom:12 }}>Holdings by Value</div>
+                        <div style={{ display:'flex', flexDirection:'column', gap:9 }}>
                           {holdings.slice(0,8).map((h, i) => {
                             const pct = summary.totalValue > 0 ? (h.current_value / summary.totalValue * 100) : 0;
                             return (
-                              <div key={h.id}>
-                                <div style={{ display:'flex', justifyContent:'space-between', fontSize:11, marginBottom:3 }}>
+                              <div key={h.id || i}>
+                                <div style={{ display:'flex', justifyContent:'space-between', fontSize:11, marginBottom:2 }}>
                                   <span style={{ color:'#cbd5e1', fontWeight:600, maxWidth:220,
                                     overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
                                     {h.fund_name}
                                   </span>
-                                  <div style={{ display:'flex', gap:10, flexShrink:0 }}>
+                                  <div style={{ display:'flex', gap:8, flexShrink:0 }}>
                                     <span style={{ color:'#64748b' }}>{pct.toFixed(1)}%</span>
                                     <span style={{ color:'#00d4a1', fontWeight:700 }}>{fmt(h.current_value||0)}</span>
                                   </div>
                                 </div>
                                 <div style={{ height:5, background:'rgba(255,255,255,0.06)', borderRadius:3, overflow:'hidden' }}>
                                   <div style={{ height:'100%', width:`${pct}%`, borderRadius:3,
-                                    background: COLORS[i % COLORS.length], transition:'width 0.6s ease' }} />
+                                    background: COLORS[i%COLORS.length], transition:'width 0.6s ease' }} />
                                 </div>
                               </div>
                             );
@@ -1044,7 +1112,7 @@ export default function Dashboard() {
                     {/* ── Holdings table ── */}
                     <div style={{ background:'rgba(255,255,255,0.03)', borderRadius:12,
                       border:'1px solid rgba(255,255,255,0.07)', overflow:'hidden' }}>
-                      <div style={{ padding:'16px 20px', borderBottom:'1px solid rgba(255,255,255,0.06)',
+                      <div style={{ padding:'14px 20px', borderBottom:'1px solid rgba(255,255,255,0.06)',
                         display:'flex', justifyContent:'space-between', alignItems:'center' }}>
                         <div style={{ fontWeight:700, color:'#e2e8f0', fontSize:14 }}>
                           All Mutual Fund Holdings ({holdings.length})
@@ -1060,20 +1128,21 @@ export default function Dashboard() {
                               <th>Fund</th>
                               <th>Category</th>
                               <th className="right">Units</th>
-                              <th className="right">NAV</th>
+                              <th className="right">NAV (₹)</th>
                               <th className="right">Current Value</th>
                               <th className="right">Invested</th>
-                              <th className="right">Gain/Loss</th>
+                              <th className="right">Gain / Loss</th>
                               <th>Folio / ISIN</th>
+                              <th>Holding Date</th>
                               <th>Source</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {holdings.map(h => {
+                            {holdings.map((h, idx) => {
                               const gl    = (h.current_value||0) - (h.invested_value||0);
                               const glPct = h.invested_value > 0 ? (gl / h.invested_value * 100) : null;
                               return (
-                                <tr key={h.id}>
+                                <tr key={h.id || idx}>
                                   <td>
                                     <div style={{ fontWeight:600, color:'#e2e8f0', fontSize:12,
                                       maxWidth:220, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
@@ -1088,10 +1157,10 @@ export default function Dashboard() {
                                     </span>
                                   </td>
                                   <td className="right mono" style={{ color:'#e2e8f0' }}>
-                                    {Number(h.units||0).toLocaleString('en-IN',{maximumFractionDigits:3})}
+                                    {Number(h.units||0).toLocaleString('en-IN',{maximumFractionDigits:3, minimumFractionDigits:3})}
                                   </td>
                                   <td className="right mono" style={{ color:'#94a3b8' }}>
-                                    {h.nav ? `₹${Number(h.nav).toFixed(2)}` : '—'}
+                                    {h.nav ? Number(h.nav).toFixed(3) : '—'}
                                   </td>
                                   <td className="right mono" style={{ color:'#64ffda', fontWeight:700 }}>
                                     {h.current_value ? fmt(h.current_value) : '—'}
@@ -1101,33 +1170,40 @@ export default function Dashboard() {
                                   </td>
                                   <td className="right mono">
                                     {h.invested_value ? (
-                                      <div>
-                                        <span style={{ color: gl >= 0 ? '#00d4a1' : '#f43f5e', fontWeight:600 }}>
+                                      <>
+                                        <span style={{ color: gl >= 0 ? '#00d4a1' : '#f43f5e', fontWeight:600, display:'block' }}>
                                           {gl >= 0 ? '+' : ''}{fmt(Math.abs(gl))}
                                         </span>
                                         {glPct !== null && (
-                                          <div style={{ color: glPct >= 0 ? '#00d4a1' : '#f43f5e', fontSize:10 }}>
+                                          <span style={{ color: glPct >= 0 ? '#00d4a1' : '#f43f5e', fontSize:10 }}>
                                             {glPct >= 0 ? '+' : ''}{glPct.toFixed(2)}%
-                                          </div>
+                                          </span>
                                         )}
-                                      </div>
+                                      </>
                                     ) : '—'}
                                   </td>
                                   <td style={{ fontSize:10, color:'#475569', maxWidth:120,
                                     overflow:'hidden', textOverflow:'ellipsis' }}>
                                     {h.folio_number
-                                      ? <span title={h.folio_number}>📁 {h.folio_number}</span>
+                                      ? <span>📁 {h.folio_number}</span>
                                       : h.isin
-                                      ? <span title={h.isin} style={{ color:'#1e3a5f' }}>{h.isin}</span>
+                                      ? <span style={{ color:'#1e3a5f', fontFamily:'monospace' }}>{h.isin}</span>
+                                      : '—'}
+                                  </td>
+                                  <td style={{ fontSize:11, color:'#475569', whiteSpace:'nowrap' }}>
+                                    {h.statement_date
+                                      ? new Date(h.statement_date).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})
                                       : '—'}
                                   </td>
                                   <td>
                                     <span style={{ fontSize:10, borderRadius:4, padding:'2px 6px', fontWeight:600,
-                                      background: h.source === 'CDSL' ? 'rgba(100,255,218,0.08)' :
-                                                  h.source === 'CAMS' ? 'rgba(251,146,60,0.12)' :
+                                      background: h.source === 'CDSL'      ? 'rgba(100,255,218,0.08)' :
+                                                  h.source === 'MFCENTRAL' ? 'rgba(14,165,233,0.12)'  :
+                                                  h.source === 'CAMS'      ? 'rgba(251,146,60,0.12)'  :
                                                   'rgba(167,139,250,0.12)',
-                                      color: h.source === 'CDSL' ? '#334155' :
-                                             h.source === 'CAMS' ? '#fb923c' : '#a78bfa' }}>
+                                      color: h.source === 'CDSL'      ? '#334155' :
+                                             h.source === 'MFCENTRAL' ? '#0ea5e9' :
+                                             h.source === 'CAMS'      ? '#fb923c' : '#a78bfa' }}>
                                       {h.source || 'CDSL'}
                                     </span>
                                   </td>
@@ -1141,6 +1217,9 @@ export default function Dashboard() {
                   </>
                 )}
               </div>
+            );
+          })()}
+
             );
           })()}
 
