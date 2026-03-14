@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
-import api, { portfolioAPI, emailAPI, authAPI } from '../lib/api';
+import api, { portfolioAPI, emailAPI, authAPI, incomeAPI } from '../lib/api';
 import AdminPanel from './AdminPanel';
 import Dividends from './Dividends';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
@@ -49,6 +49,23 @@ export default function Dashboard() {
   const [stockSaved, setStockSaved]         = useState(false);
   const [stockError, setStockError]         = useState('');
   const [searchLoading, setSearchLoading]   = useState(false);
+
+  // ── Income Settings state ────────────────────────────────────────
+  const [showIncomeSettings, setShowIncomeSettings] = useState(false);
+  const [incomeRules, setIncomeRules]               = useState([]);
+  const [incomeSummary, setIncomeSummary]           = useState({ currentFYTotal:0, thisMonthTotal:0, byCategory:{} });
+  const [incomeEntries, setIncomeEntries]           = useState([]);
+  const [incomeScanning, setIncomeScanning]         = useState(false);
+  const [incomeScanResult, setIncomeScanResult]     = useState(null);
+  const [showRuleForm, setShowRuleForm]             = useState(false);
+  const [editingRule, setEditingRule]               = useState(null);
+  const [ruleForm, setRuleForm] = useState({
+    rule_name:'', category:'Salary', bank_sender:'', subject_pattern:'',
+    body_pattern:'', account_last4:'', min_amount:'', period:'monthly', remark:''
+  });
+  const [ruleSaving, setRuleSaving]   = useState(false);
+  const [ruleError, setRuleError]     = useState('');
+  const INCOME_CATS = ['Salary','Freelance','Rental','Business','Interest','Bonus','Other'];
   const [liabilities, setLiabilities] = useState({ homeLoan: 0, creditCard: 0 });
   const [monthlyIncome, setMonthlyIncome] = useState(0);
   const [monthlyExpenses, setMonthlyExpenses] = useState(0);
@@ -86,6 +103,11 @@ export default function Dashboard() {
         ppf: d.ppf||'', epf: d.epf||'', nps: d.nps||'', fd: d.fd||'', ssy: d.ssy||'',
         homeLoan: d.home_loan||'', creditCard: d.credit_card||'', salary: d.monthly_income||''
       });
+    }).catch(() => {});
+
+    // Load income summary for dashboard tile
+    incomeAPI.getEntries().then(r => {
+      setIncomeSummary(r.data.summary || { currentFYTotal:0, thisMonthTotal:0, byCategory:{} });
     }).catch(() => {});
 
     // Handle OAuth callback
@@ -144,9 +166,16 @@ export default function Dashboard() {
     try {
       const r = await emailAPI.syncCAS();
       setSyncResult(r.data);
+      // Reload portfolio regardless of tab — holdings should appear immediately
       await loadPortfolio();
+      if (tab === 'holdings') await loadTab('holdings');
     } catch (e) {
-      setSyncResult({ success: false, message: e.response?.data?.error || 'Sync failed' });
+      // e.response is undefined on timeout (no response) → show timeout hint
+      const isTimeout = !e.response || e.code === 'ECONNABORTED';
+      const msg = isTimeout
+        ? 'Sync timed out — please try again. First sync can take up to a minute.'
+        : (e.response?.data?.message || e.response?.data?.error || 'Sync failed');
+      setSyncResult({ success: false, message: msg });
     } finally { setSyncing(false); }
   };
 
@@ -161,7 +190,78 @@ export default function Dashboard() {
     } finally { setSyncingPrices(false); }
   };
 
-  // ── Add Stock handlers ───────────────────────────────────────────
+  // ── Income handlers ──────────────────────────────────────────────
+  const loadIncome = async () => {
+    try {
+      const [rulesRes, entriesRes] = await Promise.all([
+        incomeAPI.getRules(), incomeAPI.getEntries()
+      ]);
+      setIncomeRules(rulesRes.data || []);
+      setIncomeEntries(entriesRes.data.entries || []);
+      setIncomeSummary(entriesRes.data.summary || { currentFYTotal:0, thisMonthTotal:0, byCategory:{} });
+    } catch(e) { console.error('loadIncome', e); }
+  };
+
+  const openIncomeSettings = () => {
+    setShowIncomeSettings(true);
+    setShowRuleForm(false);
+    setEditingRule(null);
+    setIncomeScanResult(null);
+    loadIncome();
+  };
+
+  const scanIncome = async () => {
+    setIncomeScanning(true); setIncomeScanResult(null);
+    try {
+      const r = await incomeAPI.scan();
+      setIncomeScanResult({ success: true, message: r.data.message, found: r.data.found });
+      if (r.data.found > 0) await loadIncome();
+    } catch(e) {
+      setIncomeScanResult({ success: false, message: e.response?.data?.error || 'Scan failed' });
+    } finally { setIncomeScanning(false); }
+  };
+
+  const openRuleForm = (rule = null) => {
+    if (rule) {
+      setRuleForm({
+        rule_name: rule.rule_name || '', category: rule.category || 'Salary',
+        bank_sender: rule.bank_sender || '', subject_pattern: rule.subject_pattern || '',
+        body_pattern: rule.body_pattern || '', account_last4: rule.account_last4 || '',
+        min_amount: rule.min_amount || '', period: rule.period || 'monthly', remark: rule.remark || ''
+      });
+      setEditingRule(rule);
+    } else {
+      setRuleForm({ rule_name:'', category:'Salary', bank_sender:'', subject_pattern:'',
+        body_pattern:'', account_last4:'', min_amount:'', period:'monthly', remark:'' });
+      setEditingRule(null);
+    }
+    setRuleError('');
+    setShowRuleForm(true);
+  };
+
+  const saveRule = async () => {
+    if (!ruleForm.rule_name.trim()) { setRuleError('Rule name is required'); return; }
+    if (!ruleForm.bank_sender && !ruleForm.subject_pattern && !ruleForm.body_pattern)
+      { setRuleError('At least one filter is required (sender, subject, or body keyword)'); return; }
+    setRuleSaving(true); setRuleError('');
+    try {
+      if (editingRule) {
+        await incomeAPI.updateRule(editingRule.id, ruleForm);
+      } else {
+        await incomeAPI.createRule(ruleForm);
+      }
+      setShowRuleForm(false);
+      await loadIncome();
+    } catch(e) {
+      setRuleError(e.response?.data?.error || 'Save failed');
+    } finally { setRuleSaving(false); }
+  };
+
+  const deleteRule = async (id) => {
+    if (!window.confirm('Delete this rule?')) return;
+    await incomeAPI.deleteRule(id).catch(() => {});
+    await loadIncome();
+  };
   const handleStockSearch = async (val) => {
     setStockSearch(val);
     setSelectedStock(null);
@@ -323,7 +423,7 @@ export default function Dashboard() {
           <div className="db-topbar-right">
             {emailStatus.length > 0 && (
               <button className="db-sync-btn" onClick={syncEmails} disabled={syncing}>
-                {syncing ? '⟳ Syncing…' : '⟳ Sync Emails'}
+                {syncing ? '⟳ Syncing… (up to 60s)' : '⟳ Sync Emails'}
               </button>
             )}
             <button className="db-sync-btn" onClick={syncPrices} disabled={syncingPrices}
@@ -335,10 +435,14 @@ export default function Dashboard() {
         </div>
 
         {syncResult && (
-          <div className={`db-banner ${syncResult.success !== false ? 'success' : 'error'}`}>
-            {syncResult.success !== false
-              ? `✅ Sync complete! Found ${syncResult.tradesFound || 0} trades, ${syncResult.dividendsFound || 0} dividends from ${syncResult.emailsFound || 0} emails.`
-              : `❌ ${syncResult.message}`}
+          <div className={`db-banner ${syncResult.success === true ? 'success' : syncResult.success === false ? 'error' : 'info'}`}>
+            {syncResult.success === true
+              ? syncResult.holdingsSaved != null
+                ? `✅ Synced ${syncResult.holdingsSaved} holdings from ${syncResult.casType || 'CAS'}`
+                : `✅ ${syncResult.message || 'Sync complete!'}`
+              : syncResult.success === false
+              ? `❌ ${syncResult.message}`
+              : `ℹ️ ${syncResult.message}`}
             <button onClick={() => setSyncResult(null)} style={{marginLeft:'auto',background:'none',border:'none',color:'inherit',cursor:'pointer'}}>✕</button>
           </div>
         )}
@@ -992,6 +1096,243 @@ export default function Dashboard() {
                   4. Falls back to rule-based patterns if AI fails
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── INCOME SETTINGS MODAL ── */}
+      {showIncomeSettings && (
+        <div className="db-modal-overlay" onClick={e => { if(e.target===e.currentTarget) setShowIncomeSettings(false); }}>
+          <div className="db-modal fade-in" style={{ maxWidth: 620, maxHeight:'90vh', overflowY:'auto' }}>
+            <div className="db-modal-header">
+              <div>
+                <div className="db-modal-title">₹ Income Capture Rules</div>
+                <div style={{ color:'#64748b', fontSize:12, marginTop:2 }}>
+                  Auto-detect salary & income from your bank credit emails
+                </div>
+              </div>
+              <button className="db-modal-close" onClick={() => setShowIncomeSettings(false)}>✕</button>
+            </div>
+            <div className="db-modal-body">
+
+              {/* Summary strip */}
+              {incomeSummary.currentFYTotal > 0 && (
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10, marginBottom:20 }}>
+                  {[
+                    { label:'FY26 Total', val: fmt(incomeSummary.currentFYTotal), color:'#64ffda' },
+                    { label:'This Month', val: fmt(incomeSummary.thisMonthTotal),  color:'#a78bfa' },
+                    { label:'Entries',    val: incomeEntries.length,               color:'#0ea5e9' },
+                  ].map(s => (
+                    <div key={s.label} style={{ background:'#0a1628', borderRadius:8, padding:'10px 14px', border:'1px solid #1e3a5f', textAlign:'center' }}>
+                      <div style={{ color:s.color, fontWeight:700, fontSize:18 }}>{s.val}</div>
+                      <div style={{ color:'#475569', fontSize:11, marginTop:2 }}>{s.label}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Rule Form */}
+              {showRuleForm ? (
+                <div style={{ background:'#0a1628', borderRadius:10, padding:18, border:'1px solid #1e3a5f', marginBottom:16 }}>
+                  <div style={{ color:'#64ffda', fontWeight:700, fontSize:13, marginBottom:14 }}>
+                    {editingRule ? '✎ Edit Rule' : '+ New Income Rule'}
+                  </div>
+
+                  {/* Row 1: Name + Category */}
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:12 }}>
+                    <div>
+                      <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:5 }}>RULE NAME <span style={{color:'#f43f5e'}}>*</span></label>
+                      <input className="db-input" placeholder="e.g. HDFC Salary"
+                        value={ruleForm.rule_name} onChange={e => setRuleForm(p=>({...p,rule_name:e.target.value}))} />
+                    </div>
+                    <div>
+                      <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:5 }}>INCOME CATEGORY <span style={{color:'#f43f5e'}}>*</span></label>
+                      <select className="db-input" value={ruleForm.category} onChange={e => setRuleForm(p=>({...p,category:e.target.value}))}
+                        style={{ background:'#0f1c2e', color:'#e2e8f0', cursor:'pointer' }}>
+                        {INCOME_CATS.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Row 2: Bank Sender */}
+                  <div style={{ marginBottom:12 }}>
+                    <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:5 }}>BANK SENDER EMAIL</label>
+                    <input className="db-input" placeholder="e.g. alerts@hdfcbank.net or noreply@icicibank.com"
+                      value={ruleForm.bank_sender} onChange={e => setRuleForm(p=>({...p,bank_sender:e.target.value}))} />
+                    <span style={{ color:'#334155', fontSize:10, marginTop:3, display:'block' }}>
+                      Check a real bank credit email → From: field. Partial match works e.g. "hdfcbank"
+                    </span>
+                  </div>
+
+                  {/* Row 3: Subject + Body */}
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:12 }}>
+                    <div>
+                      <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:5 }}>SUBJECT CONTAINS</label>
+                      <input className="db-input" placeholder="e.g. SALARY CREDIT"
+                        value={ruleForm.subject_pattern} onChange={e => setRuleForm(p=>({...p,subject_pattern:e.target.value}))} />
+                    </div>
+                    <div>
+                      <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:5 }}>BODY CONTAINS</label>
+                      <input className="db-input" placeholder="e.g. credited to your account"
+                        value={ruleForm.body_pattern} onChange={e => setRuleForm(p=>({...p,body_pattern:e.target.value}))} />
+                    </div>
+                  </div>
+
+                  {/* Row 4: Account Last 4 + Min Amount + Period */}
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10, marginBottom:12 }}>
+                    <div>
+                      <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:5 }}>ACCOUNT LAST 4</label>
+                      <input className="db-input" placeholder="e.g. 7823" maxLength={4}
+                        value={ruleForm.account_last4} onChange={e => setRuleForm(p=>({...p,account_last4:e.target.value}))} />
+                    </div>
+                    <div>
+                      <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:5 }}>MIN AMOUNT (₹)</label>
+                      <input className="db-input" type="number" placeholder="e.g. 10000"
+                        value={ruleForm.min_amount} onChange={e => setRuleForm(p=>({...p,min_amount:e.target.value}))} />
+                    </div>
+                    <div>
+                      <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:5 }}>PERIOD</label>
+                      <select className="db-input" value={ruleForm.period} onChange={e => setRuleForm(p=>({...p,period:e.target.value}))}
+                        style={{ background:'#0f1c2e', color:'#e2e8f0', cursor:'pointer' }}>
+                        <option value="monthly">Monthly</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="irregular">Irregular</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Remark */}
+                  <div style={{ marginBottom:14 }}>
+                    <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:5 }}>REMARK (optional)</label>
+                    <input className="db-input" placeholder="e.g. Main salary account, credited on 1st"
+                      value={ruleForm.remark} onChange={e => setRuleForm(p=>({...p,remark:e.target.value}))} />
+                  </div>
+
+                  {ruleError && (
+                    <div style={{ color:'#f43f5e', fontSize:12, marginBottom:10, padding:'7px 10px',
+                      background:'rgba(244,63,94,0.08)', borderRadius:6, border:'1px solid rgba(244,63,94,0.2)' }}>
+                      ⚠ {ruleError}
+                    </div>
+                  )}
+
+                  <div style={{ display:'flex', gap:8 }}>
+                    <button onClick={saveRule} disabled={ruleSaving}
+                      style={{ flex:1, background:'#64ffda', color:'#0a0a0a', border:'none',
+                        borderRadius:8, padding:'11px', fontWeight:700, fontSize:13, cursor:'pointer' }}>
+                      {ruleSaving ? '⟳ Saving…' : (editingRule ? '✎ Update Rule' : '+ Save Rule')}
+                    </button>
+                    <button onClick={() => setShowRuleForm(false)}
+                      style={{ padding:'11px 18px', background:'#1e2d3d', color:'#94a3b8',
+                        border:'1px solid #334155', borderRadius:8, cursor:'pointer', fontSize:13 }}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* Existing rules list */}
+                  {incomeRules.length > 0 && (
+                    <div style={{ marginBottom:16 }}>
+                      <div style={{ color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:8 }}>ACTIVE RULES</div>
+                      {incomeRules.map(rule => (
+                        <div key={rule.id} style={{ background:'#0a1628', border:'1px solid #1e3a5f',
+                          borderRadius:8, padding:'12px 14px', marginBottom:8,
+                          display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
+                          <div>
+                            <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:4 }}>
+                              <span style={{ color:'#e2e8f0', fontWeight:700, fontSize:13 }}>{rule.rule_name}</span>
+                              <span style={{ fontSize:10, background:'rgba(100,255,218,0.1)', color:'#64ffda',
+                                borderRadius:4, padding:'1px 7px', fontWeight:600 }}>{rule.category}</span>
+                              <span style={{ fontSize:10, background:'rgba(255,255,255,0.04)', color:'#475569',
+                                borderRadius:4, padding:'1px 7px' }}>{rule.period}</span>
+                            </div>
+                            <div style={{ color:'#475569', fontSize:11, lineHeight:1.6 }}>
+                              {rule.bank_sender && <span>From: <span style={{color:'#64748b'}}>{rule.bank_sender}</span> · </span>}
+                              {rule.subject_pattern && <span>Subject: <span style={{color:'#64748b'}}>"{rule.subject_pattern}"</span> · </span>}
+                              {rule.body_pattern && <span>Body: <span style={{color:'#64748b'}}>"{rule.body_pattern}"</span></span>}
+                            </div>
+                            {rule.remark && <div style={{ color:'#334155', fontSize:10, marginTop:3 }}>💬 {rule.remark}</div>}
+                          </div>
+                          <div style={{ display:'flex', gap:6, flexShrink:0, marginLeft:10 }}>
+                            <button onClick={() => openRuleForm(rule)}
+                              style={{ background:'#1e2d3d', border:'1px solid #334155', color:'#94a3b8',
+                                borderRadius:6, padding:'4px 10px', cursor:'pointer', fontSize:11 }}>Edit</button>
+                            <button onClick={() => deleteRule(rule.id)}
+                              style={{ background:'rgba(244,63,94,0.08)', border:'1px solid rgba(244,63,94,0.2)',
+                                color:'#f43f5e', borderRadius:6, padding:'4px 10px', cursor:'pointer', fontSize:11 }}>✕</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {incomeRules.length === 0 && (
+                    <div style={{ textAlign:'center', padding:'20px 0', color:'#334155', fontSize:13, marginBottom:16 }}>
+                      No rules yet. Create your first rule to start capturing income.
+                    </div>
+                  )}
+
+                  {/* Action buttons */}
+                  <div style={{ display:'flex', gap:10, marginBottom:16 }}>
+                    <button onClick={() => openRuleForm()}
+                      style={{ flex:1, background:'rgba(100,255,218,0.1)', border:'1px solid rgba(100,255,218,0.3)',
+                        color:'#64ffda', borderRadius:8, padding:'11px', fontWeight:700,
+                        fontSize:13, cursor:'pointer' }}>
+                      + New Rule
+                    </button>
+                    <button onClick={scanIncome} disabled={incomeScanning || incomeRules.length === 0}
+                      style={{ flex:1, background: incomeRules.length > 0 ? '#0ea5e9' : '#1e2d3d',
+                        border:'none', color: incomeRules.length > 0 ? '#fff' : '#334155',
+                        borderRadius:8, padding:'11px', fontWeight:700,
+                        fontSize:13, cursor: incomeRules.length > 0 ? 'pointer' : 'not-allowed' }}>
+                      {incomeScanning ? '⟳ Scanning Gmail…' : '⟳ Scan Gmail Now'}
+                    </button>
+                  </div>
+
+                  {incomeScanResult && (
+                    <div style={{ padding:'10px 14px', borderRadius:8, marginBottom:14, fontSize:13,
+                      background: incomeScanResult.success ? 'rgba(0,212,161,0.08)' : 'rgba(244,63,94,0.08)',
+                      border: `1px solid ${incomeScanResult.success ? 'rgba(0,212,161,0.2)' : 'rgba(244,63,94,0.2)'}`,
+                      color: incomeScanResult.success ? '#00d4a1' : '#f43f5e' }}>
+                      {incomeScanResult.success ? '✅' : '⚠'} {incomeScanResult.message}
+                    </div>
+                  )}
+
+                  {/* Recent entries */}
+                  {incomeEntries.length > 0 && (
+                    <div>
+                      <div style={{ color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:8 }}>RECENT INCOME ENTRIES</div>
+                      <div style={{ maxHeight:200, overflowY:'auto', borderRadius:8, border:'1px solid #1e3a5f' }}>
+                        {incomeEntries.slice(0,15).map((e, i) => (
+                          <div key={e.id} style={{ padding:'9px 14px', borderBottom:'1px solid #0f1b2d',
+                            display:'flex', justifyContent:'space-between', alignItems:'center',
+                            background: i%2===0 ? '#0a1628' : 'transparent' }}>
+                            <div>
+                              <div style={{ color:'#e2e8f0', fontSize:12, fontWeight:600 }}>{e.description || e.category}</div>
+                              <div style={{ color:'#475569', fontSize:10, marginTop:1 }}>
+                                {new Date(e.credited_on).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}
+                                {' · '}<span style={{ color:'#334155' }}>{e.category}</span>
+                                {e.source==='auto' && <span style={{ color:'#0ea5e9', marginLeft:6 }}>auto</span>}
+                              </div>
+                            </div>
+                            <div style={{ color:'#64ffda', fontWeight:700, fontSize:13 }}>{fmt(e.amount)}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* How it works tip */}
+                  <div style={{ marginTop:14, padding:'10px 12px', background:'#0a1628', borderRadius:6,
+                    border:'1px solid #1e3a5f', fontSize:11, color:'#334155', lineHeight:1.8 }}>
+                    <span style={{ color:'#0ea5e9', fontWeight:700 }}>HOW IT WORKS</span><br/>
+                    1. Create a rule matching your bank credit email (sender + keyword)<br/>
+                    2. Click <b style={{color:'#94a3b8'}}>Scan Gmail Now</b> — scans last 90 days automatically<br/>
+                    3. Detected credits appear in entries + on the dashboard tile
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>

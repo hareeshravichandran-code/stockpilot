@@ -44,7 +44,8 @@
 /* Banner */
 .db-banner { display: flex; align-items: center; gap: 12px; padding: 12px 28px; font-size: 13px; }
 .db-banner.success { background: rgba(0,212,161,0.08); border-bottom: 1px solid rgba(0,212,161,0.2); color: var(--accent); }
-.db-banner.error { background: rgba(244,63,94,0.08); border-bottom: 1px solid rgba(244,63,94,0.2); color: var(--red); }
+.db-banner.error   { background: rgba(244,63,94,0.08); border-bottom: 1px solid rgba(244,63,94,0.2); color: var(--red); }
+.db-banner.info    { background: rgba(14,165,233,0.08); border-bottom: 1px solid rgba(14,165,233,0.2); color: #0ea5e9; }
 
 .db-content { padding: 24px 28px; flex: 1; }
 
@@ -146,3 +147,35 @@
 
 @keyframes spin { to { transform: translateY(-50%) rotate(360deg); } }
 
+
+/* ── Shared input / modal body / modal header ─────────────────── */
+.db-input {
+  width: 100%;
+  background: #0f1c2e;
+  border: 1px solid #1e3a5f;
+  border-radius: 8px;
+  padding: 9px 12px;
+  color: #e2e8f0;
+  font-size: 13px;
+  font-family: 'Outfit', sans-serif;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+.db-input:focus { border-color: #64ffda; }
+.db-input::placeholder { color: #334155; }
+
+.db-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 20px;
+}
+.db-modal-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #e2e8f0;
+}
+.db-modal-body { /* intentionally unstyled — content controls its own padding */ }
+
+@keyframes spin { to { transform: rotate(360deg); } }
