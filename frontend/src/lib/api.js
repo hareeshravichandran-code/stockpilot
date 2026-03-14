@@ -14,8 +14,6 @@ api.interceptors.request.use(config => {
 api.interceptors.response.use(
   res => res,
   err => {
-    // Only force logout on 401 for non-auth endpoints
-    // Don't redirect on /me failure — useAuth handles that gracefully
     const url = err.config?.url || '';
     if (err.response?.status === 401 && !url.includes('/auth/me')) {
       localStorage.removeItem('sp_token');
@@ -27,31 +25,29 @@ api.interceptors.response.use(
 );
 
 export const authAPI = {
-  signup:        (data) => api.post('/api/auth/signup', data),
-  login:         (data) => api.post('/api/auth/login', data),
-  me:            ()     => api.get('/api/auth/me'),
-  saveProfile:   (data) => api.put('/api/auth/profile', data),
-  getProfile:    ()     => api.get('/api/auth/me'),
+  signup:      (data) => api.post('/api/auth/signup', data),
+  login:       (data) => api.post('/api/auth/login', data),
+  me:          ()     => api.get('/api/auth/me'),
+  saveProfile: (data) => api.put('/api/auth/profile', data),
+  getProfile:  ()     => api.get('/api/auth/me'),
 };
 
 export const portfolioAPI = {
-  get:          () => api.get('/api/portfolio'),
+  get:          ()     => api.get('/api/portfolio'),
   addHolding:   (data) => api.post('/api/portfolio/holding', data),
   searchStocks: (q)    => api.get(`/api/portfolio/search?q=${encodeURIComponent(q)}`),
-  transactions: () => api.get('/api/portfolio/transactions'),
-  dividends:    () => api.get('/api/dividends'),
-  assets:       () => api.get('/api/portfolio/assets'),
-  saveAssets:   (d) => api.post('/api/portfolio/assets', d),
-  tax:          () => api.get('/api/portfolio/tax'),
-  syncPrices:   () => api.post('/api/portfolio/sync-prices'),
+  transactions: ()     => api.get('/api/portfolio/transactions'),
+  dividends:    ()     => api.get('/api/dividends'),
+  assets:       ()     => api.get('/api/portfolio/assets'),
+  saveAssets:   (d)    => api.post('/api/portfolio/assets', d),
+  tax:          ()     => api.get('/api/portfolio/tax'),
+  syncPrices:   ()     => api.post('/api/portfolio/sync-prices'),
 };
 
 export const emailAPI = {
-  connectGmail: () => api.get('/api/email/gmail/connect'),
-  // syncCAS can take 60s+ (PDF download + password cracking) — override global 30s timeout
-  syncCAS:      () => api.post('/api/email/sync/cas', {}, { timeout: 120000 }),
-  status:       () => api.get('/api/email/status'),
-  // Admin panel
+  connectGmail: ()            => api.get('/api/email/gmail/connect'),
+  syncCAS:      ()            => api.post('/api/email/sync/cas', {}, { timeout: 120000 }),
+  status:       ()            => api.get('/api/email/status'),
   sessions:     ()            => api.get('/api/email/sessions'),
   sessionLogs:  (sessionId)   => api.get(`/api/email/sessions/${sessionId}/logs`),
   failures:     ()            => api.get('/api/email/failures'),
@@ -63,20 +59,22 @@ export const priceAPI = {
 };
 
 export const mfAPI = {
-  get:             () => api.get('/api/mf'),
-  requestCAS:      () => api.post('/api/mf/request-cas'),
-  syncStatements:  () => api.post('/api/mf/sync-statements', {}, { timeout: 120000 }),
-  delete:          (id) => api.delete(`/api/mf/${id}`),
+  get:             ()     => api.get('/api/mf'),
+  requestCAS:      ()     => api.post('/api/mf/request-cas'),
+  syncStatements:  ()     => api.post('/api/mf/sync-statements', {}, { timeout: 120000 }),
+  delete:          (id)   => api.delete(`/api/mf/${id}`),
 };
-  getRules:     ()     => api.get('/api/income/rules'),
-  createRule:   (data) => api.post('/api/income/rules', data),
-  updateRule:   (id, data) => api.put(`/api/income/rules/${id}`, data),
-  deleteRule:   (id)   => api.delete(`/api/income/rules/${id}`),
-  scan:         ()     => api.post('/api/income/scan'),
-  getEntries:   ()     => api.get('/api/income/entries'),
-  addEntry:     (data) => api.post('/api/income/entries', data),
-  deleteEntry:  (id)   => api.delete(`/api/income/entries/${id}`),
-  categories:   ()     => api.get('/api/income/categories'),
+
+export const incomeAPI = {
+  getRules:    ()          => api.get('/api/income/rules'),
+  createRule:  (data)      => api.post('/api/income/rules', data),
+  updateRule:  (id, data)  => api.put(`/api/income/rules/${id}`, data),
+  deleteRule:  (id)        => api.delete(`/api/income/rules/${id}`),
+  scan:        ()          => api.post('/api/income/scan'),
+  getEntries:  ()          => api.get('/api/income/entries'),
+  addEntry:    (data)      => api.post('/api/income/entries', data),
+  deleteEntry: (id)        => api.delete(`/api/income/entries/${id}`),
+  categories:  ()          => api.get('/api/income/categories'),
 };
 
 export default api;
