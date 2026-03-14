@@ -332,20 +332,47 @@ async function saveCASHoldings(userId, holdings, mfHoldings, casDate) {
   for (const h of holdings) {
     if (!h.isin) continue;
 
-    // INF (demat MF/ETF) also go to mf_holdings, not equity table
+    // INF prefix = MF or ETF demat unit
+    // ETFs (trade on NSE like stocks) → stay in holdings table
+    // MFs (non-tradeable units) → go to mf_holdings table
     if (h.isin.startsWith('INF')) {
-      const saved_ok = await saveSingleMF(userId, {
-        isin:          h.isin,
-        folio_number:  null,
-        fund_name:     h.company || h.isin,
-        units:         h.quantity,
-        nav:           h.market_price || null,
-        current_value: h.market_value || (h.quantity * (h.market_price || 0)),
-        invested_value:null,
-        gain_loss:     null,
-        source:        h.cas_source || 'CDSL',
-      }, statementDate);
-      if (saved_ok) saved++;
+      const isETF = (h.company || h.symbol || '').toLowerCase().includes('etf')
+                 || (h.company || h.symbol || '').toLowerCase().includes('bees')
+                 || (h.symbol || '').toLowerCase().includes('bees');
+      if (isETF) {
+        // ETF → equity holdings table (has NSE ticker, tradeable like stock)
+        const { data: existing } = await supabase
+          .from('holdings').select('avg_cost, dividend_per_share, sector')
+          .eq('user_id', userId).eq('isin', h.isin).maybeSingle();
+        const { error } = await supabase.from('holdings').upsert({
+          user_id: userId, isin: h.isin,
+          symbol: h.symbol || h.isin, company: h.company || h.isin,
+          quantity: h.quantity, market_value: h.market_value || null,
+          avg_cost: existing?.avg_cost || h.market_price || 0,
+          dividend_per_share: existing?.dividend_per_share || 0,
+          sector: existing?.sector || 'ETF',
+          last_price: h.market_price || null,
+          cas_source: h.cas_source || 'CAS',
+          cas_updated_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id,isin' });
+        if (error) console.error(JSON.stringify({ event: 'ETF_SAVE_ERROR', isin: h.isin, error: error.message }));
+        else saved++;
+      } else {
+        // Non-ETF MF → mf_holdings table
+        const saved_ok = await saveSingleMF(userId, {
+          isin:          h.isin,
+          folio_number:  null,
+          fund_name:     h.company || h.isin,
+          units:         h.quantity,
+          nav:           h.market_price || null,
+          current_value: h.market_value || (h.quantity * (h.market_price || 0)),
+          invested_value:null,
+          gain_loss:     null,
+          source:        h.cas_source || 'CDSL',
+        }, statementDate);
+        if (saved_ok) saved++;
+      }
       continue;
     }
 
@@ -415,10 +442,16 @@ async function saveSingleMF(userId, h, statementDate) {
 
   let error;
 
-  // Upsert by ISIN (demat MF) or folio (SOA MF)
+  // Upsert by ISIN or folio — avoid partial index upsert which can fail silently
   if (record.isin) {
-    ({ error } = await supabase.from('mf_holdings')
-      .upsert(record, { onConflict: 'user_id,isin' }));
+    // Check if exists first
+    const { data: existing } = await supabase.from('mf_holdings')
+      .select('id').eq('user_id', userId).eq('isin', record.isin).maybeSingle();
+    if (existing) {
+      ({ error } = await supabase.from('mf_holdings').update(record).eq('id', existing.id));
+    } else {
+      ({ error } = await supabase.from('mf_holdings').insert(record));
+    }
   } else if (record.folio_number) {
     // Check if folio already exists
     const { data: existing } = await supabase.from('mf_holdings')
