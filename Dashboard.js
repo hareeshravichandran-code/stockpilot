@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
-import api, { portfolioAPI, emailAPI, authAPI } from '../lib/api';
+import api, { portfolioAPI, emailAPI, authAPI, incomeAPI, mfAPI } from '../lib/api';
 import AdminPanel from './AdminPanel';
 import Dividends from './Dividends';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
@@ -39,12 +39,43 @@ export default function Dashboard() {
   const [profileSaved, setProfileSaved] = useState(false);
   const [profileError, setProfileError] = useState('');
 
-  const [assetBalances, setAssetBalances] = useState({ ppf: 0, epf: 0, nps: 0, fd: 0, ssy: 0 });
+  const [showAddStock, setShowAddStock]     = useState(false);
+  const [stockSearch, setStockSearch]       = useState('');
+  const [stockResults, setStockResults]     = useState([]);
+  const [selectedStock, setSelectedStock]   = useState(null);
+  const [stockQty, setStockQty]             = useState('');
+  const [stockCost, setStockCost]           = useState('');
+  const [stockSaving, setStockSaving]       = useState(false);
+  const [stockSaved, setStockSaved]         = useState(false);
+  const [stockError, setStockError]         = useState('');
+  const [searchLoading, setSearchLoading]   = useState(false);
+
+  // ── Mutual Funds state ───────────────────────────────────────────
+  const [mfData, setMfData]                   = useState(null);
+  const [mfLoading, setMfLoading]             = useState(false);
+
+  // ── Income Settings state ────────────────────────────────────────
+  const [showIncomeSettings, setShowIncomeSettings] = useState(false);
+  const [incomeRules, setIncomeRules]               = useState([]);
+  const [incomeSummary, setIncomeSummary]           = useState({ currentFYTotal:0, thisMonthTotal:0, byCategory:{} });
+  const [incomeEntries, setIncomeEntries]           = useState([]);
+  const [incomeScanning, setIncomeScanning]         = useState(false);
+  const [incomeScanResult, setIncomeScanResult]     = useState(null);
+  const [showRuleForm, setShowRuleForm]             = useState(false);
+  const [editingRule, setEditingRule]               = useState(null);
+  const [ruleForm, setRuleForm] = useState({
+    rule_name:'', category:'Salary', bank_sender:'', subject_pattern:'',
+    body_pattern:'', account_last4:'', min_amount:'', period:'monthly', remark:''
+  });
+  const [ruleSaving, setRuleSaving]   = useState(false);
+  const [ruleError, setRuleError]     = useState('');
+  const INCOME_CATS = ['Salary','Freelance','Rental','Business','Interest','Bonus','Other'];
   const [liabilities, setLiabilities] = useState({ homeLoan: 0, creditCard: 0 });
   const [monthlyIncome, setMonthlyIncome] = useState(0);
   const [monthlyExpenses, setMonthlyExpenses] = useState(0);
   const [dividendTotal, setDividendTotal] = useState(0);
   const [showAssetModal, setShowAssetModal] = useState(false);
+  const [assetBalances, setAssetBalances] = useState({ ppf: 0, epf: 0, nps: 0, fd: 0, ssy: 0 });
   const [assetForm, setAssetForm] = useState({ ppf: '', epf: '', nps: '', fd: '', ssy: '', homeLoan: '', creditCard: '', salary: '' });
   const [assetSaving, setAssetSaving] = useState(false);
 
@@ -78,6 +109,14 @@ export default function Dashboard() {
       });
     }).catch(() => {});
 
+    // Load income summary for dashboard tile
+    incomeAPI.getEntries().then(r => {
+      setIncomeSummary(r.data.summary || { currentFYTotal:0, thisMonthTotal:0, byCategory:{} });
+    }).catch(() => {});
+
+    // Load MF total for net worth tile
+    mfAPI.get().then(r => setMfData(r.data)).catch(() => {});
+
     // Handle OAuth callback
     const connected = searchParams.get('connected');
     const error = searchParams.get('error');
@@ -98,6 +137,10 @@ export default function Dashboard() {
     if (t === 'tax' && !tax) {
       const r = await portfolioAPI.tax().catch(() => ({ data: {} }));
       setTax(r.data);
+    }
+    if (t === 'mutualfunds' && !mfData) {
+      setMfLoading(true);
+      mfAPI.get().then(r => setMfData(r.data)).catch(() => {}).finally(() => setMfLoading(false));
     }
   };
 
@@ -134,10 +177,18 @@ export default function Dashboard() {
     try {
       const r = await emailAPI.syncCAS();
       setSyncResult(r.data);
-      await loadPortfolio();
     } catch (e) {
-      setSyncResult({ success: false, message: e.response?.data?.error || 'Sync failed' });
-    } finally { setSyncing(false); }
+      const isTimeout = !e.response || e.code === 'ECONNABORTED';
+      const msg = isTimeout
+        ? 'Sync timed out — please try again. First sync can take up to a minute.'
+        : (e.response?.data?.message || e.response?.data?.error || 'Sync failed');
+      setSyncResult({ success: false, message: msg });
+    } finally {
+      setSyncing(false);
+      // Always reload — holdings may have been saved even if sync returned an error
+      await loadPortfolio();
+      if (tab === 'holdings') await loadTab('holdings');
+    }
   };
 
   const syncPrices = async () => {
@@ -149,6 +200,124 @@ export default function Dashboard() {
     } catch (e) {
       setSyncResult({ success: false, message: e.response?.data?.error || 'Price sync failed' });
     } finally { setSyncingPrices(false); }
+  };
+
+  // ── Income handlers ──────────────────────────────────────────────
+  const loadIncome = async () => {
+    try {
+      const [rulesRes, entriesRes] = await Promise.all([
+        incomeAPI.getRules(), incomeAPI.getEntries()
+      ]);
+      setIncomeRules(rulesRes.data || []);
+      setIncomeEntries(entriesRes.data.entries || []);
+      setIncomeSummary(entriesRes.data.summary || { currentFYTotal:0, thisMonthTotal:0, byCategory:{} });
+    } catch(e) { console.error('loadIncome', e); }
+  };
+
+  const openIncomeSettings = () => {
+    setShowIncomeSettings(true);
+    setShowRuleForm(false);
+    setEditingRule(null);
+    setIncomeScanResult(null);
+    loadIncome();
+  };
+
+  const scanIncome = async () => {
+    setIncomeScanning(true); setIncomeScanResult(null);
+    try {
+      const r = await incomeAPI.scan();
+      setIncomeScanResult({ success: true, message: r.data.message, found: r.data.found });
+      if (r.data.found > 0) await loadIncome();
+    } catch(e) {
+      setIncomeScanResult({ success: false, message: e.response?.data?.error || 'Scan failed' });
+    } finally { setIncomeScanning(false); }
+  };
+
+  const openRuleForm = (rule = null) => {
+    if (rule) {
+      setRuleForm({
+        rule_name: rule.rule_name || '', category: rule.category || 'Salary',
+        bank_sender: rule.bank_sender || '', subject_pattern: rule.subject_pattern || '',
+        body_pattern: rule.body_pattern || '', account_last4: rule.account_last4 || '',
+        min_amount: rule.min_amount || '', period: rule.period || 'monthly', remark: rule.remark || ''
+      });
+      setEditingRule(rule);
+    } else {
+      setRuleForm({ rule_name:'', category:'Salary', bank_sender:'', subject_pattern:'',
+        body_pattern:'', account_last4:'', min_amount:'', period:'monthly', remark:'' });
+      setEditingRule(null);
+    }
+    setRuleError('');
+    setShowRuleForm(true);
+  };
+
+  const saveRule = async () => {
+    if (!ruleForm.rule_name.trim()) { setRuleError('Rule name is required'); return; }
+    if (!ruleForm.bank_sender && !ruleForm.subject_pattern && !ruleForm.body_pattern)
+      { setRuleError('At least one filter is required (sender, subject, or body keyword)'); return; }
+    setRuleSaving(true); setRuleError('');
+    try {
+      if (editingRule) {
+        await incomeAPI.updateRule(editingRule.id, ruleForm);
+      } else {
+        await incomeAPI.createRule(ruleForm);
+      }
+      setShowRuleForm(false);
+      await loadIncome();
+    } catch(e) {
+      setRuleError(e.response?.data?.error || 'Save failed');
+    } finally { setRuleSaving(false); }
+  };
+
+  const deleteRule = async (id) => {
+    if (!window.confirm('Delete this rule?')) return;
+    await incomeAPI.deleteRule(id).catch(() => {});
+    await loadIncome();
+  };
+  const handleStockSearch = async (val) => {
+    setStockSearch(val);
+    setSelectedStock(null);
+    if (val.trim().length < 1) { setStockResults([]); return; }
+    setSearchLoading(true);
+    try {
+      const r = await portfolioAPI.searchStocks(val);
+      setStockResults(r.data || []);
+    } catch(e) { setStockResults([]); }
+    finally { setSearchLoading(false); }
+  };
+
+  const handleSelectStock = (stock) => {
+    setSelectedStock(stock);
+    setStockSearch(stock.company);
+    setStockResults([]);
+  };
+
+  const handleSaveStock = async () => {
+    if (!selectedStock) { setStockError('Please select a stock from the list'); return; }
+    if (!stockQty || parseInt(stockQty) <= 0) { setStockError('Enter a valid quantity'); return; }
+    setStockSaving(true); setStockError('');
+    try {
+      await portfolioAPI.addHolding({
+        symbol:   selectedStock.symbol,
+        isin:     selectedStock.isin,
+        company:  selectedStock.company,
+        sector:   selectedStock.sector,
+        quantity: parseInt(stockQty),
+        avgCost:  stockCost ? parseFloat(stockCost) : 0,
+      });
+      setStockSaved(true);
+      await loadPortfolio();
+      setTimeout(() => {
+        setShowAddStock(false);
+        setStockSaved(false);
+        setSelectedStock(null);
+        setStockSearch('');
+        setStockQty('');
+        setStockCost('');
+      }, 1200);
+    } catch(e) {
+      setStockError(e.response?.data?.error || 'Failed to save. Try again.');
+    } finally { setStockSaving(false); }
   };
 
   const saveProfile = async () => {
@@ -206,8 +375,9 @@ export default function Dashboard() {
           <div className="db-nav-label">Overview</div>
           {[
             { id:'dashboard', icon:'⬡', label:'Dashboard' },
-            { id:'holdings', icon:'◈', label:'Stock Holdings' },
-            { id:'dividends', icon:'◎', label:'Dividends' },
+            { id:'holdings',     icon:'◈', label:'Stock Holdings' },
+            { id:'mutualfunds',  icon:'◉', label:'Mutual Funds' },
+            { id:'dividends',    icon:'◎', label:'Dividends' },
             { id:'transactions', icon:'⇄', label:'Transactions' },
           ].map(n => (
             <div key={n.id} className={`db-nav-item ${tab === n.id ? 'active' : ''}`}
@@ -255,7 +425,7 @@ export default function Dashboard() {
           <div>
             <h1 className="db-page-title">
               {{ dashboard:'Dashboard', holdings:'Stock Holdings', dividends:'Dividend Tracker',
-                 transactions:'Transaction History', tax:'Tax Summary' }[tab]}
+                 transactions:'Transaction History', tax:'Tax Summary', mutualfunds:'Mutual Funds' }[tab]}
             </h1>
             <p className="db-page-sub">
               {emailStatus.length > 0
@@ -266,7 +436,7 @@ export default function Dashboard() {
           <div className="db-topbar-right">
             {emailStatus.length > 0 && (
               <button className="db-sync-btn" onClick={syncEmails} disabled={syncing}>
-                {syncing ? '⟳ Syncing…' : '⟳ Sync Emails'}
+                {syncing ? '⟳ Syncing… (up to 60s)' : '⟳ Sync Emails'}
               </button>
             )}
             <button className="db-sync-btn" onClick={syncPrices} disabled={syncingPrices}
@@ -278,10 +448,16 @@ export default function Dashboard() {
         </div>
 
         {syncResult && (
-          <div className={`db-banner ${syncResult.success !== false ? 'success' : 'error'}`}>
-            {syncResult.success !== false
-              ? `✅ Sync complete! Found ${syncResult.tradesFound || 0} trades, ${syncResult.dividendsFound || 0} dividends from ${syncResult.emailsFound || 0} emails.`
-              : `❌ ${syncResult.message}`}
+          <div className={`db-banner ${syncResult.success === true ? 'success' : syncResult.pdfLocked ? 'info' : syncResult.success === false ? 'error' : 'info'}`}>
+            {syncResult.success === true
+              ? syncResult.holdingsSaved != null
+                ? `✅ Synced ${syncResult.holdingsSaved} holdings from ${syncResult.casType || 'CAS'}`
+                : `✅ ${syncResult.message || 'Sync complete!'}`
+              : syncResult.pdfLocked
+              ? `🔒 ${syncResult.message}`
+              : syncResult.success === false
+              ? `❌ ${syncResult.message}`
+              : `ℹ️ ${syncResult.message}`}
             <button onClick={() => setSyncResult(null)} style={{marginLeft:'auto',background:'none',border:'none',color:'inherit',cursor:'pointer'}}>✕</button>
           </div>
         )}
@@ -292,13 +468,15 @@ export default function Dashboard() {
             <div className="fade-in">
               {/* ── Phase 1: 5 Tiles ── */}
               {(() => {
-                const stocksVal = s.totalMarket || 0;
+                const stocksVal   = s.totalMarket || 0;
+                const mfVal       = mfData?.summary?.totalValue || 0;
                 const otherAssets = (assetBalances.ppf||0) + (assetBalances.epf||0) + (assetBalances.nps||0) + (assetBalances.fd||0) + (assetBalances.ssy||0);
-                const totalNetWorth = stocksVal + otherAssets;
+                const totalNetWorth = stocksVal + mfVal + otherAssets;
                 const totalCredit = (liabilities.homeLoan||0) + (liabilities.creditCard||0);
 
                 const pieData = [
                   { name: 'Stocks', value: stocksVal, color: '#64ffda' },
+                  { name: 'Mutual Funds', value: mfVal, color: '#a78bfa' },
                   { name: 'PPF', value: assetBalances.ppf||0, color: '#ffd700' },
                   { name: 'EPF', value: assetBalances.epf||0, color: '#00bcd4' },
                   { name: 'NPS', value: assetBalances.nps||0, color: '#b39ddb' },
@@ -611,8 +789,16 @@ export default function Dashboard() {
                 <div className="db-card">
                   <div className="db-card-header">
                     <div className="db-card-title">All Stock Holdings ({holdings.length})</div>
-                    <div style={{ fontSize:11, color:'#475569' }}>
-                      {s.casDate ? `CAS as of ${new Date(s.casDate).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' })}` : 'From CAS email'}
+                    <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                      <div style={{ fontSize:11, color:'#475569' }}>
+                        {s.casDate ? `CAS as of ${new Date(s.casDate).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' })}` : 'From CAS email'}
+                      </div>
+                      <button onClick={() => { setShowAddStock(true); setStockError(''); setStockSaved(false); }}
+                        style={{ background:'rgba(100,255,218,0.1)', border:'1px solid rgba(100,255,218,0.3)',
+                          color:'#64ffda', borderRadius:8, padding:'6px 14px', cursor:'pointer',
+                          fontSize:12, fontWeight:700, display:'flex', alignItems:'center', gap:5 }}>
+                        + Add Stock
+                      </button>
                     </div>
                   </div>
                   <div style={{ overflowX:'auto' }}>
@@ -666,7 +852,10 @@ export default function Dashboard() {
                                 </span>
                               </td>
                               <td style={{ fontSize:10, color:'#1e3a5f' }}>
-                                {h.priceSource || 'cost'}
+                                {h.source === 'manual'
+                                  ? <span style={{ background:'rgba(251,146,60,0.15)', color:'#fb923c', borderRadius:4, padding:'2px 6px', fontSize:10, fontWeight:600 }}>Manual</span>
+                                  : <span style={{ background:'rgba(100,255,218,0.08)', color:'#334155', borderRadius:4, padding:'2px 6px', fontSize:10 }}>CAS</span>
+                                }
                               </td>
                             </tr>
                           );
@@ -683,6 +872,242 @@ export default function Dashboard() {
                   </div>
                 </div>
               </div>
+            );
+          })()}
+          {/* MUTUAL FUNDS */}
+          {tab === 'mutualfunds' && (() => {
+            const mf       = mfData;
+            const holdings = mf?.holdings || [];
+            const summary  = mf?.summary  || {};
+            const fmt      = (v) => v >= 10000000 ? `₹${(v/10000000).toFixed(2)}Cr` : v >= 100000 ? `₹${(v/100000).toFixed(2)}L` : `₹${Number(v||0).toLocaleString('en-IN',{maximumFractionDigits:0})}`;
+            const COLORS   = ['#00d4a1','#0ea5e9','#f59e0b','#a78bfa','#f43f5e','#34d399','#fb923c','#818cf8','#e879f9','#4ade80'];
+            const pieData  = summary.byFundHouse || [];
+            const gainPct  = summary.gainLossPct || 0;
+
+            return (
+              <div className="fade-in">
+
+
+                {/* ── Action bar ── */}
+                <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:20, flexWrap:'wrap' }}>
+                  <div style={{ flex:1 }}>
+                    <div style={{ color:'#64748b', fontSize:12 }}>
+                      {holdings.length > 0
+                        ? `${holdings.length} funds · Statement date: ${summary.lastStatement || '—'} · Sources: ${[...new Set(holdings.map(h=>h.source))].join(', ')}`
+                        : 'No holdings yet — sync Gmail to import from CDSL/NSDL CAS emails'}
+                    </div>
+                  </div>
+                  {/* DEMAT MFs — sync from Gmail (CDSL/NSDL CAS) */}
+                  <button onClick={syncEmails} disabled={syncing}
+                    style={{ padding:'8px 16px', background:'rgba(100,255,218,0.08)',
+                      border:'1px solid rgba(100,255,218,0.2)', color:'#64ffda',
+                      borderRadius:8, fontSize:12, fontWeight:700, cursor:'pointer' }}>
+                    {syncing ? '⟳ Syncing…' : '⟳ Sync Gmail (CDSL/NSDL)'}
+                  </button>
+                </div>
+
+                {mfLoading ? (
+                  <div style={{ textAlign:'center', padding:60, color:'#334155' }}>Loading mutual funds…</div>
+                ) : holdings.length === 0 ? (
+                  <div style={{ textAlign:'center', padding:'50px 20px', lineHeight:2 }}>
+                    <div style={{ fontSize:40, marginBottom:12 }}>📊</div>
+                    <div style={{ color:'#64748b', fontSize:14, fontWeight:600, marginBottom:8 }}>No mutual fund holdings yet</div>
+                    <div style={{ color:'#334155', fontSize:12, maxWidth:420, margin:'0 auto' }}>
+                      Mutual funds sync automatically from your CDSL and NSDL CAS emails. Click <b style={{color:'#64ffda'}}>Sync Gmail (CDSL/NSDL)</b> above.
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {/* ── Summary tiles ── */}
+                    <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12, marginBottom:20 }}>
+                      {[
+                        { label:'Current Value',   val: fmt(summary.totalValue),    color:'#64ffda' },
+                        { label:'Amount Invested',  val: fmt(summary.totalInvested || 0), color:'#0ea5e9' },
+                        { label:'Gain / Loss',
+                          val: `${(summary.totalGainLoss||0) >= 0 ? '+' : '-'}${fmt(Math.abs(summary.totalGainLoss||0))}`,
+                          color: (summary.totalGainLoss||0) >= 0 ? '#00d4a1' : '#f43f5e' },
+                        { label:'Overall Returns',
+                          val: `${gainPct >= 0 ? '+' : ''}${gainPct.toFixed(2)}%`,
+                          color: gainPct >= 0 ? '#00d4a1' : '#f43f5e' },
+                      ].map(t => (
+                        <div key={t.label} style={{ background:'rgba(255,255,255,0.04)', borderRadius:10,
+                          padding:'14px 16px', border:'1px solid rgba(255,255,255,0.06)' }}>
+                          <div style={{ color:'#64748b', fontSize:11, marginBottom:6 }}>{t.label}</div>
+                          <div style={{ color:t.color, fontWeight:700, fontSize:18 }}>{t.val}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* ── Charts row ── */}
+                    <div style={{ display:'grid', gridTemplateColumns:'1fr 1.6fr', gap:16, marginBottom:20 }}>
+                      {/* Pie — by fund house */}
+                      <div style={{ background:'rgba(255,255,255,0.04)', borderRadius:12, padding:20,
+                        border:'1px solid rgba(255,255,255,0.08)' }}>
+                        <div style={{ fontWeight:700, color:'#e2e8f0', fontSize:14, marginBottom:12 }}>By Fund House</div>
+                        <div style={{ display:'flex', justifyContent:'center' }}>
+                          <PieChart width={180} height={180}>
+                            <Pie data={pieData} cx={90} cy={90} innerRadius={48} outerRadius={82}
+                              dataKey="value" paddingAngle={2}>
+                              {pieData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                            </Pie>
+                            <Tooltip formatter={v => fmt(v)}
+                              contentStyle={{ background:'#1a1a2e', border:'1px solid #333', borderRadius:8, fontSize:11 }} />
+                          </PieChart>
+                        </div>
+                        <div style={{ display:'flex', flexDirection:'column', gap:5, marginTop:6 }}>
+                          {pieData.slice(0,5).map((d, i) => (
+                            <div key={d.name} style={{ display:'flex', justifyContent:'space-between', fontSize:11, alignItems:'center' }}>
+                              <div style={{ display:'flex', gap:6, alignItems:'center' }}>
+                                <div style={{ width:8, height:8, borderRadius:'50%', background:COLORS[i%COLORS.length], flexShrink:0 }}/>
+                                <span style={{ color:'#cbd5e1' }}>{d.name}</span>
+                              </div>
+                              <span style={{ color:'#94a3b8', fontWeight:600 }}>{fmt(d.value)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Bar — top holdings */}
+                      <div style={{ background:'rgba(255,255,255,0.04)', borderRadius:12, padding:20,
+                        border:'1px solid rgba(255,255,255,0.08)' }}>
+                        <div style={{ fontWeight:700, color:'#e2e8f0', fontSize:14, marginBottom:12 }}>Holdings by Value</div>
+                        <div style={{ display:'flex', flexDirection:'column', gap:9 }}>
+                          {holdings.slice(0,8).map((h, i) => {
+                            const pct = summary.totalValue > 0 ? (h.current_value / summary.totalValue * 100) : 0;
+                            return (
+                              <div key={h.id || i}>
+                                <div style={{ display:'flex', justifyContent:'space-between', fontSize:11, marginBottom:2 }}>
+                                  <span style={{ color:'#cbd5e1', fontWeight:600, maxWidth:220,
+                                    overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                                    {h.fund_name}
+                                  </span>
+                                  <div style={{ display:'flex', gap:8, flexShrink:0 }}>
+                                    <span style={{ color:'#64748b' }}>{pct.toFixed(1)}%</span>
+                                    <span style={{ color:'#00d4a1', fontWeight:700 }}>{fmt(h.current_value||0)}</span>
+                                  </div>
+                                </div>
+                                <div style={{ height:5, background:'rgba(255,255,255,0.06)', borderRadius:3, overflow:'hidden' }}>
+                                  <div style={{ height:'100%', width:`${pct}%`, borderRadius:3,
+                                    background: COLORS[i%COLORS.length], transition:'width 0.6s ease' }} />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* ── Holdings table ── */}
+                    <div style={{ background:'rgba(255,255,255,0.03)', borderRadius:12,
+                      border:'1px solid rgba(255,255,255,0.07)', overflow:'hidden' }}>
+                      <div style={{ padding:'14px 20px', borderBottom:'1px solid rgba(255,255,255,0.06)',
+                        display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                        <div style={{ fontWeight:700, color:'#e2e8f0', fontSize:14 }}>
+                          All Mutual Fund Holdings ({holdings.length})
+                        </div>
+                        <div style={{ color:'#64748b', fontSize:12 }}>
+                          Total: <span style={{ color:'#64ffda', fontWeight:700 }}>{fmt(summary.totalValue)}</span>
+                        </div>
+                      </div>
+                      <div style={{ overflowX:'auto' }}>
+                        <table className="db-table">
+                          <thead>
+                            <tr>
+                              <th>Fund</th>
+                              <th>Category</th>
+                              <th className="right">Units</th>
+                              <th className="right">NAV (₹)</th>
+                              <th className="right">Current Value</th>
+                              <th className="right">Invested</th>
+                              <th className="right">Gain / Loss</th>
+                              <th>Folio / ISIN</th>
+                              <th>Holding Date</th>
+                              <th>Source</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {holdings.map((h, idx) => {
+                              const gl    = (h.current_value||0) - (h.invested_value||0);
+                              const glPct = h.invested_value > 0 ? (gl / h.invested_value * 100) : null;
+                              return (
+                                <tr key={h.id || idx}>
+                                  <td>
+                                    <div style={{ fontWeight:600, color:'#e2e8f0', fontSize:12,
+                                      maxWidth:220, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                                      {h.fund_name}
+                                    </div>
+                                    <div style={{ color:'#475569', fontSize:10, marginTop:1 }}>{h.fund_house}</div>
+                                  </td>
+                                  <td>
+                                    <span style={{ fontSize:10, background:'rgba(14,165,233,0.1)', color:'#0ea5e9',
+                                      borderRadius:4, padding:'2px 7px', fontWeight:600, whiteSpace:'nowrap' }}>
+                                      {h.fund_category || 'Equity'}
+                                    </span>
+                                  </td>
+                                  <td className="right mono" style={{ color:'#e2e8f0' }}>
+                                    {Number(h.units||0).toLocaleString('en-IN',{maximumFractionDigits:3, minimumFractionDigits:3})}
+                                  </td>
+                                  <td className="right mono" style={{ color:'#94a3b8' }}>
+                                    {h.nav ? Number(h.nav).toFixed(3) : '—'}
+                                  </td>
+                                  <td className="right mono" style={{ color:'#64ffda', fontWeight:700 }}>
+                                    {h.current_value ? fmt(h.current_value) : '—'}
+                                  </td>
+                                  <td className="right mono" style={{ color:'#64748b' }}>
+                                    {h.invested_value ? fmt(h.invested_value) : '—'}
+                                  </td>
+                                  <td className="right mono">
+                                    {h.invested_value ? (
+                                      <>
+                                        <span style={{ color: gl >= 0 ? '#00d4a1' : '#f43f5e', fontWeight:600, display:'block' }}>
+                                          {gl >= 0 ? '+' : ''}{fmt(Math.abs(gl))}
+                                        </span>
+                                        {glPct !== null && (
+                                          <span style={{ color: glPct >= 0 ? '#00d4a1' : '#f43f5e', fontSize:10 }}>
+                                            {glPct >= 0 ? '+' : ''}{glPct.toFixed(2)}%
+                                          </span>
+                                        )}
+                                      </>
+                                    ) : '—'}
+                                  </td>
+                                  <td style={{ fontSize:10, color:'#475569', maxWidth:120,
+                                    overflow:'hidden', textOverflow:'ellipsis' }}>
+                                    {h.folio_number
+                                      ? <span>📁 {h.folio_number}</span>
+                                      : h.isin
+                                      ? <span style={{ color:'#1e3a5f', fontFamily:'monospace' }}>{h.isin}</span>
+                                      : '—'}
+                                  </td>
+                                  <td style={{ fontSize:11, color:'#475569', whiteSpace:'nowrap' }}>
+                                    {h.statement_date
+                                      ? new Date(h.statement_date).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})
+                                      : '—'}
+                                  </td>
+                                  <td>
+                                    <span style={{ fontSize:10, borderRadius:4, padding:'2px 6px', fontWeight:600,
+                                      background: h.source === 'CDSL'      ? 'rgba(100,255,218,0.08)' :
+                                                  h.source === 'MFCENTRAL' ? 'rgba(14,165,233,0.12)'  :
+                                                  h.source === 'CAMS'      ? 'rgba(251,146,60,0.12)'  :
+                                                  'rgba(167,139,250,0.12)',
+                                      color: h.source === 'CDSL'      ? '#334155' :
+                                             h.source === 'MFCENTRAL' ? '#0ea5e9' :
+                                             h.source === 'CAMS'      ? '#fb923c' : '#a78bfa' }}>
+                                      {h.source || 'CDSL'}
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })()}
+
             );
           })()}
 
@@ -924,6 +1349,369 @@ export default function Dashboard() {
                   4. Falls back to rule-based patterns if AI fails
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── INCOME SETTINGS MODAL ── */}
+      {showIncomeSettings && (
+        <div className="db-modal-overlay" onClick={e => { if(e.target===e.currentTarget) setShowIncomeSettings(false); }}>
+          <div className="db-modal fade-in" style={{ maxWidth: 620, maxHeight:'90vh', overflowY:'auto' }}>
+            <div className="db-modal-header">
+              <div>
+                <div className="db-modal-title">₹ Income Capture Rules</div>
+                <div style={{ color:'#64748b', fontSize:12, marginTop:2 }}>
+                  Auto-detect salary & income from your bank credit emails
+                </div>
+              </div>
+              <button className="db-modal-close" onClick={() => setShowIncomeSettings(false)}>✕</button>
+            </div>
+            <div className="db-modal-body">
+
+              {/* Summary strip */}
+              {incomeSummary.currentFYTotal > 0 && (
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10, marginBottom:20 }}>
+                  {[
+                    { label:'FY26 Total', val: fmt(incomeSummary.currentFYTotal), color:'#64ffda' },
+                    { label:'This Month', val: fmt(incomeSummary.thisMonthTotal),  color:'#a78bfa' },
+                    { label:'Entries',    val: incomeEntries.length,               color:'#0ea5e9' },
+                  ].map(s => (
+                    <div key={s.label} style={{ background:'#0a1628', borderRadius:8, padding:'10px 14px', border:'1px solid #1e3a5f', textAlign:'center' }}>
+                      <div style={{ color:s.color, fontWeight:700, fontSize:18 }}>{s.val}</div>
+                      <div style={{ color:'#475569', fontSize:11, marginTop:2 }}>{s.label}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Rule Form */}
+              {showRuleForm ? (
+                <div style={{ background:'#0a1628', borderRadius:10, padding:18, border:'1px solid #1e3a5f', marginBottom:16 }}>
+                  <div style={{ color:'#64ffda', fontWeight:700, fontSize:13, marginBottom:14 }}>
+                    {editingRule ? '✎ Edit Rule' : '+ New Income Rule'}
+                  </div>
+
+                  {/* Row 1: Name + Category */}
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:12 }}>
+                    <div>
+                      <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:5 }}>RULE NAME <span style={{color:'#f43f5e'}}>*</span></label>
+                      <input className="db-input" placeholder="e.g. HDFC Salary"
+                        value={ruleForm.rule_name} onChange={e => setRuleForm(p=>({...p,rule_name:e.target.value}))} />
+                    </div>
+                    <div>
+                      <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:5 }}>INCOME CATEGORY <span style={{color:'#f43f5e'}}>*</span></label>
+                      <select className="db-input" value={ruleForm.category} onChange={e => setRuleForm(p=>({...p,category:e.target.value}))}
+                        style={{ background:'#0f1c2e', color:'#e2e8f0', cursor:'pointer' }}>
+                        {INCOME_CATS.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Row 2: Bank Sender */}
+                  <div style={{ marginBottom:12 }}>
+                    <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:5 }}>BANK SENDER EMAIL</label>
+                    <input className="db-input" placeholder="e.g. alerts@hdfcbank.net or noreply@icicibank.com"
+                      value={ruleForm.bank_sender} onChange={e => setRuleForm(p=>({...p,bank_sender:e.target.value}))} />
+                    <span style={{ color:'#334155', fontSize:10, marginTop:3, display:'block' }}>
+                      Check a real bank credit email → From: field. Partial match works e.g. "hdfcbank"
+                    </span>
+                  </div>
+
+                  {/* Row 3: Subject + Body */}
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:12 }}>
+                    <div>
+                      <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:5 }}>SUBJECT CONTAINS</label>
+                      <input className="db-input" placeholder="e.g. SALARY CREDIT"
+                        value={ruleForm.subject_pattern} onChange={e => setRuleForm(p=>({...p,subject_pattern:e.target.value}))} />
+                    </div>
+                    <div>
+                      <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:5 }}>BODY CONTAINS</label>
+                      <input className="db-input" placeholder="e.g. credited to your account"
+                        value={ruleForm.body_pattern} onChange={e => setRuleForm(p=>({...p,body_pattern:e.target.value}))} />
+                    </div>
+                  </div>
+
+                  {/* Row 4: Account Last 4 + Min Amount + Period */}
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10, marginBottom:12 }}>
+                    <div>
+                      <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:5 }}>ACCOUNT LAST 4</label>
+                      <input className="db-input" placeholder="e.g. 7823" maxLength={4}
+                        value={ruleForm.account_last4} onChange={e => setRuleForm(p=>({...p,account_last4:e.target.value}))} />
+                    </div>
+                    <div>
+                      <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:5 }}>MIN AMOUNT (₹)</label>
+                      <input className="db-input" type="number" placeholder="e.g. 10000"
+                        value={ruleForm.min_amount} onChange={e => setRuleForm(p=>({...p,min_amount:e.target.value}))} />
+                    </div>
+                    <div>
+                      <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:5 }}>PERIOD</label>
+                      <select className="db-input" value={ruleForm.period} onChange={e => setRuleForm(p=>({...p,period:e.target.value}))}
+                        style={{ background:'#0f1c2e', color:'#e2e8f0', cursor:'pointer' }}>
+                        <option value="monthly">Monthly</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="irregular">Irregular</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Remark */}
+                  <div style={{ marginBottom:14 }}>
+                    <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:5 }}>REMARK (optional)</label>
+                    <input className="db-input" placeholder="e.g. Main salary account, credited on 1st"
+                      value={ruleForm.remark} onChange={e => setRuleForm(p=>({...p,remark:e.target.value}))} />
+                  </div>
+
+                  {ruleError && (
+                    <div style={{ color:'#f43f5e', fontSize:12, marginBottom:10, padding:'7px 10px',
+                      background:'rgba(244,63,94,0.08)', borderRadius:6, border:'1px solid rgba(244,63,94,0.2)' }}>
+                      ⚠ {ruleError}
+                    </div>
+                  )}
+
+                  <div style={{ display:'flex', gap:8 }}>
+                    <button onClick={saveRule} disabled={ruleSaving}
+                      style={{ flex:1, background:'#64ffda', color:'#0a0a0a', border:'none',
+                        borderRadius:8, padding:'11px', fontWeight:700, fontSize:13, cursor:'pointer' }}>
+                      {ruleSaving ? '⟳ Saving…' : (editingRule ? '✎ Update Rule' : '+ Save Rule')}
+                    </button>
+                    <button onClick={() => setShowRuleForm(false)}
+                      style={{ padding:'11px 18px', background:'#1e2d3d', color:'#94a3b8',
+                        border:'1px solid #334155', borderRadius:8, cursor:'pointer', fontSize:13 }}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* Existing rules list */}
+                  {incomeRules.length > 0 && (
+                    <div style={{ marginBottom:16 }}>
+                      <div style={{ color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:8 }}>ACTIVE RULES</div>
+                      {incomeRules.map(rule => (
+                        <div key={rule.id} style={{ background:'#0a1628', border:'1px solid #1e3a5f',
+                          borderRadius:8, padding:'12px 14px', marginBottom:8,
+                          display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
+                          <div>
+                            <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:4 }}>
+                              <span style={{ color:'#e2e8f0', fontWeight:700, fontSize:13 }}>{rule.rule_name}</span>
+                              <span style={{ fontSize:10, background:'rgba(100,255,218,0.1)', color:'#64ffda',
+                                borderRadius:4, padding:'1px 7px', fontWeight:600 }}>{rule.category}</span>
+                              <span style={{ fontSize:10, background:'rgba(255,255,255,0.04)', color:'#475569',
+                                borderRadius:4, padding:'1px 7px' }}>{rule.period}</span>
+                            </div>
+                            <div style={{ color:'#475569', fontSize:11, lineHeight:1.6 }}>
+                              {rule.bank_sender && <span>From: <span style={{color:'#64748b'}}>{rule.bank_sender}</span> · </span>}
+                              {rule.subject_pattern && <span>Subject: <span style={{color:'#64748b'}}>"{rule.subject_pattern}"</span> · </span>}
+                              {rule.body_pattern && <span>Body: <span style={{color:'#64748b'}}>"{rule.body_pattern}"</span></span>}
+                            </div>
+                            {rule.remark && <div style={{ color:'#334155', fontSize:10, marginTop:3 }}>💬 {rule.remark}</div>}
+                          </div>
+                          <div style={{ display:'flex', gap:6, flexShrink:0, marginLeft:10 }}>
+                            <button onClick={() => openRuleForm(rule)}
+                              style={{ background:'#1e2d3d', border:'1px solid #334155', color:'#94a3b8',
+                                borderRadius:6, padding:'4px 10px', cursor:'pointer', fontSize:11 }}>Edit</button>
+                            <button onClick={() => deleteRule(rule.id)}
+                              style={{ background:'rgba(244,63,94,0.08)', border:'1px solid rgba(244,63,94,0.2)',
+                                color:'#f43f5e', borderRadius:6, padding:'4px 10px', cursor:'pointer', fontSize:11 }}>✕</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {incomeRules.length === 0 && (
+                    <div style={{ textAlign:'center', padding:'20px 0', color:'#334155', fontSize:13, marginBottom:16 }}>
+                      No rules yet. Create your first rule to start capturing income.
+                    </div>
+                  )}
+
+                  {/* Action buttons */}
+                  <div style={{ display:'flex', gap:10, marginBottom:16 }}>
+                    <button onClick={() => openRuleForm()}
+                      style={{ flex:1, background:'rgba(100,255,218,0.1)', border:'1px solid rgba(100,255,218,0.3)',
+                        color:'#64ffda', borderRadius:8, padding:'11px', fontWeight:700,
+                        fontSize:13, cursor:'pointer' }}>
+                      + New Rule
+                    </button>
+                    <button onClick={scanIncome} disabled={incomeScanning || incomeRules.length === 0}
+                      style={{ flex:1, background: incomeRules.length > 0 ? '#0ea5e9' : '#1e2d3d',
+                        border:'none', color: incomeRules.length > 0 ? '#fff' : '#334155',
+                        borderRadius:8, padding:'11px', fontWeight:700,
+                        fontSize:13, cursor: incomeRules.length > 0 ? 'pointer' : 'not-allowed' }}>
+                      {incomeScanning ? '⟳ Scanning Gmail…' : '⟳ Scan Gmail Now'}
+                    </button>
+                  </div>
+
+                  {incomeScanResult && (
+                    <div style={{ padding:'10px 14px', borderRadius:8, marginBottom:14, fontSize:13,
+                      background: incomeScanResult.success ? 'rgba(0,212,161,0.08)' : 'rgba(244,63,94,0.08)',
+                      border: `1px solid ${incomeScanResult.success ? 'rgba(0,212,161,0.2)' : 'rgba(244,63,94,0.2)'}`,
+                      color: incomeScanResult.success ? '#00d4a1' : '#f43f5e' }}>
+                      {incomeScanResult.success ? '✅' : '⚠'} {incomeScanResult.message}
+                    </div>
+                  )}
+
+                  {/* Recent entries */}
+                  {incomeEntries.length > 0 && (
+                    <div>
+                      <div style={{ color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:8 }}>RECENT INCOME ENTRIES</div>
+                      <div style={{ maxHeight:200, overflowY:'auto', borderRadius:8, border:'1px solid #1e3a5f' }}>
+                        {incomeEntries.slice(0,15).map((e, i) => (
+                          <div key={e.id} style={{ padding:'9px 14px', borderBottom:'1px solid #0f1b2d',
+                            display:'flex', justifyContent:'space-between', alignItems:'center',
+                            background: i%2===0 ? '#0a1628' : 'transparent' }}>
+                            <div>
+                              <div style={{ color:'#e2e8f0', fontSize:12, fontWeight:600 }}>{e.description || e.category}</div>
+                              <div style={{ color:'#475569', fontSize:10, marginTop:1 }}>
+                                {new Date(e.credited_on).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}
+                                {' · '}<span style={{ color:'#334155' }}>{e.category}</span>
+                                {e.source==='auto' && <span style={{ color:'#0ea5e9', marginLeft:6 }}>auto</span>}
+                              </div>
+                            </div>
+                            <div style={{ color:'#64ffda', fontWeight:700, fontSize:13 }}>{fmt(e.amount)}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* How it works tip */}
+                  <div style={{ marginTop:14, padding:'10px 12px', background:'#0a1628', borderRadius:6,
+                    border:'1px solid #1e3a5f', fontSize:11, color:'#334155', lineHeight:1.8 }}>
+                    <span style={{ color:'#0ea5e9', fontWeight:700 }}>HOW IT WORKS</span><br/>
+                    1. Create a rule matching your bank credit email (sender + keyword)<br/>
+                    2. Click <b style={{color:'#94a3b8'}}>Scan Gmail Now</b> — scans last 90 days automatically<br/>
+                    3. Detected credits appear in entries + on the dashboard tile
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── ADD STOCK MODAL ── */}
+      {showAddStock && (
+        <div className="db-modal-overlay" onClick={e => { if(e.target===e.currentTarget){ setShowAddStock(false); setStockResults([]); }}}>
+          <div className="db-modal fade-in" style={{ maxWidth:460 }}>
+            <div className="db-modal-header">
+              <div className="db-modal-title">+ Add Stock Holding</div>
+              <button className="db-modal-close" onClick={() => { setShowAddStock(false); setStockResults([]); }}>✕</button>
+            </div>
+            <div className="db-modal-body">
+
+              {/* Stock Search */}
+              <div style={{ marginBottom:16 }}>
+                <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:6 }}>
+                  SEARCH STOCK
+                </label>
+                <div style={{ position:'relative' }}>
+                  <input
+                    className="db-input"
+                    placeholder="Type company name or NSE symbol e.g. HDFC, Infosys…"
+                    value={stockSearch}
+                    onChange={e => handleStockSearch(e.target.value)}
+                    autoFocus
+                    style={{ width:'100%', paddingRight: searchLoading ? 36 : 12 }}
+                  />
+                  {searchLoading && (
+                    <div style={{ position:'absolute', right:10, top:'50%', transform:'translateY(-50%)',
+                      width:14, height:14, border:'2px solid #334155', borderTopColor:'#64ffda',
+                      borderRadius:'50%', animation:'spin 0.6s linear infinite' }} />
+                  )}
+
+                  {/* Dropdown results */}
+                  {stockResults.length > 0 && (
+                    <div style={{ position:'absolute', top:'calc(100% + 4px)', left:0, right:0,
+                      background:'#1a2235', border:'1px solid #1e3a5f', borderRadius:8,
+                      zIndex:1000, maxHeight:260, overflowY:'auto', boxShadow:'0 8px 32px rgba(0,0,0,0.4)' }}>
+                      {stockResults.map(s => (
+                        <div key={s.symbol} onClick={() => handleSelectStock(s)}
+                          style={{ padding:'10px 14px', cursor:'pointer', borderBottom:'1px solid #0f1b2d',
+                            display:'flex', justifyContent:'space-between', alignItems:'center',
+                            transition:'background 0.1s' }}
+                          onMouseEnter={e => e.currentTarget.style.background='rgba(100,255,218,0.06)'}
+                          onMouseLeave={e => e.currentTarget.style.background='transparent'}>
+                          <div>
+                            <div style={{ color:'#e2e8f0', fontWeight:700, fontSize:13 }}>{s.symbol}</div>
+                            <div style={{ color:'#64748b', fontSize:11, marginTop:2 }}>{s.company}</div>
+                          </div>
+                          <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:3 }}>
+                            <span style={{ fontSize:10, color:'#334155', background:'rgba(255,255,255,0.05)',
+                              borderRadius:4, padding:'2px 6px' }}>{s.sector}</span>
+                            <span style={{ fontSize:9, color:'#1e3a5f' }}>{s.isin}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Selected Stock preview */}
+              {selectedStock && (
+                <div style={{ background:'rgba(100,255,218,0.06)', border:'1px solid rgba(100,255,218,0.15)',
+                  borderRadius:8, padding:'12px 14px', marginBottom:16,
+                  display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                  <div>
+                    <div style={{ color:'#64ffda', fontWeight:700, fontSize:14 }}>{selectedStock.symbol}</div>
+                    <div style={{ color:'#94a3b8', fontSize:12, marginTop:2 }}>{selectedStock.company}</div>
+                    <div style={{ color:'#334155', fontSize:10, marginTop:2 }}>{selectedStock.isin}</div>
+                  </div>
+                  <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:4 }}>
+                    <span style={{ fontSize:11, color:'#0ea5e9', background:'rgba(14,165,233,0.1)',
+                      borderRadius:4, padding:'2px 8px' }}>{selectedStock.sector}</span>
+                    <span style={{ fontSize:10, color:'#64748b' }}>NSE</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Quantity + Cost */}
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:20 }}>
+                <div>
+                  <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:6 }}>
+                    QUANTITY <span style={{ color:'#f43f5e' }}>*</span>
+                  </label>
+                  <input className="db-input" type="number" min="1" placeholder="e.g. 100"
+                    value={stockQty} onChange={e => setStockQty(e.target.value)} />
+                </div>
+                <div>
+                  <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:6 }}>
+                    AVG COST <span style={{ color:'#475569', fontWeight:400 }}>(optional)</span>
+                  </label>
+                  <input className="db-input" type="number" min="0" placeholder="₹ per share"
+                    value={stockCost} onChange={e => setStockCost(e.target.value)} />
+                </div>
+              </div>
+
+              <div style={{ background:'#0a1628', borderRadius:6, padding:'10px 12px', marginBottom:16,
+                border:'1px solid #1e3a5f', fontSize:11, color:'#475569', lineHeight:1.7 }}>
+                <span style={{ color:'#0ea5e9', fontWeight:700 }}>ℹ Auto-sync:</span> Current price &
+                sector will be fetched from Yahoo Finance automatically when you click <b style={{ color:'#94a3b8' }}>Sync Yahoo</b>.
+                Avg cost is optional — only needed for P&L tracking.
+              </div>
+
+              {stockError && (
+                <div style={{ color:'#f43f5e', fontSize:12, marginBottom:12, padding:'8px 12px',
+                  background:'rgba(244,63,94,0.08)', borderRadius:6, border:'1px solid rgba(244,63,94,0.2)' }}>
+                  ⚠ {stockError}
+                </div>
+              )}
+              {stockSaved && (
+                <div style={{ color:'#00d4a1', fontSize:12, marginBottom:12, padding:'8px 12px',
+                  background:'rgba(0,212,161,0.08)', borderRadius:6, border:'1px solid rgba(0,212,161,0.2)' }}>
+                  ✅ Stock added successfully!
+                </div>
+              )}
+
+              <button onClick={handleSaveStock} disabled={stockSaving || !selectedStock}
+                style={{ width:'100%', background: selectedStock ? '#64ffda' : '#1e2d3d',
+                  color: selectedStock ? '#0a0a0a' : '#334155',
+                  border:'none', borderRadius:8, padding:'13px', fontWeight:700,
+                  fontSize:14, cursor: selectedStock ? 'pointer' : 'not-allowed', transition:'all 0.2s' }}>
+                {stockSaving ? '⟳ Saving…' : '+ Add to Holdings'}
+              </button>
             </div>
           </div>
         </div>
