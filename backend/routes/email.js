@@ -651,47 +651,57 @@ router.get('/debug-mf', async (req, res) => {
   const supabase = require('../services/supabase');
   const results = {};
 
-  // 1. Check if table exists and count rows (no user filter — just test the table)
+  // 1. Table exists check
   try {
-    const { data, error, count } = await supabase
+    const { error, count } = await supabase
       .from('mf_holdings').select('*', { count: 'exact', head: true });
     results.tableExists = !error;
     results.rowCount = count;
-    results.tableError = error ? { message: error.message, code: error.code, details: error.details, hint: error.hint } : null;
+    results.tableError = error ? { message: error.message, code: error.code } : null;
   } catch(e) {
     results.tableExists = false;
     results.tableException = e.message;
   }
 
-  // 2. Try a test insert with a fixed dummy user_id to see exact error
-  const DUMMY_UUID = '00000000-0000-0000-0000-000000000001';
-  if (results.tableExists) {
+  // 2. Get a REAL user_id from the users table
+  const { data: users } = await supabase.from('users').select('id').limit(1);
+  const realUserId = users?.[0]?.id;
+  results.realUserId = realUserId || 'NO_USERS_FOUND';
+
+  // 3. Try insert with REAL user_id
+  if (results.tableExists && realUserId) {
     const testRecord = {
-      user_id: DUMMY_UUID,
-      isin: 'TEST_ISIN_DELETE_ME',
-      folio_number: 'TEST_FOLIO',
-      fund_name: 'Test Fund DELETE ME',
-      units: 1.0,
-      source: 'NSDL',
+      user_id:      realUserId,
+      isin:         'INF179K01WM1',
+      folio_number: 'DEBUG_TEST_17940875',
+      fund_name:    'DEBUG TEST HDFC Nifty 50 - DELETE ME',
+      units:        3207.777,
+      nav:          244.8257,
+      current_value: 785346.25,
+      invested_value: 707750.72,
+      gain_loss:    77595.53,
+      source:       'NSDL',
+      statement_date: '2026-02-28',
     };
     const { data: ins, error: insErr } = await supabase.from('mf_holdings').insert(testRecord).select();
     results.insertTest = insErr
       ? { success: false, error: insErr.message, code: insErr.code, details: insErr.details, hint: insErr.hint }
-      : { success: true, id: ins?.[0]?.id };
+      : { success: true, insertedId: ins?.[0]?.id };
 
-    // Clean up test row immediately
+    // Clean up
     if (!insErr && ins?.[0]?.id) {
       await supabase.from('mf_holdings').delete().eq('id', ins[0].id);
       results.insertTest.cleaned = true;
     }
   }
 
-  // 3. Show all rows (first 10)
-  if (results.tableExists) {
-    const { data: rows } = await supabase.from('mf_holdings')
-      .select('isin, folio_number, fund_name, units, source').limit(10);
-    results.sampleRows = rows || [];
-  }
+  // 4. Show all current rows
+  const { data: rows } = await supabase.from('mf_holdings').select('isin, folio_number, fund_name, units, source').limit(10);
+  results.sampleRows = rows || [];
+
+  // 5. Show mf_holdings columns
+  const { data: cols } = await supabase.from('mf_holdings').select().limit(0);
+  results.columnsWork = !cols?.error;
 
   return res.json(results);
 });
