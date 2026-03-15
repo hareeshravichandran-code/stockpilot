@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
-import api, { portfolioAPI, emailAPI, authAPI, incomeAPI, mfAPI, expenseAPI } from '../lib/api';
+import api, { portfolioAPI, emailAPI, authAPI, incomeAPI, mfAPI } from '../lib/api';
 import AdminPanel from './AdminPanel';
 import Dividends from './Dividends';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
@@ -167,7 +167,7 @@ export default function Dashboard() {
   const loadExpenses = async () => {
     try {
       const [entriesRes, rulesRes, catsRes] = await Promise.all([
-        expenseAPI.getEntries(), expenseAPI.getRules(), expenseAPI.categories()
+        api.get('/api/expense/entries'), api.get('/api/expense/rules'), api.get('/api/expense/categories')
       ]);
       setExpenseEntries(entriesRes.data.entries || []);
       setExpenseSummary(entriesRes.data.summary || { currentFYTotal:0, thisMonthTotal:0, byCategory:{}, byMonth:{}, fyLabel:'FY26', uncategorized:0 });
@@ -179,7 +179,7 @@ export default function Dashboard() {
   const scanExpenses = async () => {
     setExpenseScanning(true); setExpenseScanResult(null);
     try {
-      const r = await expenseAPI.scan();
+      const r = await api.post('/api/expense/scan');
       setExpenseScanResult({ success:true, message:r.data.message, found:r.data.found });
       await loadExpenses();
     } catch(e) {
@@ -191,7 +191,7 @@ export default function Dashboard() {
     if (!expenseEntryForm.amount || !expenseEntryForm.expense_date) return;
     setExpenseEntrySaving(true);
     try {
-      await expenseAPI.addEntry(expenseEntryForm);
+      await api.post('/api/expense/entries', expenseEntryForm);
       setShowExpenseEntry(false);
       setExpenseEntryForm({ category:'', sub_category:'', amount:'', expense_date:new Date().toISOString().split('T')[0], merchant_name:'', comments:'' });
       await loadExpenses();
@@ -201,7 +201,7 @@ export default function Dashboard() {
 
   const updateExpenseCategory = async (id, category, sub_category, merchant_name) => {
     try {
-      await expenseAPI.updateEntry(id, { category, sub_category, merchant_name });
+      await api.put(`/api/expense/entries/${id}`, { category, sub_category, merchant_name });
       setEditingExpense(null);
       await loadExpenses();
     } catch(e) { console.error(e); }
@@ -209,14 +209,14 @@ export default function Dashboard() {
 
   const deleteExpenseEntry = async (id) => {
     if (!window.confirm('Delete this expense?')) return;
-    await expenseAPI.deleteEntry(id).catch(()=>{});
+    await api.delete(`/api/expense/entries/${id}`).catch(()=>{});
     await loadExpenses();
   };
 
   const autoCategorizeMerchant = async (merchant) => {
     if (!merchant) return null;
     try {
-      const r = await expenseAPI.categorize({ merchant_name: merchant });
+      const r = await api.post('/api/expense/categorize', { merchant_name: merchant });
       return r.data;
     } catch(e) { return null; }
   };
@@ -225,8 +225,8 @@ export default function Dashboard() {
     if (!expenseRuleForm.rule_name) return;
     setExpenseRuleSaving(true);
     try {
-      if (editingExpenseRule) await expenseAPI.updateRule(editingExpenseRule.id, expenseRuleForm);
-      else                    await expenseAPI.createRule(expenseRuleForm);
+      if (editingExpenseRule) await api.put(`/api/expense/rules/${editingExpenseRule.id}`, expenseRuleForm);
+      else                    await api.post('/api/expense/rules', expenseRuleForm);
       setShowExpenseRuleForm(false); setEditingExpenseRule(null);
       setExpenseRuleForm({ rule_name:'', email_sender:'', subject_pattern:'', body_pattern:'', lookback_months:'0' });
       await loadExpenses();
@@ -1516,7 +1516,7 @@ export default function Dashboard() {
                                         ev.stopPropagation();
                                         const file=ev.target.files[0]; if(!file)return;
                                         const form=new FormData(); form.append('file',file);
-                                        await expenseAPI.uploadReceipt(e.id, form);
+                                        await api.post(`/api/expense/entries/${e.id}/receipt`, form, { headers:{'Content-Type':'multipart/form-data'} });
                                         await loadExpenses();
                                       }} />
                                   </label>
@@ -2040,7 +2040,7 @@ export default function Dashboard() {
                             </div>
                             <div style={{display:'flex',gap:6}}>
                               <button onClick={()=>{setEditingExpenseRule(r);setExpenseRuleForm({rule_name:r.rule_name,email_sender:r.email_sender||'',subject_pattern:r.subject_pattern||'',body_pattern:r.body_pattern||'',lookback_months:String(r.lookback_months||0)});setShowExpenseRuleForm(true);}} style={{background:'#1e2d3d',border:'1px solid #334155',color:'#94a3b8',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:11}}>Edit</button>
-                              <button onClick={async()=>{await expenseAPI.deleteRule(r.id);await loadExpenses();}} style={{background:'rgba(244,63,94,0.08)',border:'1px solid rgba(244,63,94,0.2)',color:'#f43f5e',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:11}}>✕</button>
+                              <button onClick={async()=>{await api.delete(`/api/expense/rules/${r.id}`);await loadExpenses();}} style={{background:'rgba(244,63,94,0.08)',border:'1px solid rgba(244,63,94,0.2)',color:'#f43f5e',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:11}}>✕</button>
                             </div>
                           </div>
                         ))}
