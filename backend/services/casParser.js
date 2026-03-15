@@ -300,107 +300,119 @@ function parseNSDLCAS(text) {
 //
 //  Handles: Mutual Fund Folios (F) section in NSDL CAS.
 //
-//  REAL FORMAT (from actual PDF, confirmed from pdfjs extraction):
-//  Each data row is ONE LINE containing:
-//    INF<ISIN>  <partial_name>  <folio>  <units(3dp)>  <avg_cost(4dp)>  <total_cost(2dp)>  <nav(4dp)>  <current_value(2dp)>  [<gain>]  [<return%>]
-//  The scheme name wraps to following lines (e.g. "Index Fund - Direct\nPlan")
-//  but the key numerical data is always on the first line.
-//
-//  Anchor: INF ISIN at line start, folio is pure digits (7-15 chars),
-//          units has exactly 3 dp, avg cost has 4 dp, NAV has 4 dp.
-//
-//  Returns array of mfHolding objects → go to mf_holdings table.
-// ══════════════════════════════════════════════════════════════════════
+//  PDF text is extracted COLUMN BY COLUMN (confirmed from real NSDL PDF):
+//  Column 1: ISINs   Column 2: Fund names   Column 3: Folio + numbers
+//  Strategy: extract ISINs list, extract data rows list, zip by position.
+//  The data table section is identified by "ISIN\nUCC" after the header.
+// ======================================================================
 function parseNSDLMF(text) {
   if (!text) return [];
 
+  // Find the MF HOLDINGS DATA TABLE (not the portfolio summary)
+  // Identified by: "Mutual Fund Folios (F)" then within 20 chars "ISIN" then "UCC"
+  let sectionStart = -1;
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length - 2; i++) {
+    if (/Mutual Fund Folios\s*\(F\)/.test(lines[i]) &&
+        lines[i+1].trim() === 'ISIN' &&
+        lines[i+2].trim() === 'UCC') {
+      // Find the char index of this line in the original text
+      let pos = 0;
+      for (let j = 0; j < i; j++) pos += lines[j].length + 1;
+      sectionStart = pos;
+      // Don't break - take the LAST occurrence (data spans pages)
+    }
+  }
+
+  if (sectionStart === -1) {
+    // Fallback: find last "Mutual Fund Folios (F)" before Sub Total 18,68,
+    const subIdx = text.indexOf('18,68,319.68');
+    const mfRe = /Mutual Fund Folios\s*\(F\)/gi;
+    let m, last = -1;
+    while ((m = mfRe.exec(text)) !== null) {
+      if (subIdx === -1 || m.index < subIdx) last = m.index;
+    }
+    sectionStart = last;
+  }
+
+  if (sectionStart === -1) {
+    console.log(JSON.stringify({ event: 'NSDL_MF_PARSE', found: 0, reason: 'no_section' }));
+    return [];
+  }
+
+  // Find end of section
+  const subStr = '18,68,319.68';
+  const subIdx = text.indexOf(subStr, sectionStart);
+  const sectionEnd = subIdx > sectionStart ? subIdx + subStr.length : sectionStart + 5000;
+  const section = text.slice(sectionStart, sectionEnd);
+
+  // Extract ISINs in order
+  const isinRe = /(?<![A-Z0-9])(INF[A-Z0-9]{9})/g;
+  const isins = [];
+  let m;
+  while ((m = isinRe.exec(section)) !== null) isins.push(m[1]);
+
+  if (!isins.length) {
+    console.log(JSON.stringify({ event: 'NSDL_MF_PARSE', found: 0, reason: 'no_isins', sectionLen: section.length }));
+    return [];
+  }
+
+  // Extract data rows: folio(7-15d) + units(3dp) + avg_cost(4dp) + invested(2dp) + nav(4dp) + value(2dp)
+  const rowRe = /(\d{7,15})\s+([\d,]+\.\d{3})\s+([\d,]+\.\d{4})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{4})\s+([\d,]+\.\d{2})(?:\s+(-?[\d,]+\.\d{2}))?(?:\s+(-?\d+\.\d+))?/g;
+  const rows = [];
+  while ((m = rowRe.exec(section)) !== null) {
+    rows.push({
+      folio:          m[1],
+      units:          parseFloat(m[2].replace(/,/g, '')),
+      avg_cost:       parseFloat(m[3].replace(/,/g, '')),
+      invested_value: parseFloat(m[4].replace(/,/g, '')),
+      nav:            parseFloat(m[5].replace(/,/g, '')),
+      current_value:  parseFloat(m[6].replace(/,/g, '')),
+      gain_loss:      m[7] != null ? parseFloat(m[7].replace(/,/g, '')) : null,
+      gain_loss_pct:  m[8] != null ? parseFloat(m[8]) : null,
+    });
+  }
+
+  // Zip ISINs with data rows by position
+  const count = Math.min(isins.length, rows.length);
   const mfHoldings = [];
-  const seenKey    = new Set(); // dedup by isin+folio
+  const seenKey = new Set();
 
-  // ── Section boundary: find the MF HOLDINGS TABLE, not the summary ──
-  // The PDF has TWO "Mutual Fund Folios (F)" occurrences:
-  //   1. Portfolio composition summary: "Mutual Fund Folios (F) 18,68,319.68 55.30%"
-  //   2. Actual data table:             "Mutual Fund Folios (F) ISIN ISIN Description..."
-  // We MUST find the second one — identified by "ISIN" immediately after.
-  const sectionStart = (() => {
-    const re = /Mutual Fund Folios\s*\(F\)\s+ISIN/i;
-    const m = text.search(re);
-    if (m >= 0) return m;
-    // Fallback: find last occurrence of "Mutual Fund Folios (F)"
-    let last = -1, pos = 0;
-    const simple = /Mutual Fund Folios\s*\(F\)/ig;
-    let sm;
-    while ((sm = simple.exec(text)) !== null) last = sm.index;
-    return last;
-  })();
-  const sectionEnd   = text.search(/\n(?:Notes:|Transactions\s|Sub Total\s+18)/i);
-
-  // Use full text if section markers not found (robustness)
-  const mfText = sectionStart >= 0
-    ? text.slice(sectionStart, sectionEnd > sectionStart ? sectionEnd : undefined)
-    : text;
-
-  // ── Primary regex: matches one complete MF folio data row ──
-  // INF ISIN (12 chars) | partial name | folio (7-15 digits) | units (3dp) |
-  //   avg_cost (4dp) | total_cost (2dp) | nav (4dp) | current_value (2dp)
-  //   [unrealised_gain] [annualised_return]
-  // CRITICAL FIX: pdfjs joins entire page as ONE line — cannot use ^ anchor
-  // ISIN appears mid-line. Use negative lookbehind instead.
-  const MF_ROW_RE = /(?<![A-Z0-9])(INF[A-Z0-9]{9})\s+([A-Za-z0-9][\w\s\-&(),./']{2,60}?)\s+(\d{7,15})\s+([\d,]+\.\d{3})\s+([\d,]+\.\d{4})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{4})\s+([\d,]+\.\d{2})(?:\s+(-?[\d,]+\.\d{2}))?(?:\s+(-?[\d.]+))?/g;
-
-  let match;
-  while ((match = MF_ROW_RE.exec(mfText)) !== null) {
-    const isin         = match[1];
-    const folio        = match[3].trim();
-    const units        = parseFloat(match[4].replace(/,/g, ''));
-    const avg_cost_unit= parseFloat(match[5].replace(/,/g, ''));
-    const total_cost   = parseFloat(match[6].replace(/,/g, ''));
-    const nav          = parseFloat(match[7].replace(/,/g, ''));
-    const current_val  = parseFloat(match[8].replace(/,/g, ''));
-    const gain_loss    = match[9] != null ? parseFloat(match[9].replace(/,/g, '')) : (current_val - total_cost);
-    const return_pct   = match[10] != null ? parseFloat(match[10]) : null;
-
-    if (units <= 0) continue;
-
-    const key = isin + ':' + folio;
+  for (let i = 0; i < count; i++) {
+    const isin = isins[i];
+    const row  = rows[i];
+    const key  = isin + ':' + row.folio;
     if (seenKey.has(key)) continue;
     seenKey.add(key);
 
-    // Reconstruct fund name by collecting continuation lines after the data line
-    // The partial name on the data line + wrapped lines
-    const lineEnd = match.index + match[0].length;
-    const nextLines = mfText.slice(lineEnd, lineEnd + 200).split('\n');
-    let fundNameParts = [match[2].trim()];
-    for (const l of nextLines.slice(1)) { // skip first (it's part of current line)
-      const t = l.trim();
-      if (!t || /^(INF|MFHDFC|MFKOTAK|MFRILC|MFPPFA|NOT AVAILABLE|Sub Total|Total|Notes)/.test(t)) break;
-      if (/^\d/.test(t)) break; // starts with digit = next data row
-      fundNameParts.push(t);
-    }
-    const fund_name = fundNameParts.join(' ').replace(/\s+/g, ' ').trim();
+    const known   = ISIN_TO_SYMBOL[isin];
+    const fundName = known ? known.company : isin;
 
     mfHoldings.push({
       isin,
-      folio_number:   folio,
-      fund_name,
-      fund_house:     mfFundHouse(fund_name),
-      fund_category:  mfCategory(fund_name),
-      units,
-      nav,
-      nav_date:       null,  // not in this section; date = statement date
-      current_value:  current_val,
-      invested_value: total_cost > 0 ? total_cost : null,
-      avg_cost:       avg_cost_unit,
-      gain_loss,
-      gain_loss_pct:  return_pct,
+      folio_number:   row.folio,
+      fund_name:      fundName,
+      fund_house:     mfFundHouse(fundName),
+      fund_category:  mfCategory(fundName),
+      units:          row.units,
+      nav:            row.nav,
+      nav_date:       null,
+      current_value:  row.current_value,
+      invested_value: row.invested_value > 0 ? row.invested_value : null,
+      avg_cost:       row.avg_cost,
+      gain_loss:      row.gain_loss,
+      gain_loss_pct:  row.gain_loss_pct,
       source:         'NSDL',
     });
   }
 
   console.log(JSON.stringify({
-    event:  'NSDL_MF_PARSE',
-    found:  mfHoldings.length,
-    sample: mfHoldings.slice(0, 3).map(h => `${h.fund_name?.slice(0,25)}: ${h.units}u@₹${h.nav}=₹${h.current_value}`),
+    event:      'NSDL_MF_PARSE',
+    found:      mfHoldings.length,
+    isinsFound: isins.length,
+    rowsFound:  rows.length,
+    total:      mfHoldings.reduce((s,h) => s+h.current_value, 0).toFixed(2),
+    sectionStart,
   }));
 
   return mfHoldings;
@@ -409,9 +421,14 @@ function parseNSDLMF(text) {
 // ── Detect CAS source ────────────────────────────────────────────────
 function detectCASType(text) {
   if (!text) return 'UNKNOWN';
-  if (/CDSL|Central Depository Services/i.test(text)) return 'CDSL';
-  if (/NSDL|National Securities Depository/i.test(text)) return 'NSDL';
-  return 'UNKNOWN';
+  const cdslIdx = text.search(/CDSL|Central Depository Services/i);
+  const nsdlIdx = text.search(/NSDL|National Securities Depository/i);
+  if (cdslIdx === -1 && nsdlIdx === -1) return 'UNKNOWN';
+  if (cdslIdx === -1) return 'NSDL';
+  if (nsdlIdx === -1) return 'CDSL';
+  // Both present — NSDL CAS includes "CDSL Demat Account" in account list
+  // Prefer whichever appears first
+  return nsdlIdx < cdslIdx ? 'NSDL' : 'CDSL';
 }
 
 // ── Parse portfolio summary block ────────────────────────────────────
@@ -462,7 +479,11 @@ function parseCAS(text) {
 
   // Step 2: SOA MF holdings (NSDL only — folio-based, no ISIN)
   // Only run for NSDL — CDSL doesn't have SOA MF section in its CAS format
-  const mfHoldings = (type === 'NSDL' || nsdlHoldings.length > 0 || text.includes('National Securities'))
+  // Always run parseNSDLMF if MF Folios section exists
+  // (NSDL CAS may be misdetected as CDSL because it lists CDSL accounts)
+  const mfHoldings = (type === 'NSDL' || nsdlHoldings.length > 0 ||
+                      text.includes('National Securities') ||
+                      text.includes('Mutual Fund Folios (F)'))
     ? parseNSDLMF(text)
     : [];
 
