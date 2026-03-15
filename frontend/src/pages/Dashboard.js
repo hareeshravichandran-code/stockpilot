@@ -816,13 +816,29 @@ export default function Dashboard() {
                         </tr>
                       </thead>
                       <tbody>
+                        {/* Statement date */}
+                        {holdings.length > 0 && holdings[0]?.cas_statement_date && (
+                          <tr><td colSpan="6" style={{padding:'4px 0 8px'}}>
+                            <span style={{fontSize:11,color:'#475569'}}>
+                              📅 CAS Statement: {new Date(holdings[0].cas_statement_date+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}
+                            </span>
+                          </td></tr>
+                        )}
                         {holdings.map(h => {
                           const alloc = totalValue > 0 ? (h.marketValue / totalValue * 100).toFixed(1) : 0;
                           return (
-                            <tr key={h.symbol}>
+                            <tr key={h.symbol + (h.demat_account||'')}>
                               <td>
                                 <div className="db-stock-name">{h.company || h.symbol}</div>
-                                <div className="db-stock-sym">{h.symbol}</div>
+                                <div style={{display:'flex',gap:4,alignItems:'center',flexWrap:'wrap'}}>
+                                  <span className="db-stock-sym">{h.symbol}</span>
+                                  {h.demat_account && (
+                                    <span style={{fontSize:9,padding:'1px 5px',borderRadius:3,fontWeight:600,
+                                      background: h.demat_account==='CDSL_GROWW' ? 'rgba(245,158,11,0.15)' : 'rgba(14,165,233,0.15)',
+                                      color:      h.demat_account==='CDSL_GROWW' ? '#f59e0b' : '#38bdf8',
+                                    }}>{h.demat_account==='CDSL_GROWW'?'Groww':h.demat_account==='NSDL_ICICI'?'ICICI':h.demat_account}</span>
+                                  )}
+                                </div>
                               </td>
                               <td>
                                 <span className={`db-tag tag-${(h.sector || 'other').toLowerCase().replace(/\s+/g,'-')}`}>
@@ -889,14 +905,19 @@ export default function Dashboard() {
               <div className="fade-in">
 
 
-                {/* ── Sync Debug Panel ── */}
-                {debug.lastStatus && (
-                  <div style={{ background: debug.lastStatus === 'MF_BULK_OK' ? 'rgba(0,212,161,0.06)' : 'rgba(244,63,94,0.06)',
-                    border: `1px solid ${debug.lastStatus === 'MF_BULK_OK' ? 'rgba(0,212,161,0.2)' : 'rgba(244,63,94,0.2)'}`,
-                    borderRadius:8, padding:'10px 14px', marginBottom:12, fontSize:12 }}>
-                    <span style={{ color: debug.lastStatus === 'MF_BULK_OK' ? '#00d4a1' : '#f43f5e', fontWeight:700 }}>
-                      {debug.lastStatus === 'MF_BULK_OK' ? '✅ ' : '❌ '}{debug.lastStatus}
-                    </span>
+                {/* ── Statement date info bar ── */}
+                {holdings.length > 0 && holdings[0]?.statement_date && (
+                  <div style={{ background:'rgba(14,165,233,0.06)', border:'1px solid rgba(14,165,233,0.15)',
+                    borderRadius:8, padding:'8px 14px', marginBottom:12, fontSize:12, color:'#64748b', display:'flex', gap:16 }}>
+                    <span>📅 Statement: <b style={{color:'#e2e8f0'}}>{new Date(holdings[0].statement_date+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}</b></span>
+                    <span style={{color:'#334155'}}>|</span>
+                    <span>{summary.count} fund{summary.count!==1?'s':''} · ₹{summary.totalValue?.toLocaleString('en-IN',{maximumFractionDigits:0})}</span>
+                  </div>
+                )}
+                {debug.lastStatus && debug.lastStatus !== 'MF_BULK_OK' && debug.lastStatus !== 'NO_SYNC_YET' && (
+                  <div style={{ background:'rgba(244,63,94,0.06)', border:'1px solid rgba(244,63,94,0.2)',
+                    borderRadius:8, padding:'8px 14px', marginBottom:12, fontSize:12 }}>
+                    <span style={{ color:'#f43f5e', fontWeight:700 }}>❌ {debug.lastStatus}</span>
                     <span style={{ color:'#64748b', marginLeft:8 }}>{debug.lastMessage?.slice(0,120)}</span>
                   </div>
                 )}
