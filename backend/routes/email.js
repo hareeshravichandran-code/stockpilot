@@ -416,7 +416,7 @@ async function saveCASHoldings(userId, holdings, mfHoldings, casDate) {
       .from('holdings').select('avg_cost, dividend_per_share, sector')
       .eq('user_id', userId).eq('isin', h.isin).maybeSingle();
 
-    const { error } = await supabase.from('holdings').upsert({
+    const holdingRecord = {
       user_id:            userId,
       isin:               h.isin,
       symbol:             h.symbol  || h.isin,
@@ -428,13 +428,23 @@ async function saveCASHoldings(userId, holdings, mfHoldings, casDate) {
       sector:             existing?.sector || 'Other',
       last_price:         h.market_price || null,
       cas_source:         h.cas_source || 'CAS',
-      demat_account:      h.demat_account || null,
-      cas_statement_date: statementDate || null,
       cas_updated_at:     new Date().toISOString(),
       updated_at:         new Date().toISOString(),
-    }, { onConflict: 'user_id,isin' });
+    };
+    // Add new columns if they exist in DB (graceful degradation)
+    if (h.demat_account)  holdingRecord.demat_account      = h.demat_account;
+    if (statementDate)    holdingRecord.cas_statement_date  = statementDate;
 
-    if (error) console.error(JSON.stringify({ event: 'HOLDING_SAVE_ERROR', isin: h.isin, error: error.message }));
+    let { error } = await supabase.from('holdings').upsert(holdingRecord, { onConflict: 'user_id,isin' });
+
+    // If upsert failed due to missing columns, retry without new columns
+    if (error && (error.message?.includes('demat_account') || error.message?.includes('cas_statement_date'))) {
+      const { demat_account: _da, cas_statement_date: _cs, ...safeRecord } = holdingRecord;
+      const retry = await supabase.from('holdings').upsert(safeRecord, { onConflict: 'user_id,isin' });
+      error = retry.error;
+    }
+
+    if (error) console.error('[HOLDING_SAVE_ERROR] isin='+h.isin+' err='+error.message);
     else saved++;
   }
 
