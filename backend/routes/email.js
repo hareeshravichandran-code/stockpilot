@@ -707,71 +707,54 @@ router.get('/debug-mf', async (req, res) => {
 });
 
 
+
 // ── MF Text Debug: show actual pdfjs text from NSDL email ────────────
-router.get('/debug-mf-text', async (req, res) => {
+router.get('/debug-mf-text', requireAuth, async (req, res) => {
   try {
     const supabase = require('../services/supabase');
     const { fetchEmails } = require('../services/gmail');
     const { parseCAS } = require('../services/casParser');
 
-    // Get first user's gmail connection
     const { data: conn } = await supabase.from('email_connections')
-      .select('access_token, refresh_token, user_id').eq('provider', 'gmail').limit(1).single();
-    if (!conn) return res.json({ error: 'No gmail connection found' });
+      .select('access_token, refresh_token')
+      .eq('user_id', req.user.id).eq('provider', 'gmail').single();
+    if (!conn) return res.json({ error: 'Gmail not connected' });
 
     const { data: userRow } = await supabase.from('users')
-      .select('pan, dob').eq('id', conn.user_id).single();
+      .select('pan, dob, name').eq('id', req.user.id).single();
 
-    // Show ALL emails found — we need to see what subjects are available
-    const query = 'from:(nsdl.co.in OR nsdlindia.com OR cdslstatement.com OR cvlindia.com) has:attachment';
-    const emails = await fetchEmails(conn.access_token, conn.refresh_token, query, userRow || {});
-
-    if (!emails?.length) return res.json({ error: 'No emails found', query });
+    const emails = await fetchEmails(conn.access_token, conn.refresh_token,
+      'from:(nsdl.co.in OR nsdlindia.com) has:attachment', userRow || {});
+    if (!emails?.length) return res.json({ error: 'No NSDL emails found', pan: userRow?.pan ? 'set' : 'NOT SET' });
 
     emails.sort((a, b) => new Date(b.date) - new Date(a.date));
+    const email = emails[0];
 
-    // Show all subjects found
-    const allSubjects = emails.map(e => ({ subject: e.subject, from: e.from, date: e.date, hasPdf: e.hasPdf }));
+    const marker = '--- PDF ATTACHMENT ---';
+    const idx = email.body?.indexOf(marker) ?? -1;
+    const text = idx >= 0 ? email.body.slice(idx + marker.length) : (email.body || '');
 
-    // Pick the one most likely to be NSDL CAS with MF data
-    const email = emails.find(e =>
-      e.subject?.includes('NSDL ID') ||
-      e.subject?.includes('NSDL CAS') ||
-      (e.subject?.toLowerCase().includes('nsdl') && e.subject?.toLowerCase().includes('cas'))
-    ) || emails.find(e => e.hasPdf) || emails[0];
+    const mfIdx = text.search(/Mutual Fund Folios/i);
+    const mfText = mfIdx >= 0 ? text.slice(mfIdx, mfIdx + 2000) : 'NOT_FOUND';
+    const mfLines = mfText.split('\n').map(l => l.trim()).filter(l => l).slice(0, 30);
 
-    const pdfMarker = '--- PDF ATTACHMENT ---';
-    const pdfIdx = email.body?.indexOf(pdfMarker) ?? -1;
-    const fullText = pdfIdx >= 0 ? email.body.slice(pdfIdx + pdfMarker.length) : (email.body || '');
-
-    // Find MF Folios section
-    const mfIdx = fullText.search(/Mutual Fund Folios/i);
-    const mfText = mfIdx >= 0 ? fullText.slice(mfIdx, mfIdx + 3000) : 'MF_SECTION_NOT_FOUND';
-
-    // Also try parseCAS on the text
-    const parsed = parseCAS(fullText);
+    const parsed = parseCAS(text);
+    const infIdx = text.search(/INF[A-Z0-9]{9}/);
 
     return res.json({
-      allEmailsFound: allSubjects,
-      selectedEmail: email?.subject,
-      subject: email?.subject,
-      pdfFound: pdfIdx >= 0,
-      fullTextLen: fullText.length,
+      subject: email.subject,
+      pdfFound: idx >= 0,
+      pdfFailed: email.pdfFailed,
+      textLen: text.length,
       mfSectionFound: mfIdx >= 0,
-      mfSectionStart: mfIdx,
-      // First 500 chars of MF section — THIS IS THE KEY
-      mfTextSample: mfText.slice(0, 500),
-      // Raw lines around MF section
-      mfLines: mfText.split('\n').slice(0, 30),
-      // Parse results
+      mfLines,
       equityCount: parsed.holdings.length,
       mfCount: parsed.mfHoldings.length,
-      mfSample: parsed.mfHoldings.slice(0, 3).map(h => ({
-        isin: h.isin, folio: h.folio_number, fund: h.fund_name?.slice(0,30), units: h.units
-      })),
+      mfSample: parsed.mfHoldings.slice(0,3).map(h => ({ isin: h.isin, folio: h.folio_number, fund: h.fund_name?.slice(0,30), units: h.units })),
+      infContext: infIdx >= 0 ? text.slice(Math.max(0,infIdx-100), infIdx+400) : 'NO_INF_ISIN',
     });
   } catch(e) {
-    return res.json({ error: e.message, stack: e.stack?.split('\n').slice(0,5) });
+    return res.json({ error: e.message });
   }
 });
 
