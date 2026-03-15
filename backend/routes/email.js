@@ -475,27 +475,50 @@ async function saveSingleMF(userId, h, statementDate) {
 
   let error;
 
-  // Upsert by ISIN or folio — avoid partial index upsert which can fail silently
-  if (record.isin) {
-    // Check if exists first
-    const { data: existing } = await supabase.from('mf_holdings')
-      .select('id').eq('user_id', userId).eq('isin', record.isin).maybeSingle();
-    if (existing) {
-      ({ error } = await supabase.from('mf_holdings').update(record).eq('id', existing.id));
-    } else {
-      ({ error } = await supabase.from('mf_holdings').insert(record));
-    }
+  // ── Match by the most specific key available ──────────────────────────
+  // NSDL MF folios: have BOTH isin AND folio_number
+  //   → must match on BOTH (same ISIN can have 3 different folios!)
+  // CDSL demat MF: have isin only (no folio)
+  //   → match on isin alone
+  // Legacy SOA: folio only (no isin)
+  //   → match on folio alone
+
+  let existing = null;
+
+  if (record.isin && record.folio_number) {
+    // Most specific: isin + folio pair (NSDL MF folios)
+    const q = await supabase.from('mf_holdings')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('isin', record.isin)
+      .eq('folio_number', record.folio_number)
+      .maybeSingle();
+    existing = q.data;
+  } else if (record.isin) {
+    // CDSL demat MF: isin only, no folio
+    const q = await supabase.from('mf_holdings')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('isin', record.isin)
+      .is('folio_number', null)
+      .maybeSingle();
+    existing = q.data;
   } else if (record.folio_number) {
-    // Check if folio already exists
-    const { data: existing } = await supabase.from('mf_holdings')
-      .select('id').eq('user_id', userId).eq('folio_number', record.folio_number).maybeSingle();
-    if (existing) {
-      ({ error } = await supabase.from('mf_holdings').update(record).eq('id', existing.id));
-    } else {
-      ({ error } = await supabase.from('mf_holdings').insert(record));
-    }
+    // Legacy SOA: folio only, no isin
+    const q = await supabase.from('mf_holdings')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('folio_number', record.folio_number)
+      .maybeSingle();
+    existing = q.data;
   } else {
     return false; // no identifier — skip
+  }
+
+  if (existing) {
+    ({ error } = await supabase.from('mf_holdings').update(record).eq('id', existing.id));
+  } else {
+    ({ error } = await supabase.from('mf_holdings').insert(record));
   }
 
   if (error) {
