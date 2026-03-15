@@ -386,6 +386,8 @@ async function saveCASHoldings(userId, holdings, mfHoldings, casDate) {
           sector: existing?.sector || 'ETF',
           last_price: h.market_price || null,
           cas_source: h.cas_source || 'CAS',
+          demat_account: h.demat_account || null,
+          cas_statement_date: statementDate || null,
           cas_updated_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         }, { onConflict: 'user_id,isin' });
@@ -426,6 +428,8 @@ async function saveCASHoldings(userId, holdings, mfHoldings, casDate) {
       sector:             existing?.sector || 'Other',
       last_price:         h.market_price || null,
       cas_source:         h.cas_source || 'CAS',
+      demat_account:      h.demat_account || null,
+      cas_statement_date: statementDate || null,
       cas_updated_at:     new Date().toISOString(),
       updated_at:         new Date().toISOString(),
     }, { onConflict: 'user_id,isin' });
