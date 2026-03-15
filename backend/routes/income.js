@@ -1,23 +1,138 @@
 /**
- * Income Rules & Entries API
- * 
- * GET    /api/income/rules        — list all rules
- * POST   /api/income/rules        — create rule
- * PUT    /api/income/rules/:id    — update rule
- * DELETE /api/income/rules/:id    — delete rule
- * POST   /api/income/scan         — scan Gmail using all active rules
- * GET    /api/income/entries      — list entries (with summary)
- * POST   /api/income/entries      — add manual entry
- * DELETE /api/income/entries/:id  — delete entry
+ * Income Rules & Entries API — StockPilot
+ *
+ * Rules define HOW to detect income from bank credit emails:
+ *   - receive_bank (mandatory): which bank account receives the money
+ *   - date window: day_from to day_to (e.g. 28th–5th = end/start of month)
+ *   - credit_only: only consider CREDITED emails (not debits)
+ *   - lookback_months: how far back to scan history (0 = from now)
+ *   - category: Salary / Rental / Freelance / Business / Interest / Bonus / <custom>
+ *
+ * Auto-scan runs every 30 mins via /api/income/scan (called by cron or frontend)
+ *
+ * Routes:
+ *   GET    /api/income/rules        list rules
+ *   POST   /api/income/rules        create rule
+ *   PUT    /api/income/rules/:id    update rule
+ *   DELETE /api/income/rules/:id    delete rule
+ *   POST   /api/income/scan         scan Gmail now
+ *   GET    /api/income/entries      list entries + summary
+ *   POST   /api/income/entries      manual entry
+ *   DELETE /api/income/entries/:id  delete entry
+ *   GET    /api/income/categories   category list
  */
 
 const router      = require('express').Router();
 const requireAuth = require('../middleware/requireAuth');
 const supabase    = require('../services/supabase');
 
-const INCOME_CATEGORIES = ['Salary', 'Freelance', 'Rental', 'Business', 'Interest', 'Bonus', 'Other'];
+const PRESET_CATEGORIES = ['Salary', 'Freelance', 'Rental', 'Business', 'Interest', 'Bonus', 'Other'];
 
-// ── List rules ────────────────────────────────────────────────────
+// Indian banks - sender email domains for matching
+const INDIAN_BANKS = [
+  { label: 'HDFC Bank',          domain: 'hdfcbank' },
+  { label: 'ICICI Bank',         domain: 'icicibank' },
+  { label: 'SBI',                domain: 'sbi' },
+  { label: 'Axis Bank',          domain: 'axisbank' },
+  { label: 'Kotak Mahindra',     domain: 'kotak' },
+  { label: 'IndusInd Bank',      domain: 'indusind' },
+  { label: 'Yes Bank',           domain: 'yesbank' },
+  { label: 'Punjab National',    domain: 'pnb' },
+  { label: 'Bank of Baroda',     domain: 'bankofbaroda' },
+  { label: 'Canara Bank',        domain: 'canarabank' },
+  { label: 'Union Bank',         domain: 'unionbank' },
+  { label: 'Bank of India',      domain: 'bankofindia' },
+  { label: 'Federal Bank',       domain: 'federalbank' },
+  { label: 'IDFC First Bank',    domain: 'idfcfirstbank' },
+  { label: 'RBL Bank',           domain: 'rblbank' },
+  { label: 'Tamilnad Mercantile',domain: 'tmbonline' },
+  { label: 'Equitas SFB',        domain: 'equitasbank' },
+  { label: 'AU Small Finance',   domain: 'aubank' },
+  { label: 'Ujjivan SFB',        domain: 'ujjivansfb' },
+  { label: 'Jana SFB',           domain: 'janabank' },
+];
+
+// ── Helper: check if email text indicates a CREDIT transaction ──────
+function isCreditEmail(subject, body) {
+  const combined = (subject + ' ' + body).toLowerCase();
+  // Strong credit signals
+  const creditSignals = [
+    'credited', 'credit alert', 'money received', 'amount credited',
+    'salary credit', 'salary credited', 'has been credited', 'is credited',
+    'received in your account', 'deposit', 'received credit',
+    'incoming transfer', 'neft credit', 'rtgs credit', 'imps credit',
+    'credit of rs', 'credited rs', 'credited inr', 'credited ₹',
+    'cr alert', 'credit txn',
+  ];
+  // Debit signals to EXCLUDE
+  const debitSignals = [
+    'debited', 'debit alert', 'payment made', 'amount debited',
+    'withdrawn', 'transferred from', 'dr alert', 'debit txn',
+    'purchase at', 'spent at', 'transaction at',
+  ];
+  const hasCredit = creditSignals.some(s => combined.includes(s));
+  const hasDebit  = debitSignals.some(s => combined.includes(s));
+  // If has debit signal and no credit signal, it's a debit
+  if (hasDebit && !hasCredit) return false;
+  // If has credit signal, it's a credit
+  if (hasCredit) return true;
+  // Neutral — allow through (let amount extraction decide)
+  return true;
+}
+
+// ── Helper: extract credit amount from email body ────────────────────
+function extractAmount(subject, body) {
+  const combined = subject + '\n' + body;
+
+  // Pattern 1: ₹ followed by number (most reliable)
+  const p1 = combined.match(/₹\s*([\d,]+(?:\.\d{1,2})?)/);
+  if (p1) return parseFloat(p1[1].replace(/,/g, ''));
+
+  // Pattern 2: Rs./INR followed by number
+  const p2 = combined.match(/(?:Rs\.?|INR)\s*([\d,]+(?:\.\d{1,2})?)/i);
+  if (p2) return parseFloat(p2[1].replace(/,/g, ''));
+
+  // Pattern 3: "credited with" / "credited by" amount
+  const p3 = combined.match(/credited\s+(?:with|by|of|for)?\s*(?:Rs\.?|INR|₹)?\s*([\d,]+(?:\.\d{1,2})?)/i);
+  if (p3) return parseFloat(p3[1].replace(/,/g, ''));
+
+  // Pattern 4: "Amount: X" or "Amt: X"
+  const p4 = combined.match(/(?:amount|amt)\s*:?\s*(?:Rs\.?|INR|₹)?\s*([\d,]+(?:\.\d{1,2})?)/i);
+  if (p4) return parseFloat(p4[1].replace(/,/g, ''));
+
+  // Pattern 5: large number with decimals (>=4 digits before decimal)
+  const p5 = combined.match(/\b(\d{1,3}(?:,\d{2,3})+(?:\.\d{2})?)\b/);
+  if (p5) return parseFloat(p5[1].replace(/,/g, ''));
+
+  return null;
+}
+
+// ── Helper: check if email date falls in rule's date window ─────────
+function inDateWindow(emailDate, dayFrom, dayTo) {
+  if (!dayFrom && !dayTo) return true; // no window set
+  const d = new Date(emailDate);
+  const day = d.getDate();
+  // Window can span month boundary: e.g. dayFrom=28, dayTo=5
+  // means: day >= 28 OR day <= 5
+  if (dayFrom > dayTo) {
+    // Spans month boundary
+    return day >= dayFrom || day <= dayTo;
+  }
+  // Same month window: day >= from AND day <= to
+  return day >= dayFrom && day <= dayTo;
+}
+
+// ── Helper: compute Gmail "after:" timestamp from lookback ───────────
+function lookbackToGmailAfter(lookbackMonths) {
+  if (!lookbackMonths || lookbackMonths === 0) {
+    // From now — only recent (last 2 days to catch today)
+    return Math.floor((Date.now() - 2 * 86400000) / 1000);
+  }
+  const ms = lookbackMonths * 30 * 86400000;
+  return Math.floor((Date.now() - ms) / 1000);
+}
+
+// ── GET /api/income/rules ─────────────────────────────────────────
 router.get('/rules', requireAuth, async (req, res) => {
   const { data, error } = await supabase
     .from('income_rules')
@@ -28,52 +143,81 @@ router.get('/rules', requireAuth, async (req, res) => {
   res.json(data || []);
 });
 
-// ── Create rule ───────────────────────────────────────────────────
+// ── POST /api/income/rules ────────────────────────────────────────
 router.post('/rules', requireAuth, async (req, res) => {
-  const { rule_name, category, bank_sender, subject_pattern,
-          body_pattern, account_last4, min_amount, period, remark } = req.body;
-  if (!rule_name || !category)
-    return res.status(400).json({ error: 'rule_name and category are required' });
-  if (!INCOME_CATEGORIES.includes(category))
-    return res.status(400).json({ error: `category must be one of: ${INCOME_CATEGORIES.join(', ')}` });
+  const {
+    rule_name, category, receive_bank,
+    bank_sender, subject_pattern, body_pattern,
+    account_last4, min_amount, period, remark,
+    date_day_from, date_day_to, lookback_months, credit_only
+  } = req.body;
+
+  if (!rule_name)    return res.status(400).json({ error: 'rule_name is required' });
+  if (!receive_bank) return res.status(400).json({ error: 'receive_bank is required (which bank receives the money)' });
+  if (!category)     return res.status(400).json({ error: 'category is required' });
 
   const { data, error } = await supabase.from('income_rules').insert({
-    user_id: req.user.id, rule_name, category,
+    user_id:         req.user.id,
+    rule_name,
+    category:        category.trim(),
+    receive_bank:    receive_bank.trim(),
     bank_sender:     bank_sender     || null,
     subject_pattern: subject_pattern || null,
     body_pattern:    body_pattern    || null,
     account_last4:   account_last4   || null,
-    min_amount:      min_amount      ? parseFloat(min_amount) : 0,
-    period:          period          || 'monthly',
-    remark:          remark          || null,
+    min_amount:      min_amount ? parseFloat(min_amount) : 0,
+    period:          period     || 'monthly',
+    remark:          remark     || null,
+    date_day_from:   date_day_from ? parseInt(date_day_from) : 28,
+    date_day_to:     date_day_to   ? parseInt(date_day_to)   : 5,
+    lookback_months: lookback_months ? parseInt(lookback_months) : 0,
+    credit_only:     credit_only !== false,
     is_active: true,
     updated_at: new Date().toISOString(),
   }).select().single();
+
   if (error) return res.status(500).json({ error: error.message });
   res.status(201).json(data);
 });
 
-// ── Update rule ───────────────────────────────────────────────────
+// ── PUT /api/income/rules/:id ────────────────────────────────────
 router.put('/rules/:id', requireAuth, async (req, res) => {
-  const { rule_name, category, bank_sender, subject_pattern,
-          body_pattern, account_last4, min_amount, period, remark, is_active } = req.body;
+  const {
+    rule_name, category, receive_bank,
+    bank_sender, subject_pattern, body_pattern,
+    account_last4, min_amount, period, remark,
+    date_day_from, date_day_to, lookback_months, credit_only, is_active
+  } = req.body;
+
+  const updates = {};
+  if (rule_name !== undefined)        updates.rule_name        = rule_name;
+  if (category !== undefined)         updates.category         = category?.trim();
+  if (receive_bank !== undefined)     updates.receive_bank     = receive_bank?.trim();
+  if (bank_sender !== undefined)      updates.bank_sender      = bank_sender   || null;
+  if (subject_pattern !== undefined)  updates.subject_pattern  = subject_pattern || null;
+  if (body_pattern !== undefined)     updates.body_pattern     = body_pattern  || null;
+  if (account_last4 !== undefined)    updates.account_last4    = account_last4 || null;
+  if (min_amount !== undefined)       updates.min_amount       = parseFloat(min_amount) || 0;
+  if (period !== undefined)           updates.period           = period;
+  if (remark !== undefined)           updates.remark           = remark || null;
+  if (date_day_from !== undefined)    updates.date_day_from    = parseInt(date_day_from);
+  if (date_day_to !== undefined)      updates.date_day_to      = parseInt(date_day_to);
+  if (lookback_months !== undefined)  updates.lookback_months  = parseInt(lookback_months);
+  if (credit_only !== undefined)      updates.credit_only      = credit_only;
+  if (is_active !== undefined)        updates.is_active        = is_active;
+  updates.updated_at = new Date().toISOString();
+
   const { data, error } = await supabase.from('income_rules')
-    .update({
-      rule_name, category, bank_sender, subject_pattern,
-      body_pattern, account_last4,
-      min_amount: min_amount ? parseFloat(min_amount) : 0,
-      period, remark,
-      is_active: is_active !== undefined ? is_active : true,
-      updated_at: new Date().toISOString(),
-    })
+    .update(updates)
     .eq('id', req.params.id)
     .eq('user_id', req.user.id)
     .select().single();
+
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
 
-// ── Delete rule ───────────────────────────────────────────────────
+// ── DELETE /api/income/rules/:id ─────────────────────────────────
 router.delete('/rules/:id', requireAuth, async (req, res) => {
   const { error } = await supabase.from('income_rules')
     .delete().eq('id', req.params.id).eq('user_id', req.user.id);
@@ -81,20 +225,19 @@ router.delete('/rules/:id', requireAuth, async (req, res) => {
   res.json({ success: true });
 });
 
-// ── Scan Gmail for income using all active rules ───────────────────
+// ── POST /api/income/scan ────────────────────────────────────────
+// Scan Gmail using all active rules. Called manually + every 30 mins.
 router.post('/scan', requireAuth, async (req, res) => {
   try {
-    // Get Gmail token
     const { data: conn } = await supabase.from('email_connections')
-      .select('access_token, refresh_token').eq('user_id', req.user.id)
-      .eq('provider', 'gmail').single();
+      .select('access_token, refresh_token')
+      .eq('user_id', req.user.id).eq('provider', 'gmail').single();
     if (!conn) return res.status(400).json({ error: 'Gmail not connected. Please connect Gmail first.' });
 
-    // Get active rules
     const { data: rules } = await supabase.from('income_rules')
       .select('*').eq('user_id', req.user.id).eq('is_active', true);
     if (!rules || rules.length === 0)
-      return res.json({ found: 0, entries: [], message: 'No active rules. Please create a rule first.' });
+      return res.json({ found: 0, entries: [], message: 'No active rules. Create a rule first.' });
 
     const { google } = require('googleapis');
     const oauth2Client = new google.auth.OAuth2(
@@ -106,37 +249,61 @@ router.post('/scan', requireAuth, async (req, res) => {
       access_token:  conn.access_token,
       refresh_token: conn.refresh_token,
     });
-    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
+    // Auto-refresh token if expired
+    oauth2Client.on('tokens', async (tokens) => {
+      if (tokens.access_token) {
+        await supabase.from('email_connections')
+          .update({ access_token: tokens.access_token, updated_at: new Date().toISOString() })
+          .eq('user_id', req.user.id).eq('provider', 'gmail');
+      }
+    });
+
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
     const newEntries = [];
+    const scanTime = new Date().toISOString();
 
     for (const rule of rules) {
-      // Build Gmail search query from rule
-      const parts = [];
-      if (rule.bank_sender)     parts.push(`from:${rule.bank_sender}`);
+      // Build Gmail query
+      const afterTs = lookbackToGmailAfter(rule.lookback_months || 0);
+      const parts = [`after:${afterTs}`];
+
+      // Bank sender filter
+      if (rule.bank_sender) {
+        // If user entered a bank label, map to domain; otherwise use as-is
+        const bankMatch = INDIAN_BANKS.find(b =>
+          b.label.toLowerCase() === (rule.bank_sender || '').toLowerCase()
+        );
+        parts.push(`from:${bankMatch ? bankMatch.domain : rule.bank_sender}`);
+      }
+
+      // Subject pattern
       if (rule.subject_pattern) parts.push(`subject:"${rule.subject_pattern}"`);
-      // Search last 90 days
-      const since = Math.floor((Date.now() - 90 * 86400000) / 1000);
-      parts.push(`after:${since}`);
+
+      // Credit keywords always added when credit_only is true
+      if (rule.credit_only !== false) {
+        parts.push('(credited OR "credit alert" OR "salary credit" OR "money received" OR "amount credited")');
+      }
 
       const query = parts.join(' ');
+      console.log(`[INCOME_SCAN] rule="${rule.rule_name}" query="${query}"`);
 
       let messageIds = [];
       try {
         const listRes = await gmail.users.messages.list({
-          userId: 'me', q: query, maxResults: 50
+          userId: 'me', q: query, maxResults: 100
         });
         messageIds = listRes.data.messages || [];
       } catch(e) {
-        console.warn(`Gmail search failed for rule ${rule.id}: ${e.message}`);
+        console.warn(`[INCOME_SCAN] Gmail search failed rule=${rule.id}: ${e.message}`);
         continue;
       }
 
       for (const msg of messageIds) {
-        // Check if already imported
+        // Skip already-imported emails
         const { data: existing } = await supabase.from('income_entries')
-          .select('id').eq('user_id', req.user.id).eq('email_id', msg.id).single();
-        if (existing) continue; // already captured
+          .select('id').eq('user_id', req.user.id).eq('email_id', msg.id).maybeSingle();
+        if (existing) continue;
 
         let fullMsg;
         try {
@@ -145,139 +312,165 @@ router.post('/scan', requireAuth, async (req, res) => {
           });
         } catch(e) { continue; }
 
-        const headers  = fullMsg.data.payload?.headers || [];
-        const subject  = headers.find(h => h.name === 'Subject')?.value || '';
-        const fromHdr  = headers.find(h => h.name === 'From')?.value    || '';
-        const dateHdr  = headers.find(h => h.name === 'Date')?.value    || '';
+        const headers   = fullMsg.data.payload?.headers || [];
+        const subject   = headers.find(h => h.name === 'Subject')?.value || '';
+        const fromHdr   = headers.find(h => h.name === 'From')?.value    || '';
+        const dateHdr   = headers.find(h => h.name === 'Date')?.value    || '';
 
-        // Get email body text
+        // Extract body text
         let bodyText = '';
         const getBody = (parts) => {
           if (!parts) return;
           for (const p of parts) {
-            if (p.mimeType === 'text/plain' && p.body?.data) {
+            if (p.mimeType === 'text/plain' && p.body?.data)
               bodyText += Buffer.from(p.body.data, 'base64').toString('utf-8');
-            }
             if (p.parts) getBody(p.parts);
           }
         };
-        if (fullMsg.data.payload?.body?.data) {
+        if (fullMsg.data.payload?.body?.data)
           bodyText = Buffer.from(fullMsg.data.payload.body.data, 'base64').toString('utf-8');
-        }
         getBody(fullMsg.data.payload?.parts);
 
-        const combined = (subject + ' ' + bodyText).toLowerCase();
+        // ── Filter 1: Credit only ──
+        if (rule.credit_only !== false && !isCreditEmail(subject, bodyText)) continue;
 
-        // Apply body_pattern filter
+        // ── Filter 2: Body pattern ──
+        const combined = (subject + ' ' + bodyText).toLowerCase();
         if (rule.body_pattern && !combined.includes(rule.body_pattern.toLowerCase())) continue;
 
-        // Apply account_last4 filter
+        // ── Filter 3: Account last 4 ──
         if (rule.account_last4 && !combined.includes(rule.account_last4)) continue;
 
-        // Extract amount — look for ₹ or Rs or INR followed by number
-        const amtMatch = combined.match(/(?:rs\.?|inr|₹)\s*([0-9,]+(?:\.[0-9]{1,2})?)/i)
-          || combined.match(/(?:credited|credit|cr).*?([0-9,]{4,}(?:\.[0-9]{1,2})?)/i)
-          || bodyText.match(/([0-9,]{5,}(?:\.[0-9]{1,2})?)/);
-
-        if (!amtMatch) continue;
-        const amount = parseFloat(amtMatch[1].replace(/,/g, ''));
-        if (isNaN(amount) || amount <= 0) continue;
-        if (rule.min_amount > 0 && amount < rule.min_amount) continue;
-
-        // Parse date from email header
+        // ── Filter 4: Date window ──
         let credited_on;
         try { credited_on = new Date(dateHdr).toISOString().split('T')[0]; }
         catch(e) { credited_on = new Date().toISOString().split('T')[0]; }
 
-        // Save entry
+        if (!inDateWindow(credited_on, rule.date_day_from, rule.date_day_to)) continue;
+
+        // ── Extract amount ──
+        const amount = extractAmount(subject, bodyText);
+        if (!amount || isNaN(amount) || amount <= 0) continue;
+        if (rule.min_amount > 0 && amount < rule.min_amount) continue;
+
+        // ── Save entry ──
         const { data: entry, error: insertErr } = await supabase
           .from('income_entries').insert({
-            user_id:       req.user.id,
-            rule_id:       rule.id,
-            category:      rule.category,
+            user_id:        req.user.id,
+            rule_id:        rule.id,
+            category:       rule.category,
             amount,
             credited_on,
-            bank_sender:   fromHdr,
-            email_subject: subject,
-            email_id:      msg.id,
-            description:   `${rule.rule_name} — auto-detected`,
-            source:        'auto',
+            receive_bank:   rule.receive_bank || null,
+            bank_sender:    fromHdr,
+            email_subject:  subject,
+            email_id:       msg.id,
+            description:    `${rule.rule_name} — auto-detected`,
+            source:         'auto',
+            auto_scanned_at: scanTime,
           }).select().single();
 
-        if (!insertErr && entry) newEntries.push(entry);
+        if (!insertErr && entry) {
+          newEntries.push(entry);
+          console.log(`[INCOME_SCAN] Saved entry: rule="${rule.rule_name}" amount=${amount} date=${credited_on}`);
+        }
       }
     }
+
+    // Update last_scan_at on rules
+    const ruleIds = [...new Set(rules.map(r => r.id))];
+    await supabase.from('income_rules')
+      .update({ updated_at: scanTime })
+      .in('id', ruleIds)
+      .eq('user_id', req.user.id);
 
     res.json({
       found:   newEntries.length,
       entries: newEntries,
+      scannedAt: scanTime,
       message: newEntries.length > 0
         ? `Found ${newEntries.length} new income credit${newEntries.length > 1 ? 's' : ''}`
-        : 'No new income found. Try adjusting your rules.',
+        : 'No new income found. Rules active, will check again on next scan.',
     });
   } catch (err) {
-    console.error('Income scan error:', err.message);
+    console.error('[INCOME_SCAN_ERROR]', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ── List entries with summary ─────────────────────────────────────
+// ── GET /api/income/entries ───────────────────────────────────────
 router.get('/entries', requireAuth, async (req, res) => {
-  const { data, error } = await supabase
+  const { month, year } = req.query; // optional filters
+
+  let query = supabase
     .from('income_entries')
     .select('*')
     .eq('user_id', req.user.id)
     .order('credited_on', { ascending: false });
+
+  const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
 
   const entries = data || [];
-
-  // FY summary (Apr–Mar)
   const now   = new Date();
-  const fyStart = now.getMonth() >= 3
-    ? new Date(now.getFullYear(), 3, 1)
-    : new Date(now.getFullYear() - 1, 3, 1);
 
-  const currentFY = entries.filter(e => new Date(e.credited_on) >= fyStart);
-  const thisMonth = entries.filter(e => {
+  // Financial year: Apr–Mar
+  const fyStartYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+  const fyStart     = new Date(fyStartYear, 3, 1); // April 1
+
+  const currentFY   = entries.filter(e => new Date(e.credited_on) >= fyStart);
+  const thisMonth   = entries.filter(e => {
     const d = new Date(e.credited_on);
     return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
   });
 
-  // By category
+  // By category (current FY)
   const byCategory = {};
   for (const e of currentFY) {
     byCategory[e.category] = (byCategory[e.category] || 0) + e.amount;
   }
 
+  // By month (current FY, for chart)
+  const byMonth = {};
+  for (const e of currentFY) {
+    const key = e.credited_on.slice(0, 7); // YYYY-MM
+    byMonth[key] = (byMonth[key] || 0) + e.amount;
+  }
+
   res.json({
     entries,
     summary: {
-      currentFYTotal: currentFY.reduce((s, e) => s + e.amount, 0),
-      thisMonthTotal: thisMonth.reduce((s, e) => s + e.amount, 0),
+      currentFYTotal:  currentFY.reduce((s, e) => s + e.amount, 0),
+      thisMonthTotal:  thisMonth.reduce((s, e) => s + e.amount, 0),
       byCategory,
+      byMonth,
       entryCount: entries.length,
+      fyLabel: `FY${String(fyStartYear + 1).slice(-2)}`,
     }
   });
 });
 
-// ── Add manual entry ──────────────────────────────────────────────
+// ── POST /api/income/entries (manual) ────────────────────────────
 router.post('/entries', requireAuth, async (req, res) => {
-  const { category, amount, credited_on, description, remark } = req.body;
+  const { category, amount, credited_on, description, receive_bank, remark } = req.body;
   if (!category || !amount || !credited_on)
     return res.status(400).json({ error: 'category, amount and credited_on are required' });
+
   const { data, error } = await supabase.from('income_entries').insert({
-    user_id: req.user.id,
-    category, amount: parseFloat(amount),
+    user_id:      req.user.id,
+    category:     category.trim(),
+    amount:       parseFloat(amount),
     credited_on,
-    description: description || remark || category,
-    source: 'manual',
+    receive_bank: receive_bank || null,
+    description:  description || remark || category,
+    source:       'manual',
   }).select().single();
+
   if (error) return res.status(500).json({ error: error.message });
   res.status(201).json(data);
 });
 
-// ── Delete entry ──────────────────────────────────────────────────
+// ── DELETE /api/income/entries/:id ───────────────────────────────
 router.delete('/entries/:id', requireAuth, async (req, res) => {
   const { error } = await supabase.from('income_entries')
     .delete().eq('id', req.params.id).eq('user_id', req.user.id);
@@ -285,9 +478,14 @@ router.delete('/entries/:id', requireAuth, async (req, res) => {
   res.json({ success: true });
 });
 
-// ── Categories list (for frontend dropdowns) ──────────────────────
+// ── GET /api/income/categories ───────────────────────────────────
 router.get('/categories', requireAuth, (req, res) => {
-  res.json(INCOME_CATEGORIES);
+  res.json(PRESET_CATEGORIES);
+});
+
+// ── GET /api/income/banks ────────────────────────────────────────
+router.get('/banks', requireAuth, (req, res) => {
+  res.json(INDIAN_BANKS);
 });
 
 module.exports = router;
