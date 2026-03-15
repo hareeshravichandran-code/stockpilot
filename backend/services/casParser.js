@@ -330,7 +330,9 @@ function parseNSDLMF(text) {
   // INF ISIN (12 chars) | partial name | folio (7-15 digits) | units (3dp) |
   //   avg_cost (4dp) | total_cost (2dp) | nav (4dp) | current_value (2dp)
   //   [unrealised_gain] [annualised_return]
-  const MF_ROW_RE = /^(INF[A-Z0-9]{9})\s+([A-Za-z0-9][\w\s\-&(),./']{2,60}?)\s+(\d{7,15})\s+([\d,]+\.\d{3})\s+([\d,]+\.\d{4})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{4})\s+([\d,]+\.\d{2})(?:\s+(-?[\d,]+\.\d{2}))?(?:\s+(-?[\d.]+))?/gm;
+  // CRITICAL FIX: pdfjs joins entire page as ONE line — cannot use ^ anchor
+  // ISIN appears mid-line. Use negative lookbehind instead.
+  const MF_ROW_RE = /(?<![A-Z0-9])(INF[A-Z0-9]{9})\s+([A-Za-z0-9][\w\s\-&(),./']{2,60}?)\s+(\d{7,15})\s+([\d,]+\.\d{3})\s+([\d,]+\.\d{4})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{4})\s+([\d,]+\.\d{2})(?:\s+(-?[\d,]+\.\d{2}))?(?:\s+(-?[\d.]+))?/g;
 
   let match;
   while ((match = MF_ROW_RE.exec(mfText)) !== null) {
