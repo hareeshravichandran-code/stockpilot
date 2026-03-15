@@ -236,11 +236,12 @@ export default function Dashboard() {
 
   // Auto-scan expenses every 30 mins
   useEffect(() => {
-    const run = () => scanExpenses();
-    const interval = setInterval(run, 30 * 60 * 1000);
+    const interval = setInterval(() => {
+      incomeAPI.scan().catch(() => {});
+      api.post('/api/expense/scan').catch(() => {});
+    }, 30 * 60 * 1000);
     return () => clearInterval(interval);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, []); // eslint-disable-line
 
   const loadTab = async (t) => {
     setTab(t);
