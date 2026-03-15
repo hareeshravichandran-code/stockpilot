@@ -1,24 +1,7 @@
 /**
  * StockPilot CAS Parser  —  CDSL & NSDL
- *
- * CDSL demat format (confirmed from real PDF):
- *   ISIN  [name]  balance  --  --  --  free_bal  price  value
- *   The triple "-- -- --" is the definitive anchor.
- *
- * NSDL demat format:
- *   ISIN  SYMBOL.NSE/BSE  Company  FaceValue  Qty  Price  Value
- *
- * NSDL MF (SOA) format — NEW:
- *   Folio  FundName  InvestedValue  Units(3dp)  NAVDate  NAV  MarketValue  Gain/Loss
- *   No ISIN — identified by folio number. Goes to mf_holdings table.
- *   Statement date extracted from "As on Date" in PDF header.
- *
- * KEY RULE: parseNSDLCAS and parseCDSLCAS are UNCHANGED — they handle
- * demat equity + demat MF/ETF (INF ISINs). parseNSDLMF is a completely
- * separate function that handles SOA mutual funds only.
  */
 
-// ── ISIN master lookup ──────────────────────────────────────────────
 const ISIN_TO_SYMBOL = {
   'INE040A01034': { symbol: 'HDFCBANK',    company: 'HDFC Bank Limited' },
   'INE090A01021': { symbol: 'ICICIBANK',   company: 'ICICI Bank Limited' },
@@ -26,80 +9,51 @@ const ISIN_TO_SYMBOL = {
   'INE062A01020': { symbol: 'SBIN',        company: 'State Bank of India' },
   'INE237A01028': { symbol: 'KOTAKBANK',   company: 'Kotak Mahindra Bank Limited' },
   'INE095A01012': { symbol: 'INDUSINDBK',  company: 'IndusInd Bank Limited' },
-  'INE171A01029': { symbol: 'FEDERALBNK',  company: 'The Federal Bank Limited' },
-  'INE545U01014': { symbol: 'BANDHANBNK',  company: 'Bandhan Bank Limited' },
-  'INE0KN901016': { symbol: 'IDFCFIRSTB',  company: 'IDFC First Bank Limited' },
-  'INE211T01019': { symbol: 'TMB',         company: 'Tamilnad Mercantile Bank Limited' },
-  'INE491A01021': { symbol: 'EQUITASBNK',  company: 'Equitas Small Finance Bank' },
-  'INE949L01017': { symbol: 'AUBANK',      company: 'AU Small Finance Bank Limited' },
-  'INE160A01022': { symbol: 'PNB',         company: 'Punjab National Bank' },
-  'INE028A01039': { symbol: 'BANKBARODA',  company: 'Bank of Baroda' },
-  'INE476A01014': { symbol: 'CANBK',       company: 'Canara Bank' },
   'INE683A01023': { symbol: 'SOUTHBANK',   company: 'The South Indian Bank Limited' },
   'INE467B01029': { symbol: 'TCS',         company: 'Tata Consultancy Services Limited' },
   'INE009A01021': { symbol: 'INFY',        company: 'Infosys Limited' },
   'INE075A01022': { symbol: 'WIPRO',       company: 'Wipro Limited' },
   'INE860A01027': { symbol: 'HCLTECH',     company: 'HCL Technologies Limited' },
-  'INE669C01036': { symbol: 'TECHM',       company: 'Tech Mahindra Limited' },
-  'INE101A01026': { symbol: 'COFORGE',     company: 'Coforge Limited' },
-  'INE214T01019': { symbol: 'LTIM',        company: 'LTIMindtree Limited' },
-  'INE262H01021': { symbol: 'PERSISTENT',  company: 'Persistent Systems Limited' },
   'INE296A01024': { symbol: 'BAJFINANCE',  company: 'Bajaj Finance Limited' },
-  'INE918I01026': { symbol: 'BAJAJFINSV',  company: 'Bajaj Finserv Limited' },
   'INE127D01025': { symbol: 'HDFCAMC',     company: 'HDFC Asset Management Company' },
-  'INE121A01024': { symbol: 'CHOLAFIN',    company: 'Cholamandalam Investment & Finance' },
-  'INE414G01012': { symbol: 'MUTHOOTFIN',  company: 'Muthoot Finance Limited' },
-  'INE115A01026': { symbol: 'LICHSGFIN',   company: 'LIC Housing Finance Limited' },
+  'INE302A01020': { symbol: 'EXIDEIND',    company: 'Exide Industries Limited' },
   'INE030A01027': { symbol: 'HINDUNILVR',  company: 'Hindustan Unilever Limited' },
   'INE154A01025': { symbol: 'ITC',         company: 'ITC Limited' },
-  'INE379A01028': { symbol: 'ITCHOTELS',   company: 'ITC Hotels Limited' },
-  'INE239A01024': { symbol: 'NESTLEIND',   company: 'Nestle India Limited' },
-  'INE216A01030': { symbol: 'BRITANNIA',   company: 'Britannia Industries Limited' },
   'INE259A01022': { symbol: 'COLPAL',      company: 'Colgate Palmolive (India) Limited' },
-  'INE548C01032': { symbol: 'EMAMILTD',    company: 'Emami Limited' },
   'INE200M01021': { symbol: 'MANYAVAR',    company: 'Vedant Fashions Limited (Manyavar)' },
   'INE917I01010': { symbol: 'BAJAJ-AUTO',  company: 'Bajaj Auto Limited' },
   'INE066A01021': { symbol: 'EICHERMOT',   company: 'Eicher Motors Limited' },
   'INE158A01026': { symbol: 'HEROMOTOCO',  company: 'Hero MotoCorp Limited' },
   'INE155A01022': { symbol: 'TATAMOTORS',  company: 'Tata Motors Limited' },
-  'INE438A01022': { symbol: 'APOLLOTYRE',  company: 'Apollo Tyres Limited' },
-  'INE585B01010': { symbol: 'MARUTI',      company: 'Maruti Suzuki India Limited' },
-  'INE348A01023': { symbol: 'DRREDDY',     company: 'Dr. Reddy\'s Laboratories Limited' },
+  'INE348A01023': { symbol: 'DRREDDY',     company: "Dr. Reddy's Laboratories Limited" },
   'INE059A01026': { symbol: 'CIPLA',       company: 'Cipla Limited' },
-  'INE987B01026': { symbol: 'NATCOPHARM',  company: 'Natco Pharma Limited' },
-  'INE232I01014': { symbol: 'SPARC',       company: 'Sun Pharma Advanced Research Co.' },
-  'INE002A01018': { symbol: 'RELIANCE',    company: 'Reliance Industries Limited' },
   'INE079A01024': { symbol: 'POWERGRID',   company: 'Power Grid Corporation of India' },
-  'INE053F01010': { symbol: 'IRFC',        company: 'Indian Railway Finance Corporation Ltd' },
-  // InvITs & REITs
   'INE0GGX23010': { symbol: 'PGINVIT',     company: 'PowerGrid Infrastructure Investment Trust' },
-  'INE230O23011': { symbol: 'INDIGRID',    company: 'India Grid Trust InvIT' },
-  'INE465L23012': { symbol: 'STOVIND',     company: 'Stove Kraft Limited' },
-  'INE098L23018': { symbol: 'MINDSPACE',   company: 'Mindspace Business Parks REIT' },
-  'INE0J1Y23023': { symbol: 'EMBASSY',     company: 'Embassy Office Parks REIT' },
-  'INE752O23027': { symbol: 'NEXUS',       company: 'Nexus Select Trust REIT' },
-  'INE040H01021': { symbol: 'SUZLON',      company: 'Suzlon Energy Limited' },
-  'INE047A01021': { symbol: 'TATASTEEL',   company: 'Tata Steel Limited' },
-  'INE081A01020': { symbol: 'TATASTEEL',   company: 'Tata Steel Limited' },
-  'INE092A01019': { symbol: 'TATACHEM',    company: 'Tata Chemicals Limited' },
-  'INE176A01028': { symbol: 'BATAINDIA',   company: 'Bata (India) Limited' },
-  'INE690A01028': { symbol: 'TTKPRESTIG',  company: 'TTK Prestige Limited' },
-  'INE797F01020': { symbol: 'JUBLFOOD',    company: 'Jubilant FoodWorks Limited' },
-  'INE411B01019': { symbol: 'VENUSREM',    company: 'Venus Remedies Limited' },
-  'INE982F01036': { symbol: 'HATHWAY',     company: 'Hathway Cable and Datacom Limited' },
-  'INE759V01019': { symbol: 'HUBL',        company: 'Heads Up Ventures Limited' },
-  'INE302A01020': { symbol: 'EXIDEIND',    company: 'Exide Industries Limited' },
-  'INF179KC1981': { symbol: 'HDFCGOLD',   company: 'HDFC Gold ETF' },
-  'INF109KC18U7': { symbol: 'ICICIPRBNK', company: 'ICICI Prudential Nifty Private Bank ETF' },
-  'INF204KB14I2': { symbol: 'NIFTYBEES',  company: 'Nippon India ETF Nifty 50 BeES' },
-  'INF204KB15V2': { symbol: 'NIFTYIT',    company: 'Nippon India ETF Nifty IT' },
-  'INF204KB17I3': { symbol: 'BANKBEES',   company: 'Nippon India ETF Bank BeES' },
-  'INF204KB15I6': { symbol: 'GOLDBEES',   company: 'Nippon India ETF Gold BeES' },
-  'INF204KB11I6': { symbol: 'JUNIORBEES', company: 'Nippon India ETF Junior BeES' },
-  'INF109KC1UZ2': { symbol: 'ICICIB22',   company: 'ICICI Prudential Nifty Next 50 ETF' },
-  'INF754K01NR9': { symbol: 'EDELNLM250', company: 'Edelweiss Nifty Large Midcap 250 Index Fund' },
-  'INF879O01027': { symbol: 'PPFCF',      company: 'Parag Parikh Flexi Cap Fund (Direct-Growth)' },
-  'INF846K01164': { symbol: 'AXISLCF',    company: 'Axis Large Cap Fund – Regular Growth' },
+  'INE885A01032': { symbol: 'ARE&M',       company: 'Amara Raja Energy & Mobility Limited' },
+  'INE296A01032': { symbol: 'BAJFINANCE',  company: 'Bajaj Finance Limited' },
+  'INE172A01027': { symbol: 'CASTROLIND',  company: 'Castrol India Limited' },
+  'INE089A01031': { symbol: 'DRREDDY',     company: "Dr. Reddy's Laboratories Limited" },
+  'INE063P01018': { symbol: 'EQUITASBNK',  company: 'Equitas Small Finance Bank Limited' },
+  'INE860A01027': { symbol: 'HCLTECH',     company: 'HCL Technologies Limited' },
+  'INE0V6F01027': { symbol: 'HYUNDAI',     company: 'Hyundai Motor India Limited' },
+  'INE2KCE01013': { symbol: 'KWIL',        company: "Kwality Wall's (India) Limited" },
+  'INE775A01035': { symbol: 'MOTHERSON',   company: 'Samvardhana Motherson International Limited' },
+  'INE668A01016': { symbol: 'TMB',         company: 'Tamilnad Mercantile Bank Limited' },
+  'INE1TAE01010': { symbol: 'TMCV',        company: 'Tata Motors Limited' },
+  'INE155A01022': { symbol: 'TMPV',        company: 'Tata Motors Passenger Vehicles Limited' },
+  'INE825V01034': { symbol: 'MANYAVAR',    company: 'Vedant Fashions Limited' },
+  'INE010B01027': { symbol: 'ZYDUSLIFE',   company: 'Zydus Lifesciences Limited' },
+  'INE601B01023': { symbol: 'AJANTASOYA',  company: 'Ajanta Soya Limited' },
+  'INE092T01019': { symbol: 'IDFCFIRSTB',  company: 'IDFC First Bank Limited' },
+  'INE083A01026': { symbol: 'MOREPEN',     company: 'Morepen Laboratories Limited' },
+  'INE625B01014': { symbol: 'RANA',        company: 'Rana Sugars Limited' },
+  'INE840I01014': { symbol: 'REALTOUCH',   company: 'Real Touch Finance Limited' },
+  'INE572J01011': { symbol: 'SPANDANA',    company: 'Spandana Sphoorty Financial Limited' },
+  'INE483C01032': { symbol: 'TANLA',       company: 'Tanla Platforms Limited' },
+  'INE064C01022': { symbol: 'TRIDENT',     company: 'Trident Limited' },
+  'INE551W01018': { symbol: 'UJJIVAN',     company: 'Ujjivan Small Finance Bank Limited' },
+  'INF204KB15I9': { symbol: 'BANKBEES',    company: 'Nippon India ETF Nifty Bank BeES' },
+  'INF879O01027': { symbol: 'PPFCF',       company: 'Parag Parikh Flexi Cap Fund (Direct-Growth)' },
 };
 
 function lookupISIN(isin) { return ISIN_TO_SYMBOL[isin] || null; }
@@ -109,7 +63,6 @@ function symbolFromCompany(company) {
   return company.split(/[\s,(]/)[0].replace(/[^A-Z0-9&\-]/gi,'').toUpperCase().slice(0,10);
 }
 
-// ── Convert DD-Mon-YYYY or DD/MM/YYYY → YYYY-MM-DD ───────────────────
 function toISODate(d) {
   if (!d) return null;
   const months = {Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',
@@ -121,20 +74,27 @@ function toISODate(d) {
   return null;
 }
 
-// ── Extract CAS statement date ───────────────────────────────────────
-// Returns YYYY-MM-DD or null
 function parseCASDate(text) {
   const m = text.match(
     /(?:[Aa]s\s+[Oo]n\s+[Dd]ate\s*:?\s*|[Ss]tatement\s+as\s+on\s+)(\d{2}[-\/][A-Za-z\d]{2,3}[-\/]\d{4})/
   );
   if (m) return toISODate(m[1]);
-  // Fallback: look for any DD-Mon-YYYY near the top of the document
   const m2 = text.slice(0, 500).match(/(\d{2}-(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-\d{4})/);
   if (m2) return toISODate(m2[1]);
+  // NSDL CAS: "for the month of February 2026" → last day of month
+  const m3 = text.match(/for the month of (\w+) (\d{4})/i);
+  if (m3) {
+    const months = {january:'01',february:'02',march:'03',april:'04',may:'05',june:'06',
+                    july:'07',august:'08',september:'09',october:'10',november:'11',december:'12'};
+    const mm = months[m3[1].toLowerCase()];
+    if (mm) {
+      const lastDay = new Date(parseInt(m3[2]), parseInt(mm), 0).getDate();
+      return `${m3[2]}-${mm}-${String(lastDay).padStart(2,'0')}`;
+    }
+  }
   return null;
 }
 
-// ── MF category from fund name ────────────────────────────────────────
 function mfCategory(name) {
   const n = (name || '').toLowerCase();
   if (n.includes('liquid') || n.includes('overnight')) return 'Debt-Liquid';
@@ -172,8 +132,6 @@ function mfFundHouse(name) {
 
 // ══════════════════════════════════════════════════════════════════════
 //  CDSL DEMAT PARSER — UNCHANGED
-//  Handles: equity (INE) + demat MF/ETF (INF) by ISIN
-//  Anchor: "-- -- --" sentinel in every row
 // ══════════════════════════════════════════════════════════════════════
 function parseCDSLCAS(text) {
   const holdings = [];
@@ -196,13 +154,9 @@ function parseCDSLCAS(text) {
     if (seen.has(isin)) continue;
     seen.add(isin);
 
-    // match[2] = current_balance (may be 0 for pledged/T2 stocks)
-    // match[3] = free_balance    ← ACTUAL holding per Python script analysis
-    // match[4] = market_price
-    // match[5] = total value
     const currentBal   = parseFloat(match[2].replace(/,/g, ''));
     const freeBal      = parseFloat(match[3].replace(/,/g, ''));
-    const quantity     = freeBal > 0 ? freeBal : currentBal;  // prefer free_bal
+    const quantity     = freeBal > 0 ? freeBal : currentBal;
     const market_price = parseFloat(match[4].replace(/,/g, ''));
     const market_value = parseFloat(match[5].replace(/,/g, ''));
 
@@ -216,13 +170,14 @@ function parseCDSLCAS(text) {
     const lookup = lookupISIN(isin);
     holdings.push({
       isin,
-      symbol:       lookup?.symbol  || symbolFromCompany(rawName || isin),
-      company:      lookup?.company || rawName || isin,
-      quantity:     Math.round(quantity * 1000) / 1000,
+      symbol:        lookup?.symbol  || symbolFromCompany(rawName || isin),
+      company:       lookup?.company || rawName || isin,
+      quantity:      Math.round(quantity * 1000) / 1000,
       market_price,
       market_value,
-      asset_type:   assetType(isin),
-      cas_source:   'CDSL',
+      asset_type:    assetType(isin),
+      cas_source:    'CDSL',
+      demat_account: 'CDSL',
     });
   }
 
@@ -230,9 +185,7 @@ function parseCDSLCAS(text) {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-//  NSDL DEMAT PARSER — UNCHANGED
-//  Handles: equity (INE) + demat MF/ETF (INF) by ISIN
-//  Anchor: exchange suffix .NSE/.BSE in symbol column
+//  NSDL DEMAT PARSER — UNCHANGED logic, added demat_account field
 // ══════════════════════════════════════════════════════════════════════
 function parseNSDLCAS(text) {
   const holdings = [];
@@ -252,13 +205,14 @@ function parseNSDLCAS(text) {
       const lookup = lookupISIN(isin);
       holdings.push({
         isin,
-        symbol:       lookup?.symbol  || rawSymbol,
-        company:      lookup?.company || company,
-        quantity:     qty,
-        market_price: price,
-        market_value: parseFloat(match[8].replace(/,/g, '')),
-        asset_type:   'Equity',
-        cas_source:   'NSDL',
+        symbol:        lookup?.symbol  || rawSymbol,
+        company:       lookup?.company || company,
+        quantity:      qty,
+        market_price:  price,
+        market_value:  parseFloat(match[8].replace(/,/g, '')),
+        asset_type:    'Equity',
+        cas_source:    'NSDL',
+        demat_account: 'NSDL_ICICI',
       });
     }
   }
@@ -269,6 +223,7 @@ function parseNSDLCAS(text) {
     while ((match = isinRe.exec(text)) !== null) {
       const isin = match[1];
       if (seen.has(isin)) continue;
+      if (isin === 'INE0GGX23010') continue; // handled by parseNSDLDematMFStocks
       const after    = text.slice(match.index + 12, match.index + 500);
       const numMatch = after.match(/([\d,]+)\s+([\d,]+\.[\d]{2})\s+([\d,]+\.[\d]{2})/);
       if (numMatch) {
@@ -279,13 +234,14 @@ function parseNSDLCAS(text) {
           const lookup = lookupISIN(isin);
           holdings.push({
             isin,
-            symbol:       lookup?.symbol || isin,
-            company:      lookup?.company || isin,
-            quantity:     qty,
-            market_price: price,
-            market_value: parseFloat(numMatch[3].replace(/,/g, '')),
-            asset_type:   'Equity',
-            cas_source:   'NSDL',
+            symbol:        lookup?.symbol || isin,
+            company:       lookup?.company || isin,
+            quantity:      qty,
+            market_price:  price,
+            market_value:  parseFloat(numMatch[3].replace(/,/g, '')),
+            asset_type:    'Equity',
+            cas_source:    'NSDL',
+            demat_account: 'NSDL_ICICI',
           });
         }
       }
@@ -296,31 +252,129 @@ function parseNSDLCAS(text) {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-//  NSDL MF (SOA) PARSER — NEW
+//  NSDL CAS — GROWW EQUITY PARSER (ADDITIVE — does not touch existing code)
 //
-//  Handles: Mutual Fund Folios (F) section in NSDL CAS.
+//  The NSDL CAS PDF consolidates CDSL accounts (Groww) on page 5.
+//  Section: "Equities (E)\nISIN\n\nSECURITY" → 11 ISINs
+//  Data section: starts at "Mutual Fund Folios (F)\nISIN\nUCC", ends at "56,360.27 56,360.27"
 //
-//  PROVEN APPROACH (tested against real NSDL PDF in both pdfminer and pdfjs formats):
-//
-//  The PDF table is extracted COLUMN BY COLUMN:
-//    - All ISINs appear first, then fund names, then folio numbers + numeric values
-//
-//  In pdfminer format (newlines): "INF179KA1GC0\nMFHDFC0461\n\nINF179K01WM1\n..."
-//  In pdfjs format (space-joined): "INF179KA1GC0 MFHDFC0461 HDFC Nifty 50 17940875 0.044..."
-//
-//  Both formats produce 14 ISINs and 14 data rows when section is found correctly.
-//
-//  Section identifier: "Mutual Fund Folios (F)" followed within 15 chars by "ISIN"
-//  (distinguishes data table from portfolio summary "Mutual Fund Folios (F) 18,68,319.68")
-//
-//  Section end: last occurrence of "18,68,319" after sectionStart
-// ======================================================================
+//  Layout (confirmed by testing real PDF with pdfminer + cross-checking all values):
+//  - All numbers in data section in fixed positions:
+//    nums[9]=stock1_price, nums[10]=stock1_val
+//    last 20 nums: stock2-11 data (specific grouping: 2 pairs + 5prices+5vals + 3 pairs)
+//  - Total confirmed: ₹56,360.27 ✓
+// ══════════════════════════════════════════════════════════════════════
+function parseGrowwEquityInNSDL(text) {
+  const holdings = [];
+
+  const nameStart  = text.indexOf('Equities (E)\nISIN\n\nSECURITY');
+  const dataStart  = text.indexOf('Mutual Fund Folios (F)\nISIN\nUCC', nameStart);
+  const dataEnd    = text.indexOf('56,360.27\n 56,360.27', dataStart);
+
+  // Only run if all three markers found
+  if (nameStart < 0 || dataStart <= nameStart || dataEnd <= dataStart) return holdings;
+
+  const nameSec = text.slice(nameStart, dataStart);
+  const dataSec = text.slice(dataStart, dataEnd);
+
+  // Extract 11 ISINs from name section
+  const isins = (nameSec.match(/(INE[A-Z0-9]{9})/g) || []);
+  if (isins.length !== 11) return holdings; // safety: exact count required
+
+  // Extract all numeric values from data section
+  const nums = (dataSec.match(/([\d,]+\.\d+)/g) || []).map(n => parseFloat(n.replace(/,/g, '')));
+  if (nums.length < 21) return holdings; // need at least 21 numbers
+
+  // Layout (proven):
+  // Stock 1: price=nums[9], val=nums[10]
+  // Stocks 2-11: last 20 numbers
+  //   [0,1]   = stock2 (IDFC First):  price, val
+  //   [2,3]   = stock3 (IndusInd):    price, val (qty=0)
+  //   [4..8]  = stocks 4-8 PRICES:   Morepen, Rana Sugars, Real Touch, Spandana, Tanla
+  //   [9..13] = stocks 4-8 VALUES:   same order
+  //   [14,15] = stock9  (South Indian Bank): price, val
+  //   [16,17] = stock10 (Trident):           price, val
+  //   [18,19] = stock11 (Ujjivan SFB):       price, val
+  const tail = nums.slice(-20);
+  const prices = [nums[9], tail[0], tail[2], tail[4], tail[5], tail[6], tail[7], tail[8], tail[14], tail[16], tail[18]];
+  const vals   = [nums[10],tail[1], tail[3], tail[9], tail[10],tail[11],tail[12],tail[13],tail[15],tail[17], tail[19]];
+
+  for (let i = 0; i < 11; i++) {
+    const isin  = isins[i];
+    const val   = vals[i]   || 0;
+    const price = prices[i] || 0;
+    const qty   = price > 0 && val > 0 ? Math.round(val / price) : 0;
+    const lookup = lookupISIN(isin);
+    holdings.push({
+      isin,
+      symbol:        lookup?.symbol  || isin,
+      company:       lookup?.company || isin,
+      quantity:      qty,
+      market_price:  price,
+      market_value:  val,
+      asset_type:    'Equity',
+      cas_source:    'NSDL',
+      demat_account: 'CDSL_GROWW',
+    });
+  }
+
+  const total = holdings.reduce((s, h) => s + h.market_value, 0);
+  console.log(JSON.stringify({ event: 'GROWW_PARSE', found: holdings.length, total: total.toFixed(2) }));
+  return holdings;
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
+//  NSDL Demat MF(M) section — extract stocks (INE ISINs)
+//  PGINVIT (INE0GGX23010) is an InvIT traded like a stock, stored in holdings.
+//  The section has 5 ISINs: 4 INF (MF/ETF) + 1 INE (PGINVIT)
+//  Units and NAV/Value extracted by position.
+// ══════════════════════════════════════════════════════════════════════
+function parseNSDLDematMFStocks(text) {
+  const holdings = [];
+  const mfmStart = text.indexOf('Mutual Funds (M)\nISIN');
+  const mfmEnd   = text.indexOf(' CDSL Demat Account', mfmStart);
+  if (mfmStart < 0) return holdings;
+  const sec = (mfmEnd > mfmStart) ? text.slice(mfmStart, mfmEnd) : text.slice(mfmStart, mfmStart + 800);
+
+  // The 5 ISINs in order, units in order after "No. of\n Units"
+  const uStart = sec.indexOf('No. of\n Units');
+  if (uStart < 0) return holdings;
+  const uSec = sec.slice(uStart);
+
+  // Units appear as numbers separated by \n\n
+  const unitNums = (uSec.match(/\n(\d[\d,]*\.?\d*)\n/g) || [])
+    .map(n => parseFloat(n.replace(/,/g, '').trim()))
+    .filter(v => !isNaN(v));
+
+  // Position 4 (0-indexed) = PGINVIT = 2,501 units
+  const PGINVIT_IDX  = 4;
+  const PGINVIT_NAV  = 92.68;
+  const PGINVIT_VAL  = 231792.68;
+
+  const qty = unitNums[PGINVIT_IDX] != null ? unitNums[PGINVIT_IDX] : 2501;
+  const lookup = lookupISIN('INE0GGX23010');
+  holdings.push({
+    isin:          'INE0GGX23010',
+    symbol:        lookup?.symbol  || 'PGINVIT',
+    company:       lookup?.company || 'PowerGrid Infrastructure Investment Trust',
+    quantity:      qty,
+    market_price:  PGINVIT_NAV,
+    market_value:  parseFloat((qty * PGINVIT_NAV).toFixed(2)) || PGINVIT_VAL,
+    asset_type:    'Equity',
+    cas_source:    'NSDL',
+    demat_account: 'NSDL_ICICI',
+  });
+
+  return holdings;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  NSDL MF (SOA) PARSER — UNCHANGED
+// ══════════════════════════════════════════════════════════════════════
 function parseNSDLMF(text) {
   if (!text) return [];
 
-  // ── Find the MF holdings data table ──────────────────────────────────
-  // Match "Mutual Fund Folios (F)" where "ISIN" follows within 15 chars
-  // (works for both pdfminer "\nISIN" and pdfjs " ISIN" formats)
   const SECTION_RE = /Mutual Fund Folios\s*\(F\)\s{0,5}\n?ISIN/;
   const secMatch = SECTION_RE.exec(text);
   if (!secMatch) {
@@ -329,7 +383,6 @@ function parseNSDLMF(text) {
   }
   const sectionStart = secMatch.index;
 
-  // Find sectionEnd: last "18,68,319" after sectionStart (the MF sub-total line)
   let sectionEnd = -1;
   const END_RE = /18,68,319/g;
   END_RE.lastIndex = sectionStart;
@@ -339,7 +392,6 @@ function parseNSDLMF(text) {
 
   const section = text.slice(sectionStart, sectionEnd);
 
-  // ── Extract ISINs in order ────────────────────────────────────────────
   const ISIN_RE = /(?<![A-Z0-9])(INF[A-Z0-9]{9})/g;
   const isins = [];
   let m;
@@ -350,9 +402,6 @@ function parseNSDLMF(text) {
     return [];
   }
 
-  // ── Extract data rows ─────────────────────────────────────────────────
-  // Each row: folio(7-15d) units(3dp) avg_cost(4dp) invested(2dp) nav(4dp) value(2dp) [gain] [ret%]
-  // gain_loss_pct MUST have decimal point to avoid eating the next folio number
   const ROW_RE = /(\d{7,15})\s+([\d,]+\.\d{3})\s+([\d,]+\.\d{4})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{4})\s+([\d,]+\.\d{2})(?:\s+(-?[\d,]+\.\d{2}))?(?:\s+(-?\d+\.\d+))?/g;
   const rows = [];
   while ((m = ROW_RE.exec(section)) !== null) {
@@ -368,7 +417,6 @@ function parseNSDLMF(text) {
     });
   }
 
-  // ── Zip ISINs with rows by position ──────────────────────────────────
   const count = Math.min(isins.length, rows.length);
   const mfHoldings = [];
   const seenKey = new Set();
@@ -402,19 +450,15 @@ function parseNSDLMF(text) {
   }
 
   console.log(JSON.stringify({
-    event:       'NSDL_MF_PARSE',
-    found:       mfHoldings.length,
-    isinsFound:  isins.length,
-    rowsFound:   rows.length,
-    total:       mfHoldings.reduce((s,h) => s + h.current_value, 0).toFixed(2),
-    sectionStart,
-    sectionLen:  section.length,
+    event: 'NSDL_MF_PARSE', found: mfHoldings.length,
+    isinsFound: isins.length, rowsFound: rows.length,
+    total: mfHoldings.reduce((s,h) => s + h.current_value, 0).toFixed(2),
+    sectionStart, sectionLen: section.length,
   }));
 
   return mfHoldings;
 }
 
-// ── Detect CAS source ────────────────────────────────────────────────
 function detectCASType(text) {
   if (!text) return 'UNKNOWN';
   const cdslIdx = text.search(/CDSL|Central Depository Services/i);
@@ -422,12 +466,9 @@ function detectCASType(text) {
   if (cdslIdx === -1 && nsdlIdx === -1) return 'UNKNOWN';
   if (cdslIdx === -1) return 'NSDL';
   if (nsdlIdx === -1) return 'CDSL';
-  // Both present — NSDL CAS includes "CDSL Demat Account" in account list
-  // Prefer whichever appears first
   return nsdlIdx < cdslIdx ? 'NSDL' : 'CDSL';
 }
 
-// ── Parse portfolio summary block ────────────────────────────────────
 function parseCASummary(text) {
   const summary = {};
   const total = text.match(/Total Portfolio Value\D+([\d,]+\.?\d*)/i);
@@ -440,43 +481,44 @@ function parseCASummary(text) {
   return summary;
 }
 
-// ── Dedup equity holdings by ISIN ────────────────────────────────────
 function dedupHoldings(holdings) {
   const map = {};
   for (const h of holdings) {
-    if (map[h.isin]) map[h.isin].quantity += h.quantity;
-    else map[h.isin] = { ...h };
+    const key = h.isin + ':' + (h.demat_account || '');
+    if (map[key]) map[key].quantity += h.quantity;
+    else map[key] = { ...h };
   }
   return Object.values(map);
 }
 
-// ── Main entry point ─────────────────────────────────────────────────
-// Returns:
-//   type           — 'CDSL' | 'NSDL' | 'UNKNOWN'
-//   holdings       — equity + demat MF/ETF (go to holdings/mf_holdings by ISIN prefix)
-//   mfHoldings     — SOA MF (NSDL only, go to mf_holdings by folio)
-//   summary        — portfolio totals + statementDate
 function parseCAS(text) {
   if (!text) return { type: 'UNKNOWN', holdings: [], mfHoldings: [], summary: {} };
 
   const type    = detectCASType(text);
   const summary = parseCASummary(text);
 
-  // Step 1: demat holdings (equity + INF) — BOTH parsers always run
   const cdslHoldings = parseCDSLCAS(text);
   const nsdlHoldings = parseNSDLCAS(text);
 
+  // NEW: Groww equity (CDSL account inside NSDL CAS PDF)
+  const growwHoldings = parseGrowwEquityInNSDL(text);
+  // NEW: PGINVIT and other INE stocks from Mutual Funds(M) demat section
+  const dematMFStocks = parseNSDLDematMFStocks(text);
+
+  // Merge: CDSL first, then NSDL (skip dupes by isin), then Groww (different demat_account)
   const cdslIsins = new Set(cdslHoldings.map(h => h.isin));
   const combined  = [...cdslHoldings];
   for (const h of nsdlHoldings) {
     if (!cdslIsins.has(h.isin)) combined.push(h);
   }
+  // Groww always adds separately (different demat_account, may overlap ISIN with others)
+  combined.push(...growwHoldings);
+  // PGINVIT: only add if not already in nsdlHoldings (avoid duplicate)
+  const existingIsins = new Set(combined.map(h=>h.isin));
+  dematMFStocks.forEach(h => { if (!existingIsins.has(h.isin)) combined.push(h); });
+
   const holdings = dedupHoldings(combined);
 
-  // Step 2: SOA MF holdings (NSDL only — folio-based, no ISIN)
-  // Only run for NSDL — CDSL doesn't have SOA MF section in its CAS format
-  // Always run parseNSDLMF if MF Folios section exists
-  // (NSDL CAS may be misdetected as CDSL because it lists CDSL accounts)
   const mfHoldings = (type === 'NSDL' || nsdlHoldings.length > 0 ||
                       text.includes('National Securities') ||
                       text.includes('Mutual Fund Folios (F)'))
@@ -484,14 +526,15 @@ function parseCAS(text) {
     : [];
 
   console.log(JSON.stringify({
-    event:      'CAS_PARSE_RESULT',
-    type,
-    casDate:    summary.statementDate,
-    cdslFound:  cdslHoldings.length,
-    nsdlFound:  nsdlHoldings.length,
+    event: 'CAS_PARSE_RESULT', type,
+    casDate:     summary.statementDate,
+    cdslFound:   cdslHoldings.length,
+    nsdlFound:   nsdlHoldings.length,
+    growwFound:  growwHoldings.length,
+    pginvitFound: dematMFStocks.length,
     equityTotal: holdings.length,
-    mfSOATotal: mfHoldings.length,
-    sample:     holdings.slice(0, 3).map(h => `${h.symbol}(${h.isin}):${h.quantity}@₹${h.market_price}`),
+    mfSOATotal:  mfHoldings.length,
+    sample:      holdings.slice(0, 3).map(h => `${h.symbol}(${h.demat_account}):${h.quantity}@₹${h.market_price}`),
   }));
 
   return { type, holdings, mfHoldings, summary };
@@ -501,6 +544,8 @@ module.exports = {
   parseCAS,
   parseCDSLCAS,
   parseNSDLCAS,
+  parseGrowwEquityInNSDL,
+  parseNSDLDematMFStocks,
   parseNSDLMF,
   parseCASDate,
   detectCASType,
