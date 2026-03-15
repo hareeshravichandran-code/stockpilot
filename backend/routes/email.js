@@ -722,14 +722,15 @@ router.get('/debug-mf-text', async (req, res) => {
     const { data: userRow } = await supabase.from('users')
       .select('pan, dob').eq('id', conn.user_id).single();
 
-    const query = 'from:(nsdl.co.in OR nsdlindia.com) has:attachment subject:CAS';
+    const query = 'from:(cdslstatement.com OR nsdl.co.in OR nsdlindia.com OR cvlindia.com) has:attachment';
     const emails = await fetchEmails(conn.access_token, conn.refresh_token, query, userRow || {});
 
-    if (!emails?.length) return res.json({ error: 'No NSDL emails found' });
+    if (!emails?.length) return res.json({ error: 'No CAS emails found', querySent: query });
 
-    // Sort latest first
+    // Sort latest first, find NSDL one
     emails.sort((a, b) => new Date(b.date) - new Date(a.date));
-    const email = emails[0];
+    const nsdlEmail = emails.find(e => e.subject?.toLowerCase().includes('nsdl')) || emails[0];
+    const email = nsdlEmail;
 
     const pdfMarker = '--- PDF ATTACHMENT ---';
     const pdfIdx = email.body?.indexOf(pdfMarker) ?? -1;
