@@ -11,7 +11,8 @@ const emailRoutes = require('./routes/email');
 const dividendRoutes = require('./routes/dividends');
 const priceRoutes  = require('./routes/prices');
 const mfRoutes     = require('./routes/mf');
-const incomeRoutes = require('./routes/income');
+const incomeRoutes   = require('./routes/income');
+const expenseRoutes  = require('./routes/expense');
 
 const app = express();
 
@@ -51,7 +52,8 @@ app.use('/api/email', emailRoutes);
 app.use('/api/dividends', dividendRoutes);
 app.use('/api/prices',  priceRoutes);
 app.use('/api/mf',      mfRoutes);
-app.use('/api/income',  incomeRoutes);
+app.use('/api/income',   incomeRoutes);
+app.use('/api/expense',  expenseRoutes);
 
 // ── Health check ──
 // Debug endpoint - check PDF tools
