@@ -706,4 +706,62 @@ router.get('/debug-mf', async (req, res) => {
   return res.json(results);
 });
 
+
+// ── MF Text Debug: show actual pdfjs text from NSDL email ────────────
+router.get('/debug-mf-text', async (req, res) => {
+  try {
+    const supabase = require('../services/supabase');
+    const { fetchEmails } = require('../services/gmail');
+    const { parseCAS } = require('../services/casParser');
+
+    // Get first user's gmail connection
+    const { data: conn } = await supabase.from('email_connections')
+      .select('access_token, refresh_token, user_id').eq('provider', 'gmail').limit(1).single();
+    if (!conn) return res.json({ error: 'No gmail connection found' });
+
+    const { data: userRow } = await supabase.from('users')
+      .select('pan, dob').eq('id', conn.user_id).single();
+
+    const query = 'from:(nsdl.co.in OR nsdlindia.com) has:attachment subject:CAS';
+    const emails = await fetchEmails(conn.access_token, conn.refresh_token, query, userRow || {});
+
+    if (!emails?.length) return res.json({ error: 'No NSDL emails found' });
+
+    // Sort latest first
+    emails.sort((a, b) => new Date(b.date) - new Date(a.date));
+    const email = emails[0];
+
+    const pdfMarker = '--- PDF ATTACHMENT ---';
+    const pdfIdx = email.body?.indexOf(pdfMarker) ?? -1;
+    const fullText = pdfIdx >= 0 ? email.body.slice(pdfIdx + pdfMarker.length) : (email.body || '');
+
+    // Find MF Folios section
+    const mfIdx = fullText.search(/Mutual Fund Folios/i);
+    const mfText = mfIdx >= 0 ? fullText.slice(mfIdx, mfIdx + 3000) : 'MF_SECTION_NOT_FOUND';
+
+    // Also try parseCAS on the text
+    const parsed = parseCAS(fullText);
+
+    return res.json({
+      subject: email.subject,
+      pdfFound: pdfIdx >= 0,
+      fullTextLen: fullText.length,
+      mfSectionFound: mfIdx >= 0,
+      mfSectionStart: mfIdx,
+      // First 500 chars of MF section — THIS IS THE KEY
+      mfTextSample: mfText.slice(0, 500),
+      // Raw lines around MF section
+      mfLines: mfText.split('\n').slice(0, 30),
+      // Parse results
+      equityCount: parsed.holdings.length,
+      mfCount: parsed.mfHoldings.length,
+      mfSample: parsed.mfHoldings.slice(0, 3).map(h => ({
+        isin: h.isin, folio: h.folio_number, fund: h.fund_name?.slice(0,30), units: h.units
+      })),
+    });
+  } catch(e) {
+    return res.json({ error: e.message, stack: e.stack?.split('\n').slice(0,5) });
+  }
+});
+
 module.exports = router;
