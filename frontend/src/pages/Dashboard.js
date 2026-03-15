@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
-import api, { portfolioAPI, emailAPI, authAPI, incomeAPI, mfAPI } from '../lib/api';
+import api, { portfolioAPI, emailAPI, authAPI, incomeAPI, mfAPI, expenseAPI } from '../lib/api';
 import AdminPanel from './AdminPanel';
 import Dividends from './Dividends';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
@@ -80,6 +80,28 @@ export default function Dashboard() {
   const [ruleForm, setRuleForm] = useState(EMPTY_RULE);
   const [ruleSaving, setRuleSaving]   = useState(false);
   const [ruleError, setRuleError]     = useState('');
+
+  // ── Expense state ─────────────────────────────────────────────────
+  const [expenseEntries, setExpenseEntries]   = useState([]);
+  const [expenseSummary, setExpenseSummary]   = useState({ currentFYTotal:0, thisMonthTotal:0, byCategory:{}, byMonth:{}, fyLabel:'FY26', uncategorized:0 });
+  const [expenseRules, setExpenseRules]       = useState([]);
+  const [expenseScanning, setExpenseScanning] = useState(false);
+  const [expenseScanResult, setExpenseScanResult] = useState(null);
+  const [expenseCategories, setExpenseCategories] = useState({});
+  const [showExpenseEntry, setShowExpenseEntry] = useState(false);
+  const [editingExpense, setEditingExpense]   = useState(null); // for inline edit
+  const [expenseEntryForm, setExpenseEntryForm] = useState({
+    category:'', sub_category:'', amount:'',
+    expense_date: new Date().toISOString().split('T')[0],
+    merchant_name:'', comments:''
+  });
+  const [expenseEntrySaving, setExpenseEntrySaving] = useState(false);
+  const [expenseRuleForm, setExpenseRuleForm] = useState({
+    rule_name:'', email_sender:'', subject_pattern:'', body_pattern:'', lookback_months:'0'
+  });
+  const [showExpenseRuleForm, setShowExpenseRuleForm] = useState(false);
+  const [editingExpenseRule, setEditingExpenseRule]   = useState(null);
+  const [expenseRuleSaving, setExpenseRuleSaving]     = useState(false);
   const [liabilities, setLiabilities] = useState({ homeLoan: 0, creditCard: 0 });
   const [monthlyIncome, setMonthlyIncome] = useState(0);
   const [monthlyExpenses, setMonthlyExpenses] = useState(0);
@@ -141,13 +163,93 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, [incomeRules.length]);
 
+  // ── Expense handlers ─────────────────────────────────────────────
+  const loadExpenses = async () => {
+    try {
+      const [entriesRes, rulesRes, catsRes] = await Promise.all([
+        expenseAPI.getEntries(), expenseAPI.getRules(), expenseAPI.categories()
+      ]);
+      setExpenseEntries(entriesRes.data.entries || []);
+      setExpenseSummary(entriesRes.data.summary || { currentFYTotal:0, thisMonthTotal:0, byCategory:{}, byMonth:{}, fyLabel:'FY26', uncategorized:0 });
+      setExpenseRules(rulesRes.data || []);
+      setExpenseCategories(catsRes.data || {});
+    } catch(e) { console.error('loadExpenses', e); }
+  };
+
+  const scanExpenses = async () => {
+    setExpenseScanning(true); setExpenseScanResult(null);
+    try {
+      const r = await expenseAPI.scan();
+      setExpenseScanResult({ success:true, message:r.data.message, found:r.data.found });
+      await loadExpenses();
+    } catch(e) {
+      setExpenseScanResult({ success:false, message: e.response?.data?.error || 'Scan failed' });
+    } finally { setExpenseScanning(false); }
+  };
+
+  const saveExpenseEntry = async () => {
+    if (!expenseEntryForm.amount || !expenseEntryForm.expense_date) return;
+    setExpenseEntrySaving(true);
+    try {
+      await expenseAPI.addEntry(expenseEntryForm);
+      setShowExpenseEntry(false);
+      setExpenseEntryForm({ category:'', sub_category:'', amount:'', expense_date:new Date().toISOString().split('T')[0], merchant_name:'', comments:'' });
+      await loadExpenses();
+    } catch(e) { console.error(e); }
+    finally { setExpenseEntrySaving(false); }
+  };
+
+  const updateExpenseCategory = async (id, category, sub_category, merchant_name) => {
+    try {
+      await expenseAPI.updateEntry(id, { category, sub_category, merchant_name });
+      setEditingExpense(null);
+      await loadExpenses();
+    } catch(e) { console.error(e); }
+  };
+
+  const deleteExpenseEntry = async (id) => {
+    if (!window.confirm('Delete this expense?')) return;
+    await expenseAPI.deleteEntry(id).catch(()=>{});
+    await loadExpenses();
+  };
+
+  const autoCategorizeMerchant = async (merchant) => {
+    if (!merchant) return null;
+    try {
+      const r = await expenseAPI.categorize({ merchant_name: merchant });
+      return r.data;
+    } catch(e) { return null; }
+  };
+
+  const saveExpenseRule = async () => {
+    if (!expenseRuleForm.rule_name) return;
+    setExpenseRuleSaving(true);
+    try {
+      if (editingExpenseRule) await expenseAPI.updateRule(editingExpenseRule.id, expenseRuleForm);
+      else                    await expenseAPI.createRule(expenseRuleForm);
+      setShowExpenseRuleForm(false); setEditingExpenseRule(null);
+      setExpenseRuleForm({ rule_name:'', email_sender:'', subject_pattern:'', body_pattern:'', lookback_months:'0' });
+      await loadExpenses();
+    } catch(e) { console.error(e); }
+    finally { setExpenseRuleSaving(false); }
+  };
+
+  // Auto-scan expenses every 30 mins
+  useEffect(() => {
+    const run = () => scanExpenses();
+    const interval = setInterval(run, 30 * 60 * 1000);
+    return () => clearInterval(interval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const loadTab = async (t) => {
     setTab(t);
     if (t === 'transactions' && transactions.length === 0) {
       const r = await portfolioAPI.transactions().catch(() => ({ data: [] }));
       setTransactions(r.data);
     }
-    if (t === 'income') { await loadIncome(); return; }
+    if (t === 'income')   { await loadIncome();   return; }
+    if (t === 'expenses') { await loadExpenses(); return; }
     if (t === 'dividends') { return; // Dividends component loads its own data
       const r = await portfolioAPI.dividends().catch(() => ({ data: { dividends: [], totalIncome: 0 } }));
       setDividends(r.data);
@@ -451,7 +553,8 @@ export default function Dashboard() {
 
           <div className="db-nav-label" style={{marginTop:12}}>Finance</div>
           {[
-            { id:'income', icon:'₹', label:'Income' },
+            { id:'income',    icon:'₹',  label:'Income' },
+          { id:'expenses',  icon:'💸', label:'Expenses' },
           ].map(n => (
             <div key={n.id} className={`db-nav-item ${tab === n.id ? 'active' : ''}`}
               onClick={() => loadTab(n.id)}>
@@ -1259,6 +1362,199 @@ export default function Dashboard() {
             </div>
           )}
 
+          {/* EXPENSES TAB */}
+          {tab === 'expenses' && (
+            <div style={{padding:'24px 28px'}} className="fade-in">
+              {/* Header */}
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:24}}>
+                <div>
+                  <h2 style={{color:'#e2e8f0',fontSize:22,fontWeight:700,margin:0}}>💸 Expenses</h2>
+                  <div style={{color:'#64748b',fontSize:13,marginTop:3}}>Auto-tracked from UPI & credit card emails · AI-powered category detection</div>
+                </div>
+                <div style={{display:'flex',gap:10}}>
+                  {expenseSummary.uncategorized>0&&(
+                    <div style={{background:'rgba(251,146,60,0.1)',border:'1px solid rgba(251,146,60,0.3)',color:'#fb923c',borderRadius:8,padding:'9px 14px',fontSize:12,fontWeight:600}}>
+                      ⚠ {expenseSummary.uncategorized} need category
+                    </div>
+                  )}
+                  <button onClick={()=>{setSettingsSection('expense');setShowSettings(true);}}
+                    style={{background:'#1e293b',border:'1px solid #334155',color:'#94a3b8',borderRadius:8,padding:'9px 16px',cursor:'pointer',fontSize:13}}>
+                    ⚙ Rules
+                  </button>
+                  <button onClick={()=>setShowExpenseEntry(true)}
+                    style={{background:'rgba(251,146,60,0.1)',border:'1px solid rgba(251,146,60,0.3)',color:'#fb923c',borderRadius:8,padding:'9px 16px',cursor:'pointer',fontSize:13,fontWeight:700}}>
+                    + Add Entry
+                  </button>
+                  <button onClick={scanExpenses} disabled={expenseScanning}
+                    style={{background:expenseScanning?'#1e293b':'#fb923c',border:'none',color:'#fff',borderRadius:8,padding:'9px 16px',cursor:expenseScanning?'not-allowed':'pointer',fontSize:13,fontWeight:700}}>
+                    {expenseScanning?'⟳ Scanning…':'⟳ Scan Now'}
+                  </button>
+                </div>
+              </div>
+
+              {expenseScanResult&&(
+                <div style={{padding:'10px 16px',borderRadius:8,marginBottom:18,fontSize:13,
+                  background:expenseScanResult.success?'rgba(0,212,161,0.08)':'rgba(244,63,94,0.08)',
+                  border:`1px solid ${expenseScanResult.success?'rgba(0,212,161,0.2)':'rgba(244,63,94,0.2)'}`,
+                  color:expenseScanResult.success?'#00d4a1':'#f43f5e'}}>
+                  {expenseScanResult.success?'✅':'⚠'} {expenseScanResult.message}
+                </div>
+              )}
+
+              {/* Summary cards */}
+              <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:24}}>
+                {[
+                  {label:`${expenseSummary.fyLabel||'FY26'} Total`,val:fmtFull(expenseSummary.currentFYTotal||0),color:'#fb923c',icon:'📊'},
+                  {label:'This Month',val:fmtFull(expenseSummary.thisMonthTotal||0),color:'#f43f5e',icon:'📅'},
+                  {label:'Entries',val:expenseEntries.length,color:'#0ea5e9',icon:'📋'},
+                  {label:'Uncategorized',val:expenseSummary.uncategorized||0,color:'#f59e0b',icon:'❓'},
+                ].map(s=>(
+                  <div key={s.label} style={{background:'#0a1628',borderRadius:10,padding:'14px 18px',border:'1px solid #1e3a5f'}}>
+                    <div style={{fontSize:18,marginBottom:6}}>{s.icon}</div>
+                    <div style={{color:s.color,fontWeight:700,fontSize:20}}>{s.val}</div>
+                    <div style={{color:'#475569',fontSize:12,marginTop:3}}>{s.label}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Charts */}
+              {expenseEntries.length>0&&(()=>{
+                const EXP_COLORS=['#fb923c','#f43f5e','#a78bfa','#0ea5e9','#64ffda','#34d399','#f59e0b','#ec4899','#6366f1','#10b981'];
+                const catData = Object.entries(expenseSummary.byCategory||{}).map(([name,value])=>({name,value})).filter(d=>d.value>0).sort((a,b)=>b.value-a.value);
+                const mthData = Object.keys(expenseSummary.byMonth||{}).sort().map(m=>({
+                  month:new Date(m+'-01').toLocaleDateString('en-IN',{month:'short'}),
+                  amount:expenseSummary.byMonth[m]
+                }));
+                return (
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:24}}>
+                    <div style={{background:'#0a1628',borderRadius:10,border:'1px solid #1e3a5f',padding:'16px 20px'}}>
+                      <div style={{color:'#e2e8f0',fontWeight:700,fontSize:14,marginBottom:16}}>By Category ({expenseSummary.fyLabel})</div>
+                      <div style={{display:'flex',gap:16,alignItems:'center'}}>
+                        <ResponsiveContainer width={150} height={150}>
+                          <PieChart>
+                            <Pie data={catData} cx={70} cy={70} innerRadius={40} outerRadius={68} dataKey="value" paddingAngle={2}>
+                              {catData.map((_,i)=><Cell key={i} fill={EXP_COLORS[i%EXP_COLORS.length]}/>)}
+                            </Pie>
+                            <Tooltip formatter={v=>fmtFull(v)} contentStyle={{background:'#141b2d',border:'1px solid #1a2235',borderRadius:8,fontSize:12}}/>
+                          </PieChart>
+                        </ResponsiveContainer>
+                        <div style={{flex:1,maxHeight:150,overflowY:'auto'}}>
+                          {catData.slice(0,8).map((d,i)=>(
+                            <div key={d.name} style={{display:'flex',justifyContent:'space-between',marginBottom:5}}>
+                              <div style={{display:'flex',alignItems:'center',gap:5}}>
+                                <div style={{width:8,height:8,borderRadius:'50%',background:EXP_COLORS[i%EXP_COLORS.length],flexShrink:0}}/>
+                                <span style={{color:'#94a3b8',fontSize:11}}>{d.name}</span>
+                              </div>
+                              <span style={{color:'#e2e8f0',fontSize:11,fontWeight:600}}>{fmtFull(d.value)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{background:'#0a1628',borderRadius:10,border:'1px solid #1e3a5f',padding:'16px 20px'}}>
+                      <div style={{color:'#e2e8f0',fontWeight:700,fontSize:14,marginBottom:16}}>Monthly Trend</div>
+                      <ResponsiveContainer width="100%" height={150}>
+                        <AreaChart data={mthData} margin={{top:5,right:10,left:0,bottom:0}}>
+                          <defs>
+                            <linearGradient id="expGrad" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#fb923c" stopOpacity={0.3}/>
+                              <stop offset="95%" stopColor="#fb923c" stopOpacity={0}/>
+                            </linearGradient>
+                          </defs>
+                          <XAxis dataKey="month" stroke="#334155" tick={{fill:'#64748b',fontSize:11}}/>
+                          <YAxis stroke="#334155" tick={{fill:'#64748b',fontSize:10}} tickFormatter={v=>'₹'+(v/1000).toFixed(0)+'K'}/>
+                          <Tooltip formatter={v=>[fmtFull(v),'Expense']} contentStyle={{background:'#141b2d',border:'1px solid #1a2235',borderRadius:8,fontSize:12}}/>
+                          <Area type="monotone" dataKey="amount" stroke="#fb923c" strokeWidth={2} fill="url(#expGrad)"/>
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Expense table with inline category edit */}
+              <div style={{background:'#0a1628',borderRadius:10,border:'1px solid #1e3a5f'}}>
+                <div style={{padding:'14px 20px',borderBottom:'1px solid #1e3a5f',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                  <div style={{color:'#e2e8f0',fontWeight:700,fontSize:14}}>All Expenses</div>
+                  <div style={{color:'#475569',fontSize:12}}>{expenseEntries.length} entries · click row to edit category</div>
+                </div>
+                {expenseEntries.length===0?(
+                  <div style={{textAlign:'center',padding:'40px 20px'}}>
+                    <div style={{fontSize:36,marginBottom:12}}>💸</div>
+                    <div style={{fontSize:14,color:'#475569',marginBottom:8}}>No expenses yet</div>
+                    <div style={{fontSize:12,color:'#334155'}}>Click "Scan Now" to auto-detect from emails, or add manually</div>
+                  </div>
+                ):(
+                  <table className="db-table" style={{width:'100%'}}>
+                    <thead><tr>
+                      <th>Date</th><th>Merchant</th><th>Category</th>
+                      <th>Sub-category</th><th>Source</th><th>Comments</th>
+                      <th className="right">Amount</th><th></th>
+                    </tr></thead>
+                    <tbody>
+                      {expenseEntries.map(e=>(
+                        <tr key={e.id} style={{cursor:'pointer'}} onClick={()=>setEditingExpense(editingExpense===e.id?null:e.id)}>
+                          <td style={{color:'#64748b',fontSize:12,whiteSpace:'nowrap'}}>
+                            {new Date(e.expense_date+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}
+                          </td>
+                          <td>
+                            <div style={{color:'#e2e8f0',fontSize:13}}>{e.merchant_name||'—'}</div>
+                            {e.email_subject&&<div style={{color:'#334155',fontSize:10,marginTop:1}}>{e.email_subject.slice(0,45)}</div>}
+                          </td>
+                          <td>
+                            {editingExpense===e.id?(
+                              <select className="db-input" style={{background:'#0f1c2e',color:'#e2e8f0',cursor:'pointer',fontSize:12,padding:'4px 6px'}}
+                                defaultValue={e.category||''} onClick={ev=>ev.stopPropagation()}
+                                onChange={ev=>{ev.stopPropagation();updateExpenseCategory(e.id,ev.target.value,e.sub_category,e.merchant_name);}}>
+                                <option value="">— select —</option>
+                                {Object.keys(expenseCategories).map(cat=><option key={cat} value={cat}>{cat}</option>)}
+                              </select>
+                            ):(
+                              e.category
+                                ? <span style={{fontSize:11,padding:'2px 8px',borderRadius:4,fontWeight:600,background:'rgba(251,146,60,0.1)',color:'#fb923c'}}>{e.category}</span>
+                                : <span style={{fontSize:11,color:'#f59e0b'}}>⚠ tap to set</span>
+                            )}
+                          </td>
+                          <td style={{color:'#64748b',fontSize:12}}>{e.sub_category||'—'}</td>
+                          <td>
+                            <span style={{fontSize:10,padding:'2px 6px',borderRadius:4,
+                              background:e.source==='auto'?'rgba(14,165,233,0.1)':e.category_source==='ai'?'rgba(167,139,250,0.1)':'rgba(100,255,218,0.08)',
+                              color:e.source==='auto'?'#38bdf8':e.category_source==='ai'?'#a78bfa':'#64ffda'}}>
+                              {e.source==='manual'?'✎ manual':e.category_source==='ai'?'🤖 ai':e.category_source==='learned'?'📚 learned':e.category_source==='dict'?'📖 dict':'⚡ auto'}
+                            </span>
+                          </td>
+                          <td style={{color:'#64748b',fontSize:12}}>{e.comments||'—'}</td>
+                          <td className="right" style={{color:'#fb923c',fontWeight:700}}>{fmtFull(e.amount)}</td>
+                          <td>
+                            <div style={{display:'flex',gap:4}}>
+                              {e.receipt_url
+                                ? <a href={e.receipt_url} target="_blank" rel="noreferrer" onClick={ev=>ev.stopPropagation()}
+                                    style={{background:'none',border:'none',color:'#0ea5e9',cursor:'pointer',fontSize:14,padding:'2px 6px',textDecoration:'none'}}>📎</a>
+                                : <label onClick={ev=>ev.stopPropagation()} style={{cursor:'pointer',fontSize:14,padding:'2px 6px',color:'#334155'}}>
+                                    📎
+                                    <input type="file" style={{display:'none'}} accept="image/*,application/pdf"
+                                      onChange={async ev=>{
+                                        ev.stopPropagation();
+                                        const file=ev.target.files[0]; if(!file)return;
+                                        const form=new FormData(); form.append('file',file);
+                                        await expenseAPI.uploadReceipt(e.id, form);
+                                        await loadExpenses();
+                                      }} />
+                                  </label>
+                              }
+                              <button onClick={ev=>{ev.stopPropagation();deleteExpenseEntry(e.id);}}
+                                style={{background:'none',border:'none',color:'#334155',cursor:'pointer',fontSize:14,padding:'2px 6px'}}>✕</button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* INCOME TAB */}
           {tab === 'income' && (
             <div style={{ padding: '24px 28px' }} className="fade-in">
@@ -1616,6 +1912,75 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* ── MANUAL EXPENSE ENTRY ── */}
+      {showExpenseEntry && (
+        <div className="db-modal-overlay" onClick={e=>{if(e.target===e.currentTarget)setShowExpenseEntry(false);}}>
+          <div className="db-modal fade-in" style={{maxWidth:520}}>
+            <div className="db-modal-header">
+              <div className="db-modal-title">💸 Add Expense</div>
+              <button className="db-modal-close" onClick={()=>setShowExpenseEntry(false)}>✕</button>
+            </div>
+            <div className="db-modal-body">
+              {/* Amount + Date */}
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+                <div>
+                  <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:5}}>AMOUNT (₹) *</label>
+                  <input className="db-input" type="number" placeholder="e.g. 450" value={expenseEntryForm.amount} onChange={e=>setExpenseEntryForm(p=>({...p,amount:e.target.value}))} />
+                </div>
+                <div>
+                  <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:5}}>DATE *</label>
+                  <input className="db-input" type="date" value={expenseEntryForm.expense_date} onChange={e=>setExpenseEntryForm(p=>({...p,expense_date:e.target.value}))} />
+                </div>
+              </div>
+              {/* Merchant + auto-categorize */}
+              <div style={{marginBottom:12}}>
+                <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:5}}>MERCHANT / PAID TO</label>
+                <div style={{display:'flex',gap:8}}>
+                  <input className="db-input" style={{flex:1}} placeholder="e.g. Swiggy, Zomato, Apollo Pharmacy"
+                    value={expenseEntryForm.merchant_name}
+                    onChange={e=>setExpenseEntryForm(p=>({...p,merchant_name:e.target.value}))} />
+                  <button onClick={async()=>{
+                      const r = await autoCategorizeMerchant(expenseEntryForm.merchant_name);
+                      if(r?.category) setExpenseEntryForm(p=>({...p,category:r.category,sub_category:r.sub_category||''}));
+                    }}
+                    style={{background:'rgba(167,139,250,0.1)',border:'1px solid rgba(167,139,250,0.3)',color:'#a78bfa',borderRadius:8,padding:'8px 12px',cursor:'pointer',fontSize:12,whiteSpace:'nowrap'}}>
+                    🤖 Auto
+                  </button>
+                </div>
+              </div>
+              {/* Category + Sub */}
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+                <div>
+                  <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:5}}>CATEGORY</label>
+                  <select className="db-input" style={{background:'#0f1c2e',color:'#e2e8f0',cursor:'pointer'}}
+                    value={expenseEntryForm.category} onChange={e=>setExpenseEntryForm(p=>({...p,category:e.target.value,sub_category:''}))}>
+                    <option value="">— select —</option>
+                    {Object.keys(expenseCategories).map(cat=><option key={cat} value={cat}>{cat}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:5}}>SUB-CATEGORY</label>
+                  <select className="db-input" style={{background:'#0f1c2e',color:'#e2e8f0',cursor:'pointer'}}
+                    value={expenseEntryForm.sub_category} onChange={e=>setExpenseEntryForm(p=>({...p,sub_category:e.target.value}))}>
+                    <option value="">— select —</option>
+                    {(expenseCategories[expenseEntryForm.category]||[]).map(s=><option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+              </div>
+              {/* Comments */}
+              <div style={{marginBottom:16}}>
+                <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:5}}>COMMENTS</label>
+                <input className="db-input" placeholder="Optional notes" value={expenseEntryForm.comments} onChange={e=>setExpenseEntryForm(p=>({...p,comments:e.target.value}))} />
+              </div>
+              <button onClick={saveExpenseEntry} disabled={!expenseEntryForm.amount||!expenseEntryForm.expense_date||expenseEntrySaving}
+                style={{width:'100%',background:'#fb923c',color:'#fff',border:'none',borderRadius:8,padding:'12px',fontWeight:700,fontSize:14,cursor:'pointer'}}>
+                {expenseEntrySaving?'⟳ Saving…':'+ Save Expense'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── SETTINGS MODAL ── */}
       {showSettings && (
         <div className="db-modal-overlay" onClick={e=>{if(e.target===e.currentTarget){setShowSettings(false);setShowRuleForm(false);}}}>
@@ -1624,7 +1989,7 @@ export default function Dashboard() {
               {/* Left nav */}
               <div style={{width:190,borderRight:'1px solid #1e3a5f',padding:'20px 0',flexShrink:0}}>
                 <div style={{color:'#475569',fontSize:10,fontWeight:700,letterSpacing:2,padding:'0 16px 12px',textTransform:'uppercase'}}>Settings</div>
-                {[{id:'income',icon:'₹',label:'Income Tracking'},{id:'expense',icon:'💸',label:'Expense Tracking'}].map(s=>(
+                {[{id:'income',icon:'₹',label:'Income Tracking'},{id:'expense',icon:'💸',label:'Expense Tracking'},{id:'expensesettings',icon:'⚙',label:'Expense Rules'}].map(s=>(
                   <div key={s.id} onClick={()=>setSettingsSection(s.id)}
                     style={{padding:'11px 16px',cursor:'pointer',display:'flex',alignItems:'center',gap:10,fontSize:13,
                       background:settingsSection===s.id?'rgba(100,255,218,0.08)':'transparent',
@@ -1644,11 +2009,71 @@ export default function Dashboard() {
                   <button onClick={()=>{setShowSettings(false);setShowRuleForm(false);}} style={{background:'none',border:'none',color:'#64748b',fontSize:20,cursor:'pointer',padding:4}}>✕</button>
                 </div>
 
-                {settingsSection==='expense' && (
-                  <div style={{textAlign:'center',padding:'50px 20px',color:'#334155'}}>
-                    <div style={{fontSize:40,marginBottom:12}}>💸</div>
-                    <div style={{fontSize:14}}>Expense Tracking coming soon</div>
-                  </div>
+                {(settingsSection==='expense' || settingsSection==='expensesettings') && (
+                  <>
+                    <div style={{background:'rgba(251,146,60,0.06)',border:'1px solid rgba(251,146,60,0.2)',borderRadius:8,padding:'10px 14px',marginBottom:16,fontSize:12,color:'#fb923c'}}>
+                      💡 StockPilot auto-detects expenses from UPI debit & credit card emails every 30 min. Add rules to focus on specific banks.
+                    </div>
+
+                    {showExpenseRuleForm ? (
+                      <div style={{background:'#060e1a',borderRadius:10,padding:16,border:'1px solid #1e3a5f',marginBottom:14}}>
+                        <div style={{color:'#fb923c',fontWeight:700,fontSize:13,marginBottom:14}}>{editingExpenseRule?'✎ Edit Rule':'+ New Scan Rule'}</div>
+                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+                          <div>
+                            <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>RULE NAME *</label>
+                            <input className="db-input" placeholder="e.g. HDFC Debit Alerts" value={expenseRuleForm.rule_name} onChange={e=>setExpenseRuleForm(p=>({...p,rule_name:e.target.value}))} />
+                          </div>
+                          <div>
+                            <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>BANK SENDER EMAIL</label>
+                            <input className="db-input" placeholder="e.g. alerts@hdfcbank.net" value={expenseRuleForm.email_sender} onChange={e=>setExpenseRuleForm(p=>({...p,email_sender:e.target.value}))} />
+                          </div>
+                        </div>
+                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+                          <div>
+                            <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>SUBJECT CONTAINS</label>
+                            <input className="db-input" placeholder="e.g. Debit Alert" value={expenseRuleForm.subject_pattern} onChange={e=>setExpenseRuleForm(p=>({...p,subject_pattern:e.target.value}))} />
+                          </div>
+                          <div>
+                            <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>SCAN HISTORY</label>
+                            <select className="db-input" style={{background:'#0f1c2e',color:'#e2e8f0',cursor:'pointer'}} value={expenseRuleForm.lookback_months} onChange={e=>setExpenseRuleForm(p=>({...p,lookback_months:e.target.value}))}>
+                              <option value="0">From now</option>
+                              <option value="1">Last 1 month</option>
+                              <option value="3">Last 3 months</option>
+                              <option value="6">Last 6 months</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div style={{display:'flex',gap:8}}>
+                          <button onClick={saveExpenseRule} disabled={expenseRuleSaving}
+                            style={{flex:1,background:'#fb923c',color:'#fff',border:'none',borderRadius:8,padding:'10px',fontWeight:700,fontSize:13,cursor:'pointer'}}>
+                            {expenseRuleSaving?'⟳ Saving…':(editingExpenseRule?'Update':'Save Rule')}
+                          </button>
+                          <button onClick={()=>{setShowExpenseRuleForm(false);setEditingExpenseRule(null);}} style={{padding:'10px 16px',background:'#1e2d3d',color:'#94a3b8',border:'1px solid #334155',borderRadius:8,cursor:'pointer',fontSize:13}}>Cancel</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        {expenseRules.map(r=>(
+                          <div key={r.id} style={{background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,padding:'10px 14px',marginBottom:8,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                            <div>
+                              <span style={{color:'#e2e8f0',fontWeight:600,fontSize:13}}>{r.rule_name}</span>
+                              {r.email_sender&&<span style={{color:'#475569',fontSize:11,marginLeft:8}}>{r.email_sender}</span>}
+                            </div>
+                            <div style={{display:'flex',gap:6}}>
+                              <button onClick={()=>{setEditingExpenseRule(r);setExpenseRuleForm({rule_name:r.rule_name,email_sender:r.email_sender||'',subject_pattern:r.subject_pattern||'',body_pattern:r.body_pattern||'',lookback_months:String(r.lookback_months||0)});setShowExpenseRuleForm(true);}} style={{background:'#1e2d3d',border:'1px solid #334155',color:'#94a3b8',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:11}}>Edit</button>
+                              <button onClick={async()=>{await expenseAPI.deleteRule(r.id);await loadExpenses();}} style={{background:'rgba(244,63,94,0.08)',border:'1px solid rgba(244,63,94,0.2)',color:'#f43f5e',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:11}}>✕</button>
+                            </div>
+                          </div>
+                        ))}
+                        {expenseRules.length===0&&<div style={{textAlign:'center',padding:'16px 0',color:'#334155',fontSize:13,marginBottom:12}}>No rules — default scan catches all debit emails.</div>}
+                        <div style={{display:'flex',gap:10}}>
+                          <button onClick={()=>setShowExpenseRuleForm(true)} style={{flex:1,background:'rgba(251,146,60,0.1)',border:'1px solid rgba(251,146,60,0.3)',color:'#fb923c',borderRadius:8,padding:'10px',fontWeight:700,fontSize:13,cursor:'pointer'}}>+ New Rule</button>
+                          <button onClick={scanExpenses} disabled={expenseScanning} style={{flex:1,background:'#fb923c',border:'none',color:'#fff',borderRadius:8,padding:'10px',fontWeight:700,fontSize:13,cursor:'pointer'}}>{expenseScanning?'⟳ Scanning…':'⟳ Scan Now'}</button>
+                        </div>
+                        {expenseScanResult&&<div style={{marginTop:12,padding:'9px 12px',borderRadius:8,fontSize:12,background:expenseScanResult.success?'rgba(0,212,161,0.08)':'rgba(244,63,94,0.08)',border:`1px solid ${expenseScanResult.success?'rgba(0,212,161,0.2)':'rgba(244,63,94,0.2)'}`,color:expenseScanResult.success?'#00d4a1':'#f43f5e'}}>{expenseScanResult.success?'✅':'⚠'} {expenseScanResult.message}</div>}
+                      </>
+                    )}
+                  </>
                 )}
 
                 {settingsSection==='income' && (
