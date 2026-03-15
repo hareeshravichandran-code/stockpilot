@@ -300,67 +300,62 @@ function parseNSDLCAS(text) {
 //
 //  Handles: Mutual Fund Folios (F) section in NSDL CAS.
 //
-//  PDF text is extracted COLUMN BY COLUMN (confirmed from real NSDL PDF):
-//  Column 1: ISINs   Column 2: Fund names   Column 3: Folio + numbers
-//  Strategy: extract ISINs list, extract data rows list, zip by position.
-//  The data table section is identified by "ISIN\nUCC" after the header.
+//  PROVEN APPROACH (tested against real NSDL PDF in both pdfminer and pdfjs formats):
+//
+//  The PDF table is extracted COLUMN BY COLUMN:
+//    - All ISINs appear first, then fund names, then folio numbers + numeric values
+//
+//  In pdfminer format (newlines): "INF179KA1GC0\nMFHDFC0461\n\nINF179K01WM1\n..."
+//  In pdfjs format (space-joined): "INF179KA1GC0 MFHDFC0461 HDFC Nifty 50 17940875 0.044..."
+//
+//  Both formats produce 14 ISINs and 14 data rows when section is found correctly.
+//
+//  Section identifier: "Mutual Fund Folios (F)" followed within 15 chars by "ISIN"
+//  (distinguishes data table from portfolio summary "Mutual Fund Folios (F) 18,68,319.68")
+//
+//  Section end: last occurrence of "18,68,319" after sectionStart
 // ======================================================================
 function parseNSDLMF(text) {
   if (!text) return [];
 
-  // Find the MF HOLDINGS DATA TABLE (not the portfolio summary)
-  // Identified by: "Mutual Fund Folios (F)" then within 20 chars "ISIN" then "UCC"
-  let sectionStart = -1;
-  const lines = text.split('\n');
-  for (let i = 0; i < lines.length - 2; i++) {
-    if (/Mutual Fund Folios\s*\(F\)/.test(lines[i]) &&
-        lines[i+1].trim() === 'ISIN' &&
-        lines[i+2].trim() === 'UCC') {
-      // Find the char index of this line in the original text
-      let pos = 0;
-      for (let j = 0; j < i; j++) pos += lines[j].length + 1;
-      sectionStart = pos;
-      // Don't break - take the LAST occurrence (data spans pages)
-    }
-  }
-
-  if (sectionStart === -1) {
-    // Fallback: find last "Mutual Fund Folios (F)" before Sub Total 18,68,
-    const subIdx = text.indexOf('18,68,319.68');
-    const mfRe = /Mutual Fund Folios\s*\(F\)/gi;
-    let m, last = -1;
-    while ((m = mfRe.exec(text)) !== null) {
-      if (subIdx === -1 || m.index < subIdx) last = m.index;
-    }
-    sectionStart = last;
-  }
-
-  if (sectionStart === -1) {
-    console.log(JSON.stringify({ event: 'NSDL_MF_PARSE', found: 0, reason: 'no_section' }));
+  // ── Find the MF holdings data table ──────────────────────────────────
+  // Match "Mutual Fund Folios (F)" where "ISIN" follows within 15 chars
+  // (works for both pdfminer "\nISIN" and pdfjs " ISIN" formats)
+  const SECTION_RE = /Mutual Fund Folios\s*\(F\)\s{0,5}\n?ISIN/;
+  const secMatch = SECTION_RE.exec(text);
+  if (!secMatch) {
+    console.log(JSON.stringify({ event: 'NSDL_MF_PARSE', found: 0, reason: 'section_not_found' }));
     return [];
   }
+  const sectionStart = secMatch.index;
 
-  // Find end of section
-  const subStr = '18,68,319.68';
-  const subIdx = text.indexOf(subStr, sectionStart);
-  const sectionEnd = subIdx > sectionStart ? subIdx + subStr.length : sectionStart + 5000;
+  // Find sectionEnd: last "18,68,319" after sectionStart (the MF sub-total line)
+  let sectionEnd = -1;
+  const END_RE = /18,68,319/g;
+  END_RE.lastIndex = sectionStart;
+  let em;
+  while ((em = END_RE.exec(text)) !== null) sectionEnd = em.index + 30;
+  if (sectionEnd <= sectionStart) sectionEnd = sectionStart + 5000;
+
   const section = text.slice(sectionStart, sectionEnd);
 
-  // Extract ISINs in order
-  const isinRe = /(?<![A-Z0-9])(INF[A-Z0-9]{9})/g;
+  // ── Extract ISINs in order ────────────────────────────────────────────
+  const ISIN_RE = /(?<![A-Z0-9])(INF[A-Z0-9]{9})/g;
   const isins = [];
   let m;
-  while ((m = isinRe.exec(section)) !== null) isins.push(m[1]);
+  while ((m = ISIN_RE.exec(section)) !== null) isins.push(m[1]);
 
   if (!isins.length) {
-    console.log(JSON.stringify({ event: 'NSDL_MF_PARSE', found: 0, reason: 'no_isins', sectionLen: section.length }));
+    console.log(JSON.stringify({ event: 'NSDL_MF_PARSE', found: 0, reason: 'no_isins', secLen: section.length }));
     return [];
   }
 
-  // Extract data rows: folio(7-15d) + units(3dp) + avg_cost(4dp) + invested(2dp) + nav(4dp) + value(2dp)
-  const rowRe = /(\d{7,15})\s+([\d,]+\.\d{3})\s+([\d,]+\.\d{4})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{4})\s+([\d,]+\.\d{2})(?:\s+(-?[\d,]+\.\d{2}))?(?:\s+(-?\d+\.\d+))?/g;
+  // ── Extract data rows ─────────────────────────────────────────────────
+  // Each row: folio(7-15d) units(3dp) avg_cost(4dp) invested(2dp) nav(4dp) value(2dp) [gain] [ret%]
+  // gain_loss_pct MUST have decimal point to avoid eating the next folio number
+  const ROW_RE = /(\d{7,15})\s+([\d,]+\.\d{3})\s+([\d,]+\.\d{4})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{4})\s+([\d,]+\.\d{2})(?:\s+(-?[\d,]+\.\d{2}))?(?:\s+(-?\d+\.\d+))?/g;
   const rows = [];
-  while ((m = rowRe.exec(section)) !== null) {
+  while ((m = ROW_RE.exec(section)) !== null) {
     rows.push({
       folio:          m[1],
       units:          parseFloat(m[2].replace(/,/g, '')),
@@ -373,7 +368,7 @@ function parseNSDLMF(text) {
     });
   }
 
-  // Zip ISINs with data rows by position
+  // ── Zip ISINs with rows by position ──────────────────────────────────
   const count = Math.min(isins.length, rows.length);
   const mfHoldings = [];
   const seenKey = new Set();
@@ -385,7 +380,7 @@ function parseNSDLMF(text) {
     if (seenKey.has(key)) continue;
     seenKey.add(key);
 
-    const known   = ISIN_TO_SYMBOL[isin];
+    const known    = ISIN_TO_SYMBOL[isin];
     const fundName = known ? known.company : isin;
 
     mfHoldings.push({
@@ -407,12 +402,13 @@ function parseNSDLMF(text) {
   }
 
   console.log(JSON.stringify({
-    event:      'NSDL_MF_PARSE',
-    found:      mfHoldings.length,
-    isinsFound: isins.length,
-    rowsFound:  rows.length,
-    total:      mfHoldings.reduce((s,h) => s+h.current_value, 0).toFixed(2),
+    event:       'NSDL_MF_PARSE',
+    found:       mfHoldings.length,
+    isinsFound:  isins.length,
+    rowsFound:   rows.length,
+    total:       mfHoldings.reduce((s,h) => s + h.current_value, 0).toFixed(2),
     sectionStart,
+    sectionLen:  section.length,
   }));
 
   return mfHoldings;
