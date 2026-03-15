@@ -298,79 +298,93 @@ function parseNSDLCAS(text) {
 // ══════════════════════════════════════════════════════════════════════
 //  NSDL MF (SOA) PARSER — NEW
 //
-//  Handles: Mutual Fund Statement of Account section in NSDL CAS.
-//  These are SIP/lump-sum MF investments NOT held in demat form.
-//  They have NO ISIN — identified by folio number.
+//  Handles: Mutual Fund Folios (F) section in NSDL CAS.
 //
-//  Row structure (pdfjs space-joined):
-//  FolioNo  FundName  InvestedValue  Units(3dp)  DD-Mon-YYYY  NAV  MarketValue  Gain/Loss
+//  REAL FORMAT (from actual PDF, confirmed from pdfjs extraction):
+//  Each data row is ONE LINE containing:
+//    INF<ISIN>  <partial_name>  <folio>  <units(3dp)>  <avg_cost(4dp)>  <total_cost(2dp)>  <nav(4dp)>  <current_value(2dp)>  [<gain>]  [<return%>]
+//  The scheme name wraps to following lines (e.g. "Index Fund - Direct\nPlan")
+//  but the key numerical data is always on the first line.
 //
-//  Anchor: NAV date in DD-Mon-YYYY format is unique to MF rows.
-//  Units always have exactly 3 decimal places.
-//  Folio is a 7-15 digit number (sometimes with / suffix like "1234567/10").
+//  Anchor: INF ISIN at line start, folio is pure digits (7-15 chars),
+//          units has exactly 3 dp, avg cost has 4 dp, NAV has 4 dp.
 //
 //  Returns array of mfHolding objects → go to mf_holdings table.
 // ══════════════════════════════════════════════════════════════════════
 function parseNSDLMF(text) {
+  if (!text) return [];
+
   const mfHoldings = [];
-  const seen = new Set(); // dedup by folio
+  const seenKey    = new Set(); // dedup by isin+folio
 
-  // Primary regex — folio anchored at line start to prevent cross-line digit bleeding
-  // e.g. "13,319.73\n9876543210 Fund..." must NOT match as folio "73\n9876543210"
-  // Folio: 7-16 pure digits optionally followed by /N suffix
-  // Anchor: NAV date DD-Mon-YYYY is unique to MF rows
-  const MF_ROW_RE = /(?:^|\n)\s*(\d{7,16}(?:\/\d+)?)\s+([A-Z][A-Za-z0-9\s\-&().,]{5,100}?)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{3})\s+(\d{2}-(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-\d{4})\s+([\d,]+\.\d{2,4})\s+([\d,]+\.\d{2})/gm;
+  // ── Section boundary: only process within "Mutual Fund Folios (F)" block ──
+  const sectionStart = text.search(/Mutual Fund Folios\s*\(F\)/i);
+  const sectionEnd   = text.search(/\n(?:Notes:|Transactions\s|Sub Total\s+18)/i);
 
-  // Folio validation — must be 7-16 pure digits, optionally with /N suffix
-  function validFolio(raw) {
-    const t = raw.trim().replace(/\s+/g, '');
-    return /^\d{7,16}(\/\d+)?$/.test(t) ? t : null;
-  }
+  // Use full text if section markers not found (robustness)
+  const mfText = sectionStart >= 0
+    ? text.slice(sectionStart, sectionEnd > sectionStart ? sectionEnd : undefined)
+    : text;
+
+  // ── Primary regex: matches one complete MF folio data row ──
+  // INF ISIN (12 chars) | partial name | folio (7-15 digits) | units (3dp) |
+  //   avg_cost (4dp) | total_cost (2dp) | nav (4dp) | current_value (2dp)
+  //   [unrealised_gain] [annualised_return]
+  const MF_ROW_RE = /^(INF[A-Z0-9]{9})\s+([A-Za-z0-9][\w\s\-&(),./']{2,60}?)\s+(\d{7,15})\s+([\d,]+\.\d{3})\s+([\d,]+\.\d{4})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{4})\s+([\d,]+\.\d{2})(?:\s+(-?[\d,]+\.\d{2}))?(?:\s+(-?[\d.]+))?/gm;
 
   let match;
-  while ((match = MF_ROW_RE.exec(text)) !== null) {
-    const folio      = validFolio(match[1]);
-    if (!folio) continue;  // reject header lines and false positives
-    const fund_name  = match[2].trim().replace(/\s+/g, ' ');
-    const invested   = parseFloat(match[3].replace(/,/g, ''));
-    const units      = parseFloat(match[4].replace(/,/g, ''));
-    const nav_date   = toISODate(match[5]);
-    const nav        = parseFloat(match[6].replace(/,/g, ''));
-    const mkt_value  = parseFloat(match[7].replace(/,/g, ''));
+  while ((match = MF_ROW_RE.exec(mfText)) !== null) {
+    const isin         = match[1];
+    const folio        = match[3].trim();
+    const units        = parseFloat(match[4].replace(/,/g, ''));
+    const avg_cost_unit= parseFloat(match[5].replace(/,/g, ''));
+    const total_cost   = parseFloat(match[6].replace(/,/g, ''));
+    const nav          = parseFloat(match[7].replace(/,/g, ''));
+    const current_val  = parseFloat(match[8].replace(/,/g, ''));
+    const gain_loss    = match[9] != null ? parseFloat(match[9].replace(/,/g, '')) : (current_val - total_cost);
+    const return_pct   = match[10] != null ? parseFloat(match[10]) : null;
 
-    if (!folio || units <= 0) continue;
-    if (seen.has(folio)) continue;
-    seen.add(folio);
+    if (units <= 0) continue;
 
-    // Extract gain/loss from text after this match (within 60 chars)
-    const afterSlice = text.slice(match.index + match[0].length, match.index + match[0].length + 60);
-    const glNeg      = afterSlice.trimStart().startsWith('(');
-    const glAmt      = afterSlice.match(/([\d,]+\.\d{2})/);
-    const glPct      = afterSlice.match(/([+\-][\d.]+)%/);
-    const gainLoss   = glAmt ? parseFloat(glAmt[1].replace(/,/g,'')) * (glNeg ? -1 : 1) : (mkt_value - invested);
-    const gainLossPct= glPct ? parseFloat(glPct[1]) : (invested > 0 ? ((gainLoss / invested) * 100) : null);
+    const key = isin + ':' + folio;
+    if (seenKey.has(key)) continue;
+    seenKey.add(key);
+
+    // Reconstruct fund name by collecting continuation lines after the data line
+    // The partial name on the data line + wrapped lines
+    const lineEnd = match.index + match[0].length;
+    const nextLines = mfText.slice(lineEnd, lineEnd + 200).split('\n');
+    let fundNameParts = [match[2].trim()];
+    for (const l of nextLines.slice(1)) { // skip first (it's part of current line)
+      const t = l.trim();
+      if (!t || /^(INF|MFHDFC|MFKOTAK|MFRILC|MFPPFA|NOT AVAILABLE|Sub Total|Total|Notes)/.test(t)) break;
+      if (/^\d/.test(t)) break; // starts with digit = next data row
+      fundNameParts.push(t);
+    }
+    const fund_name = fundNameParts.join(' ').replace(/\s+/g, ' ').trim();
 
     mfHoldings.push({
+      isin,
       folio_number:   folio,
-      isin:           null,        // SOA MF has no ISIN
       fund_name,
       fund_house:     mfFundHouse(fund_name),
       fund_category:  mfCategory(fund_name),
       units,
       nav,
-      nav_date,
-      current_value:  mkt_value,
-      invested_value: invested > 0 ? invested : null,
-      gain_loss:      gainLoss,
-      gain_loss_pct:  gainLossPct ? parseFloat(gainLossPct.toFixed(2)) : null,
+      nav_date:       null,  // not in this section; date = statement date
+      current_value:  current_val,
+      invested_value: total_cost > 0 ? total_cost : null,
+      avg_cost:       avg_cost_unit,
+      gain_loss,
+      gain_loss_pct:  return_pct,
       source:         'NSDL',
     });
   }
 
   console.log(JSON.stringify({
-    event: 'NSDL_MF_PARSE',
-    found: mfHoldings.length,
-    sample: mfHoldings.slice(0,3).map(h => `${h.fund_name}: ${h.units}u @ ₹${h.nav} = ₹${h.current_value}`),
+    event:  'NSDL_MF_PARSE',
+    found:  mfHoldings.length,
+    sample: mfHoldings.slice(0, 3).map(h => `${h.fund_name?.slice(0,25)}: ${h.units}u@₹${h.nav}=₹${h.current_value}`),
   }));
 
   return mfHoldings;
