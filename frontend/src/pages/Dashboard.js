@@ -879,6 +879,7 @@ export default function Dashboard() {
             const mf       = mfData;
             const holdings = mf?.holdings || [];
             const summary  = mf?.summary  || {};
+            const debug    = mf?.syncDebug || {};
             const fmt      = (v) => v >= 10000000 ? `₹${(v/10000000).toFixed(2)}Cr` : v >= 100000 ? `₹${(v/100000).toFixed(2)}L` : `₹${Number(v||0).toLocaleString('en-IN',{maximumFractionDigits:0})}`;
             const COLORS   = ['#00d4a1','#0ea5e9','#f59e0b','#a78bfa','#f43f5e','#34d399','#fb923c','#818cf8','#e879f9','#4ade80'];
             const pieData  = summary.byFundHouse || [];
@@ -887,6 +888,18 @@ export default function Dashboard() {
             return (
               <div className="fade-in">
 
+
+                {/* ── Sync Debug Panel ── */}
+                {debug.lastStatus && (
+                  <div style={{ background: debug.lastStatus === 'MF_BULK_OK' ? 'rgba(0,212,161,0.06)' : 'rgba(244,63,94,0.06)',
+                    border: `1px solid ${debug.lastStatus === 'MF_BULK_OK' ? 'rgba(0,212,161,0.2)' : 'rgba(244,63,94,0.2)'}`,
+                    borderRadius:8, padding:'10px 14px', marginBottom:12, fontSize:12 }}>
+                    <span style={{ color: debug.lastStatus === 'MF_BULK_OK' ? '#00d4a1' : '#f43f5e', fontWeight:700 }}>
+                      {debug.lastStatus === 'MF_BULK_OK' ? '✅ ' : '❌ '}{debug.lastStatus}
+                    </span>
+                    <span style={{ color:'#64748b', marginLeft:8 }}>{debug.lastMessage?.slice(0,120)}</span>
+                  </div>
+                )}
 
                 {/* ── Action bar ── */}
                 <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:20, flexWrap:'wrap' }}>
