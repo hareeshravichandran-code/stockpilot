@@ -553,8 +553,8 @@ export default function Dashboard() {
 
           <div className="db-nav-label" style={{marginTop:12}}>Finance</div>
           {[
-            { id:'income',    icon:'₹',  label:'Income' },
-          { id:'expenses',  icon:'💸', label:'Expenses' },
+            { id:'income',   icon:'₹',  label:'Income' },
+            { id:'expenses', icon:'💸', label:'Expenses' },
           ].map(n => (
             <div key={n.id} className={`db-nav-item ${tab === n.id ? 'active' : ''}`}
               onClick={() => loadTab(n.id)}>
