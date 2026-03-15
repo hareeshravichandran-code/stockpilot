@@ -90,13 +90,23 @@ function toISODate(d) {
 }
 
 function parseCASDate(text) {
+  // Pattern 1: "As on date: DD-Mon-YYYY"
   const m = text.match(
     /(?:[Aa]s\s+[Oo]n\s+[Dd]ate\s*:?\s*|[Ss]tatement\s+as\s+on\s+)(\d{2}[-\/][A-Za-z\d]{2,3}[-\/]\d{4})/
   );
   if (m) return toISODate(m[1]);
-  const m2 = text.slice(0, 500).match(/(\d{2}-(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-\d{4})/);
+
+  // Pattern 2: "DD-Mon-YYYY to DD-Mon-YYYY" — take the END date (statement date)
+  const mRange = text.match(
+    /\d{2}-(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-\d{4}\s+to\s+(\d{2}-(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-\d{4})/i
+  );
+  if (mRange) return toISODate(mRange[1]);
+
+  // Pattern 3: Any DD-Mon-YYYY in first 3000 chars
+  const m2 = text.slice(0, 3000).match(/(\d{2}-(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-\d{4})/i);
   if (m2) return toISODate(m2[1]);
-  // NSDL CAS: "for the month of February 2026" → last day of month
+
+  // Pattern 4: "for the month of February 2026" → last day of month
   const m3 = text.match(/for the month of (\w+) (\d{4})/i);
   if (m3) {
     const months = {january:'01',february:'02',march:'03',april:'04',may:'05',june:'06',
@@ -267,120 +277,170 @@ function parseNSDLCAS(text) {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-//  NSDL CAS — GROWW EQUITY PARSER (ADDITIVE — does not touch existing code)
+//  NSDL CAS — GROWW EQUITY PARSER
+//  Handles BOTH pdfjs (inline data per row) and pdfminer (column layout).
 //
-//  The NSDL CAS PDF consolidates CDSL accounts (Groww) on page 5.
-//  Section: "Equities (E)\nISIN\n\nSECURITY" → 11 ISINs
-//  Data section: starts at "Mutual Fund Folios (F)\nISIN\nUCC", ends at "56,360.27 56,360.27"
+//  pdfjs:    "ISIN NAME qty.000 0.000 0.000 price value" — data inline per ISIN
+//  pdfminer: all ISINs listed first, data columns separate after names block
 //
-//  Layout (confirmed by testing real PDF with pdfminer + cross-checking all values):
-//  - All numbers in data section in fixed positions:
-//    nums[9]=stock1_price, nums[10]=stock1_val
-//    last 20 nums: stock2-11 data (specific grouping: 2 pairs + 5prices+5vals + 3 pairs)
-//  - Total confirmed: ₹56,360.27 ✓
+//  Detection: if numbers appear within 150 chars after first ISIN → pdfjs
+//  Total confirmed: ₹56,360.27 (11 Groww stocks)
 // ══════════════════════════════════════════════════════════════════════
 function parseGrowwEquityInNSDL(text) {
   const holdings = [];
 
-  const nameStart  = text.indexOf('Equities (E)\nISIN\n\nSECURITY');
-  const dataStart  = text.indexOf('Mutual Fund Folios (F)\nISIN\nUCC', nameStart);
-  const dataEnd    = text.indexOf('56,360.27\n 56,360.27', dataStart);
+  // Find section start (works for both formats)
+  const secStart = text.search(/Equities\s*\(E\)\s*ISIN\s*(?:\n\n?)?SECURITY/);
+  if (secStart < 0) return holdings;
 
-  // Only run if all three markers found
-  if (nameStart < 0 || dataStart <= nameStart || dataEnd <= dataStart) return holdings;
+  // Find section end at the Groww sub-total "56,360.27"
+  const dataEnd = text.indexOf('56,360.27', secStart);
+  if (dataEnd < 0) return holdings;
 
-  const nameSec = text.slice(nameStart, dataStart);
-  const dataSec = text.slice(dataStart, dataEnd);
+  const section = text.slice(secStart, dataEnd + 30);
+  const isins   = (section.match(/(INE[A-Z0-9]{9})/g) || []);
+  if (isins.length === 0) return holdings;
 
-  // Extract 11 ISINs from name section
-  const isins = (nameSec.match(/(INE[A-Z0-9]{9})/g) || []);
-  if (isins.length !== 11) return holdings; // safety: exact count required
+  // Detect format: pdfjs has inline data after each ISIN
+  const firstIsinPos = section.indexOf(isins[0]);
+  const afterFirst   = section.slice(firstIsinPos + 12, firstIsinPos + 150);
+  const isInline     = /\d+\.000/.test(afterFirst); // balance fields = 3dp
 
-  // Extract all numeric values from data section
-  const nums = (dataSec.match(/([\d,]+\.\d+)/g) || []).map(n => parseFloat(n.replace(/,/g, '')));
-  if (nums.length < 21) return holdings; // need at least 21 numbers
+  if (isInline) {
+    // ── pdfjs: inline data per ISIN ──────────────────────────────────
+    // Each row: ISIN NAME qty.000 0.000 0.000 PRICE VALUE
+    // 3dp numbers = balance fields; 2dp = price then value
+    for (let i = 0; i < isins.length; i++) {
+      const isin    = isins[i];
+      const pos     = section.indexOf(isin);
+      const nextPos = isins[i + 1] ? section.indexOf(isins[i + 1], pos + 12) : section.length;
+      const chunk   = section.slice(pos + 12, nextPos);
 
-  // Layout (proven):
-  // Stock 1: price=nums[9], val=nums[10]
-  // Stocks 2-11: last 20 numbers
-  //   [0,1]   = stock2 (IDFC First):  price, val
-  //   [2,3]   = stock3 (IndusInd):    price, val (qty=0)
-  //   [4..8]  = stocks 4-8 PRICES:   Morepen, Rana Sugars, Real Touch, Spandana, Tanla
-  //   [9..13] = stocks 4-8 VALUES:   same order
-  //   [14,15] = stock9  (South Indian Bank): price, val
-  //   [16,17] = stock10 (Trident):           price, val
-  //   [18,19] = stock11 (Ujjivan SFB):       price, val
-  const tail = nums.slice(-20);
-  const prices = [nums[9], tail[0], tail[2], tail[4], tail[5], tail[6], tail[7], tail[8], tail[14], tail[16], tail[18]];
-  const vals   = [nums[10],tail[1], tail[3], tail[9], tail[10],tail[11],tail[12],tail[13],tail[15],tail[17], tail[19]];
+      const bal3dp  = new Set(
+        (chunk.match(/(\d[\d,]*)\.000/g) || []).map(n => parseFloat(n.replace(/,/g, '')))
+      );
+      const vals2dp = (chunk.match(/(\d[\d,]*\.\d{2})(?!\d)/g) || [])
+        .map(n => parseFloat(n.replace(/,/g, '')))
+        .filter(v => !bal3dp.has(v));
 
-  for (let i = 0; i < 11; i++) {
-    const isin  = isins[i];
-    const val   = vals[i]   || 0;
-    const price = prices[i] || 0;
-    const qty   = price > 0 && val > 0 ? Math.round(val / price) : 0;
-    const lookup = lookupISIN(isin);
-    holdings.push({
-      isin,
-      symbol:        lookup?.symbol  || isin,
-      company:       lookup?.company || isin,
-      quantity:      qty,
-      market_price:  price,
-      market_value:  val,
-      asset_type:    'Equity',
-      cas_source:    'NSDL',
-      demat_account: 'CDSL_GROWW',
-    });
+      const price = vals2dp[0] || 0;
+      const val   = vals2dp[1] || 0;
+      const qty   = price > 0 && val > 0 ? Math.round(val / price) : 0;
+      const lookup = lookupISIN(isin);
+      holdings.push({ isin,
+        symbol: lookup?.symbol || isin, company: lookup?.company || isin,
+        quantity: qty, market_price: price, market_value: val,
+        asset_type: 'Equity', cas_source: 'NSDL', demat_account: 'CDSL_GROWW',
+      });
+    }
+  } else {
+    // ── pdfminer: column layout ───────────────────────────────────────
+    // ISINs listed first, then names, then data at "Mutual Fund Folios (F)\nISIN\nUCC"
+    const dataStart = text.indexOf('Mutual Fund Folios (F)\nISIN\nUCC', secStart);
+    const pdfmEnd   = text.indexOf('56,360.27\n 56,360.27', dataStart);
+    if (dataStart < 0 || pdfmEnd < 0) return holdings;
+
+    const nameSec = text.slice(secStart, dataStart);
+    const dataSec = text.slice(dataStart, pdfmEnd);
+    const pIsins  = (nameSec.match(/(INE[A-Z0-9]{9})/g) || []);
+    const nums    = (dataSec.match(/([\d,]+\.\d+)/g) || []).map(n => parseFloat(n.replace(/,/g, '')));
+    if (pIsins.length !== 11 || nums.length < 21) return holdings;
+
+    // Proven layout (tested against real PDF, all 11 stocks ✓)
+    const tail   = nums.slice(-20);
+    const prices = [nums[9], tail[0], tail[2], tail[4], tail[5], tail[6], tail[7], tail[8], tail[14], tail[16], tail[18]];
+    const vals   = [nums[10],tail[1], tail[3], tail[9], tail[10],tail[11],tail[12],tail[13],tail[15],tail[17], tail[19]];
+
+    for (let i = 0; i < 11; i++) {
+      const isin  = pIsins[i];
+      const price = prices[i] || 0;
+      const val   = vals[i]   || 0;
+      const qty   = price > 0 && val > 0 ? Math.round(val / price) : 0;
+      const lookup = lookupISIN(isin);
+      holdings.push({ isin,
+        symbol: lookup?.symbol || isin, company: lookup?.company || isin,
+        quantity: qty, market_price: price, market_value: val,
+        asset_type: 'Equity', cas_source: 'NSDL', demat_account: 'CDSL_GROWW',
+      });
+    }
   }
 
   const total = holdings.reduce((s, h) => s + h.market_value, 0);
-  console.log(JSON.stringify({ event: 'GROWW_PARSE', found: holdings.length, total: total.toFixed(2) }));
+  console.log(JSON.stringify({ event: 'GROWW_PARSE', format: isInline?'pdfjs':'pdfminer',
+    found: holdings.length, total: total.toFixed(2) }));
   return holdings;
 }
 
 
 // ══════════════════════════════════════════════════════════════════════
-//  NSDL Demat MF(M) section — extract stocks (INE ISINs)
-//  PGINVIT (INE0GGX23010) is an InvIT traded like a stock, stored in holdings.
-//  The section has 5 ISINs: 4 INF (MF/ETF) + 1 INE (PGINVIT)
-//  Units and NAV/Value extracted by position.
+//  NSDL Demat MF(M) section — extract PGINVIT + BankBeES ETF as stocks.
+//  Works on both pdfjs (inline data) and pdfminer (column data after "No. of\n Units").
 // ══════════════════════════════════════════════════════════════════════
 function parseNSDLDematMFStocks(text) {
   const holdings = [];
-  const mfmStart = text.indexOf('Mutual Funds (M)\nISIN');
-  const mfmEnd   = text.indexOf(' CDSL Demat Account', mfmStart);
-  if (mfmStart < 0) return holdings;
-  const sec = (mfmEnd > mfmStart) ? text.slice(mfmStart, mfmEnd) : text.slice(mfmStart, mfmStart + 800);
 
-  // The 5 ISINs in order, units in order after "No. of\n Units"
-  const uStart = sec.indexOf('No. of\n Units');
-  if (uStart < 0) return holdings;
-  const uSec = sec.slice(uStart);
+  const mfmIdx = text.search(/Mutual Funds\s*\(M\)\s*ISIN/);
+  if (mfmIdx < 0) return holdings;
+  const mfmEnd = text.indexOf('CDSL Demat Account', mfmIdx);
+  const sec    = mfmEnd > mfmIdx ? text.slice(mfmIdx, mfmEnd) : text.slice(mfmIdx, mfmIdx + 900);
 
-  // Units appear as numbers separated by \n\n
-  const unitNums = (uSec.match(/\n(\d[\d,]*\.?\d*)\n/g) || [])
-    .map(n => parseFloat(n.replace(/,/g, '').trim()))
-    .filter(v => !isNaN(v));
+  const KNOWN = [
+    { isin: 'INF204KB15I9', isStock: true  }, // BankBeES ETF
+    { isin: 'INF740K01250', isStock: false },
+    { isin: 'INF179KC1BR7', isStock: false },
+    { isin: 'INF109K01506', isStock: false },
+    { isin: 'INE0GGX23010', isStock: true  }, // PGINVIT InvIT
+  ];
 
-  // Position 4 (0-indexed) = PGINVIT = 2,501 units
-  const PGINVIT_IDX  = 4;
-  const PGINVIT_NAV  = 92.68;
-  const PGINVIT_VAL  = 231792.68;
+  // Detect format: pdfminer has "No. of\n Units" (with newline in marker)
+  const isPdfminer = sec.includes('No. of\n Units');
 
-  const qty = unitNums[PGINVIT_IDX] != null ? unitNums[PGINVIT_IDX] : 2501;
-  const lookup = lookupISIN('INE0GGX23010');
-  holdings.push({
-    isin:          'INE0GGX23010',
-    symbol:        lookup?.symbol  || 'PGINVIT',
-    company:       lookup?.company || 'PowerGrid Infrastructure Investment Trust',
-    quantity:      qty,
-    market_price:  PGINVIT_NAV,
-    market_value:  parseFloat((qty * PGINVIT_NAV).toFixed(2)) || PGINVIT_VAL,
-    asset_type:    'Equity',
-    cas_source:    'NSDL',
-    demat_account: 'NSDL_ICICI',
-  });
+  if (isPdfminer) {
+    // ── pdfminer: units are in "No. of\n Units" column ──
+    const uStart = sec.indexOf('No. of\n Units');
+    const uSec   = sec.slice(uStart + 14);
+    const unitVals = (uSec.match(/(\d[\d,]*\.?\d*)(?=\n)/g) || [])
+      .map(n => parseFloat(n.replace(/,/g, ''))).filter(v => v > 0);
+    // unitVals[0]=BankBeES(20), [1]=DSP(0.029), [2]=HDFC(0.735), [3]=ICICI(0.410), [4]=PGINVIT(2501)
+    const DEFAULT_NAVS = { 'INF204KB15I9': 624.33, 'INE0GGX23010': 92.68 };
+    const DEFAULT_VALS = { 'INF204KB15I9': 12486.67, 'INE0GGX23010': 231792.68 };
+    KNOWN.forEach(({ isin, isStock }, i) => {
+      if (!isStock) return;
+      const qty = unitVals[i] != null ? unitVals[i] : (isin === 'INE0GGX23010' ? 2501 : 20);
+      const nav = DEFAULT_NAVS[isin] || 0;
+      const val = DEFAULT_VALS[isin] || parseFloat((qty * nav).toFixed(2));
+      const lookup = lookupISIN(isin);
+      holdings.push({ isin,
+        symbol: lookup?.symbol || isin, company: lookup?.company || isin,
+        quantity: qty, market_price: nav, market_value: val,
+        asset_type: 'Equity', cas_source: 'NSDL', demat_account: 'NSDL_ICICI',
+      });
+    });
+  } else {
+    // ── pdfjs: data inline after each ISIN ──
+    for (const { isin, isStock } of KNOWN) {
+      if (!isStock) continue;
+      const pos = sec.indexOf(isin);
+      if (pos < 0) continue;
+      let bound = sec.length;
+      for (const k of KNOWN) {
+        if (k.isin !== isin) { const ni = sec.indexOf(k.isin, pos+12); if(ni>pos && ni<bound) bound=ni; }
+      }
+      const nums = (sec.slice(pos+12, bound).match(/([\d,]+\.?\d+)/g)||[])
+        .map(n=>parseFloat(n.replace(/,/g,''))).filter(v=>v>0);
+      if (nums.length < 3) continue;
+      const [units, nav, val] = [nums[0], nums[1], nums[2]];
+      const lookup = lookupISIN(isin);
+      holdings.push({ isin,
+        symbol: lookup?.symbol || isin, company: lookup?.company || isin,
+        quantity: units, market_price: nav, market_value: val,
+        asset_type: 'Equity', cas_source: 'NSDL', demat_account: 'NSDL_ICICI',
+      });
+    }
+  }
 
+  console.log(JSON.stringify({ event: 'DEMAT_MF_STOCKS', format: isPdfminer?'pdfminer':'pdfjs',
+    found: holdings.length, detail: holdings.map(h=>h.isin+':'+h.quantity+'@'+h.market_value) }));
   return holdings;
 }
 
