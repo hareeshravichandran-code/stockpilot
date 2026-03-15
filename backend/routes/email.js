@@ -435,10 +435,54 @@ async function saveCASHoldings(userId, holdings, mfHoldings, casDate) {
   }
 
   // ── Step 2: SOA MF holdings → mf_holdings table ───────────────
-  // These are folio-based (no ISIN) from NSDL MF SOA section
-  for (const h of (mfHoldings || [])) {
-    const saved_ok = await saveSingleMF(userId, h, statementDate);
-    if (saved_ok) saved++;
+  // DELETE all existing MF holdings for this user first, then bulk INSERT
+  // This avoids ALL constraint issues completely.
+  if (mfHoldings && mfHoldings.length > 0) {
+    // Delete existing NSDL MF holdings for clean slate
+    await supabase.from('mf_holdings').delete()
+      .eq('user_id', userId).eq('source', 'NSDL');
+
+    // Build all records
+    const records = mfHoldings.map(h => ({
+      user_id:        userId,
+      isin:           h.isin           || null,
+      folio_number:   h.folio_number   || null,
+      fund_name:      h.fund_name      || h.company || 'Unknown Fund',
+      fund_house:     h.fund_house     || null,
+      fund_category:  h.fund_category  || null,
+      units:          h.units          || h.quantity || 0,
+      nav:            h.nav            || h.market_price || null,
+      current_value:  h.current_value  || null,
+      invested_value: h.invested_value || null,
+      gain_loss:      h.gain_loss      || null,
+      source:         h.source         || 'NSDL',
+      statement_date: statementDate,
+      cas_updated_at: new Date().toISOString(),
+      updated_at:     new Date().toISOString(),
+    }));
+
+    // Insert all in one batch
+    const { data: inserted, error: bulkErr } = await supabase
+      .from('mf_holdings').insert(records).select('id');
+
+    if (bulkErr) {
+      console.error('[MF_BULK_ERROR] ' + bulkErr.message + ' code=' + bulkErr.code);
+      console.error(JSON.stringify({ event: 'MF_BULK_ERROR', error: bulkErr.message, code: bulkErr.code, details: bulkErr.details }));
+      // Fallback: insert one by one to save what we can
+      for (const rec of records) {
+        const { error: singleErr } = await supabase.from('mf_holdings').insert(rec);
+        if (singleErr) {
+          console.error('[MF_SINGLE_ERROR] ' + rec.fund_name + ' err=' + singleErr.message);
+        } else {
+          saved++;
+          console.log('[MF_SAVE_OK] ' + rec.fund_name?.slice(0,40) + ' folio=' + rec.folio_number);
+        }
+      }
+    } else {
+      saved += (inserted?.length || records.length);
+      console.log('[MF_BULK_OK] Saved ' + (inserted?.length || records.length) + ' MF holdings');
+      records.forEach(r => console.log('[MF_SAVE_OK] ' + r.fund_name?.slice(0,40) + ' folio=' + r.folio_number + ' units=' + r.units));
+    }
   }
 
   console.log(JSON.stringify({
