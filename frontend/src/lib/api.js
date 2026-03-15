@@ -78,4 +78,19 @@ export const incomeAPI = {
   getBanks:    ()          => api.get('/api/income/banks'),
 };
 
+export const expenseAPI = {
+  getEntries:   (p)         => api.get('/api/expense/entries', { params: p }),
+  addEntry:     (data)      => api.post('/api/expense/entries', data),
+  updateEntry:  (id, data)  => api.put(`/api/expense/entries/${id}`, data),
+  deleteEntry:  (id)        => api.delete(`/api/expense/entries/${id}`),
+  uploadReceipt:(id, form)  => api.post(`/api/expense/entries/${id}/receipt`, form, { headers:{'Content-Type':'multipart/form-data'} }),
+  scan:         ()          => api.post('/api/expense/scan'),
+  categorize:   (data)      => api.post('/api/expense/categorize', data),
+  getRules:     ()          => api.get('/api/expense/rules'),
+  createRule:   (data)      => api.post('/api/expense/rules', data),
+  updateRule:   (id, data)  => api.put(`/api/expense/rules/${id}`, data),
+  deleteRule:   (id)        => api.delete(`/api/expense/rules/${id}`),
+  categories:   ()          => api.get('/api/expense/categories'),
+};
+
 export default api;
