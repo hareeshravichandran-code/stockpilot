@@ -52,6 +52,15 @@ router.get('/', requireAuth, async (req, res) => {
     byCategory[cat]    = (byCategory[cat]    || 0) + (h.current_value || 0);
   }
 
+  // Fetch last MF sync logs for debug
+  const { data: syncLogs } = await supabase
+    .from('sync_logs')
+    .select('phase, error_type, error_message, logged_at')
+    .eq('user_id', req.user.id)
+    .in('error_type', ['MF_BULK_OK', 'MF_BULK_ERROR', 'MF_SINGLE_ERROR'])
+    .order('logged_at', { ascending: false })
+    .limit(5);
+
   res.json({
     holdings,
     summary: {
@@ -66,6 +75,13 @@ router.get('/', requireAuth, async (req, res) => {
       byCategory:    Object.entries(byCategory)
                        .map(([name, value]) => ({ name, value: Math.round(value) }))
                        .sort((a, b) => b.value - a.value),
+    },
+    syncDebug: {
+      rowCount:    holdings.length,
+      lastStatus:  syncLogs?.[0]?.error_type  || 'NO_SYNC_YET',
+      lastMessage: syncLogs?.[0]?.error_message || null,
+      lastSyncAt:  syncLogs?.[0]?.logged_at   || null,
+      logs:        syncLogs || [],
     }
   });
 });
