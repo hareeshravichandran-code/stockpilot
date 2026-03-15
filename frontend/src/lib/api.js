@@ -71,10 +71,11 @@ export const incomeAPI = {
   updateRule:  (id, data)  => api.put(`/api/income/rules/${id}`, data),
   deleteRule:  (id)        => api.delete(`/api/income/rules/${id}`),
   scan:        ()          => api.post('/api/income/scan'),
-  getEntries:  ()          => api.get('/api/income/entries'),
+  getEntries:  (p)         => api.get('/api/income/entries', { params: p }),
   addEntry:    (data)      => api.post('/api/income/entries', data),
   deleteEntry: (id)        => api.delete(`/api/income/entries/${id}`),
   categories:  ()          => api.get('/api/income/categories'),
+  getBanks:    ()          => api.get('/api/income/banks'),
 };
 
 export default api;
