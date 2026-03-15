@@ -317,8 +317,22 @@ function parseNSDLMF(text) {
   const mfHoldings = [];
   const seenKey    = new Set(); // dedup by isin+folio
 
-  // ── Section boundary: only process within "Mutual Fund Folios (F)" block ──
-  const sectionStart = text.search(/Mutual Fund Folios\s*\(F\)/i);
+  // ── Section boundary: find the MF HOLDINGS TABLE, not the summary ──
+  // The PDF has TWO "Mutual Fund Folios (F)" occurrences:
+  //   1. Portfolio composition summary: "Mutual Fund Folios (F) 18,68,319.68 55.30%"
+  //   2. Actual data table:             "Mutual Fund Folios (F) ISIN ISIN Description..."
+  // We MUST find the second one — identified by "ISIN" immediately after.
+  const sectionStart = (() => {
+    const re = /Mutual Fund Folios\s*\(F\)\s+ISIN/i;
+    const m = text.search(re);
+    if (m >= 0) return m;
+    // Fallback: find last occurrence of "Mutual Fund Folios (F)"
+    let last = -1, pos = 0;
+    const simple = /Mutual Fund Folios\s*\(F\)/ig;
+    let sm;
+    while ((sm = simple.exec(text)) !== null) last = sm.index;
+    return last;
+  })();
   const sectionEnd   = text.search(/\n(?:Notes:|Transactions\s|Sub Total\s+18)/i);
 
   // Use full text if section markers not found (robustness)
