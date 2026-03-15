@@ -53,7 +53,22 @@ const ISIN_TO_SYMBOL = {
   'INE064C01022': { symbol: 'TRIDENT',     company: 'Trident Limited' },
   'INE551W01018': { symbol: 'UJJIVAN',     company: 'Ujjivan Small Finance Bank Limited' },
   'INF204KB15I9': { symbol: 'BANKBEES',    company: 'Nippon India ETF Nifty Bank BeES' },
-  'INF879O01027': { symbol: 'PPFCF',       company: 'Parag Parikh Flexi Cap Fund (Direct-Growth)' },
+  'INF879O01027': { symbol: 'PPFCF',       company: 'Parag Parikh Flexi Cap Fund - Direct Plan Growth' },
+  // ── NSDL MF Folio ISINs — fund names confirmed from real PDF ───────────
+  'INF179KA1GC0': { symbol: 'HDFCCRED',   company: 'HDFC Credit Risk Debt Fund - Regular Plan - Growth' },
+  'INF179K01WM1': { symbol: 'HDFCNF50',   company: 'HDFC Nifty 50 Index Fund - Direct Plan' },
+  'INF179K01YM7': { symbol: 'HDFCSTD',    company: 'HDFC Short Term Debt Fund - Direct Plan - Growth' },
+  'INF109KC1U50': { symbol: 'ICICINASD',  company: 'ICICI Prudential NASDAQ 100 Index Fund - Direct Plan - Growth' },
+  'INF174K01KT2': { symbol: 'KOTAKSC',    company: 'Kotak Small Cap Fund - Direct Plan - Growth' },
+  'INF204K01L55': { symbol: 'NIPPONELSS', company: 'Nippon India ELSS Tax Saver Fund - Direct Plan Growth' },
+  'INF204K01E54': { symbol: 'NIPPONMID',  company: 'Nippon India Growth Mid Cap Fund - Direct Growth Plan' },
+  'INF959L01FP2': { symbol: 'NAVINF50',   company: 'Navi Nifty 50 Index Fund - Direct Plan - Growth' },
+  'INF959L01FX6': { symbol: 'NAVIMID150', company: 'Navi Nifty Midcap 150 Index Fund - Direct Plan - Growth' },
+  'INF966L01614': { symbol: 'QUANTMC',    company: 'quant Multi Cap Fund - Direct Plan' },
+  'INF179KC1BR7': { symbol: 'HDFCNN50',   company: 'HDFC Nifty Next 50 Index Fund - Regular Plan Growth' },
+  'INF740K01250': { symbol: 'DSPGOLD',    company: 'DSP World Gold Fund - Regular Plan Growth' },
+  'INF109K01506': { symbol: 'ICICIPTECH', company: 'ICICI Prudential Technology Fund Growth' },
+  'INF204KB15I9': { symbol: 'BANKBEES',   company: 'Nippon India ETF Nifty Bank BeES' },
 };
 
 function lookupISIN(isin) { return ISIN_TO_SYMBOL[isin] || null; }
