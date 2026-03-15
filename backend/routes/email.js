@@ -647,11 +647,11 @@ router.get('/failures', requireAuth, async (req, res) => {
 
 
 // ── MF Debug: diagnose mf_holdings table ─────────────────────────────
-router.get('/debug-mf', requireAuth, async (req, res) => {
+router.get('/debug-mf', async (req, res) => {
   const supabase = require('../services/supabase');
   const results = {};
 
-  // 1. Check if table exists and count rows
+  // 1. Check if table exists and count rows (no user filter — just test the table)
   try {
     const { data, error, count } = await supabase
       .from('mf_holdings').select('*', { count: 'exact', head: true });
@@ -663,10 +663,11 @@ router.get('/debug-mf', requireAuth, async (req, res) => {
     results.tableException = e.message;
   }
 
-  // 2. Try a test insert to see exact error
+  // 2. Try a test insert with a fixed dummy user_id to see exact error
+  const DUMMY_UUID = '00000000-0000-0000-0000-000000000001';
   if (results.tableExists) {
     const testRecord = {
-      user_id: req.user.id,
+      user_id: DUMMY_UUID,
       isin: 'TEST_ISIN_DELETE_ME',
       folio_number: 'TEST_FOLIO',
       fund_name: 'Test Fund DELETE ME',
@@ -678,21 +679,19 @@ router.get('/debug-mf', requireAuth, async (req, res) => {
       ? { success: false, error: insErr.message, code: insErr.code, details: insErr.details, hint: insErr.hint }
       : { success: true, id: ins?.[0]?.id };
 
-    // Clean up test row
+    // Clean up test row immediately
     if (!insErr && ins?.[0]?.id) {
       await supabase.from('mf_holdings').delete().eq('id', ins[0].id);
+      results.insertTest.cleaned = true;
     }
   }
 
-  // 3. Show sample rows
+  // 3. Show all rows (first 10)
   if (results.tableExists) {
     const { data: rows } = await supabase.from('mf_holdings')
-      .select('isin, folio_number, fund_name, units, source').eq('user_id', req.user.id).limit(5);
+      .select('isin, folio_number, fund_name, units, source').limit(10);
     results.sampleRows = rows || [];
   }
-
-  // 4. Show current user_id
-  results.userId = req.user.id;
 
   return res.json(results);
 });
