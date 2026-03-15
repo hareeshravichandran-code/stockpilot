@@ -469,24 +469,24 @@ async function saveCASHoldings(userId, holdings, mfHoldings, casDate) {
       console.error('[MF_BULK_ERROR] ' + bulkErr.message + ' code=' + bulkErr.code);
       console.error(JSON.stringify({ event: 'MF_BULK_ERROR', error: bulkErr.message, code: bulkErr.code, details: bulkErr.details }));
       // Store error in sync_logs for visibility
-      await supabase.from('sync_logs').insert({
+      try { await supabase.from('sync_logs').insert({
         user_id: userId, session_id: 'mf-bulk-' + Date.now(),
         phase: 'mf_bulk_save', error_type: 'MF_BULK_ERROR',
         error_message: bulkErr.message + ' code=' + bulkErr.code,
         logged_at: new Date().toISOString(),
-      }).catch(() => {});
+      }); } catch(e) {}
       // Fallback: insert one by one to save what we can
       for (const rec of records) {
         const { error: singleErr } = await supabase.from('mf_holdings').insert(rec);
         if (singleErr) {
           console.error('[MF_SINGLE_ERROR] ' + rec.fund_name + ' err=' + singleErr.message);
-          await supabase.from('sync_logs').insert({
+          try { await supabase.from('sync_logs').insert({
             user_id: userId, session_id: 'mf-single-' + Date.now(),
             phase: 'mf_single_save', error_type: 'MF_SINGLE_ERROR',
             error_message: rec.fund_name + ' folio=' + rec.folio_number + ' err=' + singleErr.message,
             email_subject: rec.isin,
             logged_at: new Date().toISOString(),
-          }).catch(() => {});
+          }); } catch(e) {}
         } else {
           saved++;
           console.log('[MF_SAVE_OK] ' + rec.fund_name?.slice(0,40) + ' folio=' + rec.folio_number);
@@ -497,13 +497,13 @@ async function saveCASHoldings(userId, holdings, mfHoldings, casDate) {
       console.log('[MF_BULK_OK] Saved ' + (inserted?.length || records.length) + ' MF holdings');
       records.forEach(r => console.log('[MF_SAVE_OK] ' + r.fund_name?.slice(0,40) + ' folio=' + r.folio_number + ' units=' + r.units));
       // Store success in sync_logs
-      await supabase.from('sync_logs').insert({
+      try { await supabase.from('sync_logs').insert({
         user_id: userId, session_id: 'mf-ok-' + Date.now(),
         phase: 'mf_bulk_save', error_type: 'MF_BULK_OK',
         error_message: 'Saved ' + (inserted?.length || records.length) + ' MF holdings: ' +
           records.map(r => r.fund_name?.slice(0,20) + '(folio=' + r.folio_number + ')').join(', '),
         logged_at: new Date().toISOString(),
-      }).catch(() => {});
+      }); } catch(e) {}
     }
   }
 
