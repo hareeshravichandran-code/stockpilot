@@ -54,22 +54,32 @@ export default function Dashboard() {
   const [mfData, setMfData]                   = useState(null);
   const [mfLoading, setMfLoading]             = useState(false);
 
-  // ── Income Settings state ────────────────────────────────────────
+  // ── Income state ────────────────────────────────────────────────
+  const [showSettings, setShowSettings]             = useState(false);
+  const [settingsSection, setSettingsSection]       = useState('income'); // 'income' | 'expense'
   const [showIncomeSettings, setShowIncomeSettings] = useState(false);
   const [incomeRules, setIncomeRules]               = useState([]);
-  const [incomeSummary, setIncomeSummary]           = useState({ currentFYTotal:0, thisMonthTotal:0, byCategory:{} });
+  const [incomeSummary, setIncomeSummary]           = useState({ currentFYTotal:0, thisMonthTotal:0, byCategory:{}, byMonth:{}, fyLabel:'FY26' });
   const [incomeEntries, setIncomeEntries]           = useState([]);
   const [incomeScanning, setIncomeScanning]         = useState(false);
   const [incomeScanResult, setIncomeScanResult]     = useState(null);
   const [showRuleForm, setShowRuleForm]             = useState(false);
   const [editingRule, setEditingRule]               = useState(null);
-  const [ruleForm, setRuleForm] = useState({
-    rule_name:'', category:'Salary', bank_sender:'', subject_pattern:'',
-    body_pattern:'', account_last4:'', min_amount:'', period:'monthly', remark:''
-  });
+  const [indianBanks, setIndianBanks]               = useState([]);
+  const [showManualEntry, setShowManualEntry]       = useState(false);
+  const [manualEntryForm, setManualEntryForm]       = useState({ category:'Salary', amount:'', credited_on: new Date().toISOString().split('T')[0], description:'', receive_bank:'' });
+  const [manualEntrySaving, setManualEntrySaving]   = useState(false);
+  const INCOME_CATS = ['Salary','Freelance','Rental','Business','Interest','Bonus','Other'];
+  const EMPTY_RULE = {
+    rule_name:'', category:'Salary', receive_bank:'', bank_sender:'',
+    subject_pattern:'', body_pattern:'', account_last4:'',
+    min_amount:'', period:'monthly', remark:'',
+    date_day_from:'28', date_day_to:'5',
+    lookback_months:'0', credit_only: true,
+  };
+  const [ruleForm, setRuleForm] = useState(EMPTY_RULE);
   const [ruleSaving, setRuleSaving]   = useState(false);
   const [ruleError, setRuleError]     = useState('');
-  const INCOME_CATS = ['Salary','Freelance','Rental','Business','Interest','Bonus','Other'];
   const [liabilities, setLiabilities] = useState({ homeLoan: 0, creditCard: 0 });
   const [monthlyIncome, setMonthlyIncome] = useState(0);
   const [monthlyExpenses, setMonthlyExpenses] = useState(0);
@@ -124,12 +134,20 @@ export default function Dashboard() {
     if (error) { setSyncResult({ success: false, message: 'Connection failed. Please try again.' }); }
   }, [loadPortfolio, searchParams]);
 
+  // Auto-scan income every 30 mins
+  useEffect(() => {
+    const run = () => { if (incomeRules.length > 0) incomeAPI.scan().catch(() => {}); };
+    const interval = setInterval(run, 30 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [incomeRules.length]);
+
   const loadTab = async (t) => {
     setTab(t);
     if (t === 'transactions' && transactions.length === 0) {
       const r = await portfolioAPI.transactions().catch(() => ({ data: [] }));
       setTransactions(r.data);
     }
+    if (t === 'income') { await loadIncome(); return; }
     if (t === 'dividends') { return; // Dividends component loads its own data
       const r = await portfolioAPI.dividends().catch(() => ({ data: { dividends: [], totalIncome: 0 } }));
       setDividends(r.data);
@@ -205,16 +223,18 @@ export default function Dashboard() {
   // ── Income handlers ──────────────────────────────────────────────
   const loadIncome = async () => {
     try {
-      const [rulesRes, entriesRes] = await Promise.all([
-        incomeAPI.getRules(), incomeAPI.getEntries()
+      const [rulesRes, entriesRes, banksRes] = await Promise.all([
+        incomeAPI.getRules(), incomeAPI.getEntries(), incomeAPI.getBanks()
       ]);
       setIncomeRules(rulesRes.data || []);
       setIncomeEntries(entriesRes.data.entries || []);
-      setIncomeSummary(entriesRes.data.summary || { currentFYTotal:0, thisMonthTotal:0, byCategory:{} });
+      setIncomeSummary(entriesRes.data.summary || { currentFYTotal:0, thisMonthTotal:0, byCategory:{}, byMonth:{}, fyLabel:'FY26' });
+      setIndianBanks(banksRes.data || []);
     } catch(e) { console.error('loadIncome', e); }
   };
 
   const openIncomeSettings = () => {
+    setShowSettings(false);
     setShowIncomeSettings(true);
     setShowRuleForm(false);
     setEditingRule(null);
@@ -236,15 +256,27 @@ export default function Dashboard() {
   const openRuleForm = (rule = null) => {
     if (rule) {
       setRuleForm({
-        rule_name: rule.rule_name || '', category: rule.category || 'Salary',
-        bank_sender: rule.bank_sender || '', subject_pattern: rule.subject_pattern || '',
-        body_pattern: rule.body_pattern || '', account_last4: rule.account_last4 || '',
-        min_amount: rule.min_amount || '', period: rule.period || 'monthly', remark: rule.remark || ''
+        rule_name:       rule.rule_name       || '',
+        category:        rule.category        || 'Salary',
+        receive_bank:    rule.receive_bank    || '',
+        bank_sender:     rule.bank_sender     || '',
+        subject_pattern: rule.subject_pattern || '',
+        body_pattern:    rule.body_pattern    || '',
+        account_last4:   rule.account_last4   || '',
+        min_amount:      rule.min_amount      || '',
+        period:          rule.period          || 'monthly',
+        remark:          rule.remark          || '',
+        date_day_from:   String(rule.date_day_from  ?? 28),
+        date_day_to:     String(rule.date_day_to    ?? 5),
+        lookback_months: String(rule.lookback_months ?? 0),
+        credit_only:     rule.credit_only !== false,
       });
       setEditingRule(rule);
     } else {
-      setRuleForm({ rule_name:'', category:'Salary', bank_sender:'', subject_pattern:'',
-        body_pattern:'', account_last4:'', min_amount:'', period:'monthly', remark:'' });
+      setRuleForm({ rule_name:'', category:'Salary', receive_bank:'', bank_sender:'',
+        subject_pattern:'', body_pattern:'', account_last4:'', min_amount:'',
+        period:'monthly', remark:'', date_day_from:'28', date_day_to:'5',
+        lookback_months:'0', credit_only: true });
       setEditingRule(null);
     }
     setRuleError('');
@@ -252,21 +284,52 @@ export default function Dashboard() {
   };
 
   const saveRule = async () => {
-    if (!ruleForm.rule_name.trim()) { setRuleError('Rule name is required'); return; }
-    if (!ruleForm.bank_sender && !ruleForm.subject_pattern && !ruleForm.body_pattern)
-      { setRuleError('At least one filter is required (sender, subject, or body keyword)'); return; }
+    if (!ruleForm.rule_name.trim())  { setRuleError('Rule name is required'); return; }
+    if (!ruleForm.receive_bank.trim()) { setRuleError('Receive bank is required — select which bank receives the money'); return; }
+    if (!ruleForm.category.trim())   { setRuleError('Category is required'); return; }
     setRuleSaving(true); setRuleError('');
     try {
-      if (editingRule) {
-        await incomeAPI.updateRule(editingRule.id, ruleForm);
-      } else {
-        await incomeAPI.createRule(ruleForm);
-      }
+      const payload = {
+        rule_name:       ruleForm.rule_name,
+        category:        ruleForm.category,
+        receive_bank:    ruleForm.receive_bank,
+        bank_sender:     ruleForm.bank_sender     || null,
+        subject_pattern: ruleForm.subject_pattern || null,
+        body_pattern:    ruleForm.body_pattern    || null,
+        account_last4:   ruleForm.account_last4   || null,
+        min_amount:      parseFloat(ruleForm.min_amount) || 0,
+        period:          ruleForm.period,
+        remark:          ruleForm.remark          || null,
+        date_day_from:   parseInt(ruleForm.date_day_from)   || 28,
+        date_day_to:     parseInt(ruleForm.date_day_to)     || 5,
+        lookback_months: parseInt(ruleForm.lookback_months) || 0,
+        credit_only:     ruleForm.credit_only !== false,
+      };
+      if (editingRule) await incomeAPI.updateRule(editingRule.id, payload);
+      else             await incomeAPI.createRule(payload);
       setShowRuleForm(false);
       await loadIncome();
     } catch(e) {
       setRuleError(e.response?.data?.error || 'Save failed');
     } finally { setRuleSaving(false); }
+  };
+
+  const addManualEntry = async () => {
+    if (!manualEntryForm.amount || !manualEntryForm.credited_on) return;
+    setManualEntrySaving(true);
+    try {
+      await incomeAPI.addEntry(manualEntryForm);
+      setShowManualEntry(false);
+      setManualEntryForm({ category:'Salary', amount:'', credited_on: new Date().toISOString().split('T')[0], description:'', receive_bank:'' });
+      await loadIncome();
+    } catch(e) { console.error(e); }
+    finally { setManualEntrySaving(false); }
+  };
+
+  const deleteIncomeEntry = async (id) => {
+    if (!window.confirm('Delete this entry?')) return;
+    await incomeAPI.deleteEntry(id).catch(() => {});
+    await loadIncome();
   };
 
   const deleteRule = async (id) => {
@@ -386,6 +449,16 @@ export default function Dashboard() {
             </div>
           ))}
 
+          <div className="db-nav-label" style={{marginTop:12}}>Finance</div>
+          {[
+            { id:'income', icon:'₹', label:'Income' },
+          ].map(n => (
+            <div key={n.id} className={`db-nav-item ${tab === n.id ? 'active' : ''}`}
+              onClick={() => loadTab(n.id)}>
+              <span>{n.icon}</span> {n.label}
+            </div>
+          ))}
+
           <div className="db-nav-label" style={{marginTop:12}}>Analytics</div>
           {[
             { id:'tax', icon:'⊞', label:'Tax Summary' },
@@ -411,6 +484,10 @@ export default function Dashboard() {
           </button>
           <button className="db-connect-btn" style={{marginTop:6,background:'#1e293b',border:'1px solid #334155'}} onClick={() => setShowProfileModal(true)}>
             ⚙ Profile &amp; PAN
+          </button>
+          <button className="db-connect-btn" style={{marginTop:6,background:'#0f172a',border:'1px solid #1e3a5f',color:'#94a3b8'}}
+            onClick={() => { setSettingsSection('income'); setShowSettings(true); }}>
+            ⚙ Settings
           </button>
           <button className="db-logout-btn" onClick={() => { logout(); nav('/'); }}>
             Sign out
@@ -1142,9 +1219,6 @@ export default function Dashboard() {
             );
           })()}
 
-            );
-          })()}
-
           {/* DIVIDENDS */}
           {tab === 'dividends' && (
             <div className="fade-in">
@@ -1182,6 +1256,160 @@ export default function Dashboard() {
                   )}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {/* INCOME TAB */}
+          {tab === 'income' && (
+            <div style={{ padding: '24px 28px' }} className="fade-in">
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:24 }}>
+                <div>
+                  <h2 style={{ color:'#e2e8f0', fontSize:22, fontWeight:700, margin:0 }}>₹ Income</h2>
+                  <div style={{ color:'#64748b', fontSize:13, marginTop:3 }}>Track salary, rental & all income sources automatically</div>
+                </div>
+                <div style={{ display:'flex', gap:10 }}>
+                  <button onClick={() => { setSettingsSection('income'); setShowSettings(true); }}
+                    style={{ background:'#1e293b', border:'1px solid #334155', color:'#94a3b8', borderRadius:8, padding:'9px 16px', cursor:'pointer', fontSize:13 }}>
+                    ⚙ Rules
+                  </button>
+                  <button onClick={() => setShowManualEntry(true)}
+                    style={{ background:'rgba(100,255,218,0.1)', border:'1px solid rgba(100,255,218,0.3)', color:'#64ffda', borderRadius:8, padding:'9px 16px', cursor:'pointer', fontSize:13, fontWeight:700 }}>
+                    + Add Entry
+                  </button>
+                  <button onClick={scanIncome} disabled={incomeScanning}
+                    style={{ background: incomeScanning ? '#1e293b' : '#0ea5e9', border:'none', color:'#fff', borderRadius:8, padding:'9px 16px', cursor: incomeScanning ? 'not-allowed' : 'pointer', fontSize:13, fontWeight:700 }}>
+                    {incomeScanning ? '⟳ Scanning…' : '⟳ Scan Now'}
+                  </button>
+                </div>
+              </div>
+
+              {incomeScanResult && (
+                <div style={{ padding:'10px 16px', borderRadius:8, marginBottom:18, fontSize:13,
+                  background: incomeScanResult.success ? 'rgba(0,212,161,0.08)' : 'rgba(244,63,94,0.08)',
+                  border: `1px solid ${incomeScanResult.success ? 'rgba(0,212,161,0.2)' : 'rgba(244,63,94,0.2)'}`,
+                  color: incomeScanResult.success ? '#00d4a1' : '#f43f5e' }}>
+                  {incomeScanResult.success ? '✅' : '⚠'} {incomeScanResult.message}
+                </div>
+              )}
+
+              {/* Summary cards */}
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:14, marginBottom:24 }}>
+                {[
+                  { label:`${incomeSummary.fyLabel || 'FY26'} Total`, val: fmtFull(incomeSummary.currentFYTotal || 0), color:'#64ffda', icon:'📈' },
+                  { label:'This Month',  val: fmtFull(incomeSummary.thisMonthTotal || 0), color:'#a78bfa', icon:'📅' },
+                  { label:'Total Entries', val: incomeEntries.length, color:'#0ea5e9', icon:'📋' },
+                ].map(s => (
+                  <div key={s.label} style={{ background:'#0a1628', borderRadius:10, padding:'16px 20px', border:'1px solid #1e3a5f' }}>
+                    <div style={{ fontSize:20, marginBottom:8 }}>{s.icon}</div>
+                    <div style={{ color:s.color, fontWeight:700, fontSize:22 }}>{s.val}</div>
+                    <div style={{ color:'#475569', fontSize:12, marginTop:4 }}>{s.label}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Charts */}
+              {incomeEntries.length > 0 && (() => {
+                const PIE_COLORS = ['#64ffda','#a78bfa','#0ea5e9','#f59e0b','#f43f5e','#34d399','#fb923c'];
+                const catData = Object.entries(incomeSummary.byCategory || {}).map(([name,value]) => ({ name, value })).filter(d=>d.value>0);
+                const mthData = Object.keys(incomeSummary.byMonth || {}).sort().map(m => ({
+                  month: new Date(m+'-01').toLocaleDateString('en-IN',{month:'short'}),
+                  amount: incomeSummary.byMonth[m]
+                }));
+                return (
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16, marginBottom:24 }}>
+                    <div style={{ background:'#0a1628', borderRadius:10, border:'1px solid #1e3a5f', padding:'16px 20px' }}>
+                      <div style={{ color:'#e2e8f0', fontWeight:700, fontSize:14, marginBottom:16 }}>By Category ({incomeSummary.fyLabel || 'FY26'})</div>
+                      <div style={{ display:'flex', gap:16, alignItems:'center' }}>
+                        <ResponsiveContainer width={150} height={150}>
+                          <PieChart>
+                            <Pie data={catData} cx={70} cy={70} innerRadius={40} outerRadius={68} dataKey="value" paddingAngle={2}>
+                              {catData.map((_,i) => <Cell key={i} fill={PIE_COLORS[i%PIE_COLORS.length]} />)}
+                            </Pie>
+                            <Tooltip formatter={v=>fmtFull(v)} contentStyle={{background:'#141b2d',border:'1px solid #1a2235',borderRadius:8,fontSize:12}} />
+                          </PieChart>
+                        </ResponsiveContainer>
+                        <div style={{flex:1}}>
+                          {catData.map((d,i) => (
+                            <div key={d.name} style={{display:'flex',justifyContent:'space-between',marginBottom:6}}>
+                              <div style={{display:'flex',alignItems:'center',gap:6}}>
+                                <div style={{width:8,height:8,borderRadius:'50%',background:PIE_COLORS[i%PIE_COLORS.length]}}/>
+                                <span style={{color:'#94a3b8',fontSize:12}}>{d.name}</span>
+                              </div>
+                              <span style={{color:'#e2e8f0',fontSize:12,fontWeight:600}}>{fmtFull(d.value)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ background:'#0a1628', borderRadius:10, border:'1px solid #1e3a5f', padding:'16px 20px' }}>
+                      <div style={{ color:'#e2e8f0', fontWeight:700, fontSize:14, marginBottom:16 }}>Monthly Trend ({incomeSummary.fyLabel || 'FY26'})</div>
+                      <ResponsiveContainer width="100%" height={150}>
+                        <AreaChart data={mthData} margin={{top:5,right:10,left:0,bottom:0}}>
+                          <defs>
+                            <linearGradient id="incGrad" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#64ffda" stopOpacity={0.3}/>
+                              <stop offset="95%" stopColor="#64ffda" stopOpacity={0}/>
+                            </linearGradient>
+                          </defs>
+                          <XAxis dataKey="month" stroke="#334155" tick={{fill:'#64748b',fontSize:11}}/>
+                          <YAxis stroke="#334155" tick={{fill:'#64748b',fontSize:10}} tickFormatter={v=>'₹'+(v/1000).toFixed(0)+'K'}/>
+                          <Tooltip formatter={v=>[fmtFull(v),'Income']} contentStyle={{background:'#141b2d',border:'1px solid #1a2235',borderRadius:8,fontSize:12}}/>
+                          <Area type="monotone" dataKey="amount" stroke="#64ffda" strokeWidth={2} fill="url(#incGrad)"/>
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Transactions table */}
+              <div style={{ background:'#0a1628', borderRadius:10, border:'1px solid #1e3a5f' }}>
+                <div style={{ padding:'14px 20px', borderBottom:'1px solid #1e3a5f', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                  <div style={{ color:'#e2e8f0', fontWeight:700, fontSize:14 }}>All Income Transactions</div>
+                  <div style={{ color:'#475569', fontSize:12 }}>{incomeEntries.length} entries</div>
+                </div>
+                {incomeEntries.length === 0 ? (
+                  <div style={{ textAlign:'center', padding:'40px 20px' }}>
+                    <div style={{ fontSize:36, marginBottom:12 }}>₹</div>
+                    <div style={{ fontSize:14, color:'#475569', marginBottom:8 }}>No income entries yet</div>
+                    <div style={{ fontSize:12, color:'#334155' }}>Set up rules in Settings → Income Tracking, or add entries manually</div>
+                  </div>
+                ) : (
+                  <table className="db-table" style={{ width:'100%' }}>
+                    <thead><tr>
+                      <th>Date</th><th>Description</th><th>Category</th>
+                      <th>Bank</th><th>Source</th><th className="right">Amount</th><th></th>
+                    </tr></thead>
+                    <tbody>
+                      {incomeEntries.map(e => (
+                        <tr key={e.id}>
+                          <td style={{color:'#64748b',fontSize:12,whiteSpace:'nowrap'}}>
+                            {new Date(e.credited_on+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}
+                          </td>
+                          <td>
+                            <div style={{color:'#e2e8f0',fontSize:13}}>{e.description||e.category}</div>
+                            {e.email_subject && <div style={{color:'#334155',fontSize:11,marginTop:1}}>{e.email_subject.slice(0,55)}</div>}
+                          </td>
+                          <td><span style={{fontSize:11,padding:'2px 8px',borderRadius:4,fontWeight:600,background:'rgba(100,255,218,0.08)',color:'#64ffda'}}>{e.category}</span></td>
+                          <td style={{color:'#64748b',fontSize:12}}>{e.receive_bank||'—'}</td>
+                          <td>
+                            <span style={{fontSize:11,padding:'2px 7px',borderRadius:4,
+                              background:e.source==='auto'?'rgba(14,165,233,0.1)':'rgba(167,139,250,0.1)',
+                              color:e.source==='auto'?'#38bdf8':'#a78bfa'}}>
+                              {e.source==='auto'?'⚡ auto':'✎ manual'}
+                            </span>
+                          </td>
+                          <td className="right" style={{color:'#64ffda',fontWeight:700}}>{fmtFull(e.amount)}</td>
+                          <td>
+                            <button onClick={()=>deleteIncomeEntry(e.id)}
+                              style={{background:'none',border:'none',color:'#334155',cursor:'pointer',fontSize:14,padding:'2px 6px'}}>✕</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
             </div>
           )}
 
@@ -1388,363 +1616,314 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* ── INCOME SETTINGS MODAL ── */}
-      {showIncomeSettings && (
-        <div className="db-modal-overlay" onClick={e => { if(e.target===e.currentTarget) setShowIncomeSettings(false); }}>
-          <div className="db-modal fade-in" style={{ maxWidth: 620, maxHeight:'90vh', overflowY:'auto' }}>
-            <div className="db-modal-header">
-              <div>
-                <div className="db-modal-title">₹ Income Capture Rules</div>
-                <div style={{ color:'#64748b', fontSize:12, marginTop:2 }}>
-                  Auto-detect salary & income from your bank credit emails
-                </div>
+      {/* ── SETTINGS MODAL ── */}
+      {showSettings && (
+        <div className="db-modal-overlay" onClick={e=>{if(e.target===e.currentTarget){setShowSettings(false);setShowRuleForm(false);}}}>
+          <div style={{background:'#0d1526',border:'1px solid #1e3a5f',borderRadius:14,width:720,maxWidth:'95vw',maxHeight:'92vh',overflowY:'auto',boxShadow:'0 20px 60px rgba(0,0,0,0.6)',display:'flex',flexDirection:'column'}}>
+            <div style={{display:'flex',flex:1,minHeight:0}}>
+              {/* Left nav */}
+              <div style={{width:190,borderRight:'1px solid #1e3a5f',padding:'20px 0',flexShrink:0}}>
+                <div style={{color:'#475569',fontSize:10,fontWeight:700,letterSpacing:2,padding:'0 16px 12px',textTransform:'uppercase'}}>Settings</div>
+                {[{id:'income',icon:'₹',label:'Income Tracking'},{id:'expense',icon:'💸',label:'Expense Tracking'}].map(s=>(
+                  <div key={s.id} onClick={()=>setSettingsSection(s.id)}
+                    style={{padding:'11px 16px',cursor:'pointer',display:'flex',alignItems:'center',gap:10,fontSize:13,
+                      background:settingsSection===s.id?'rgba(100,255,218,0.08)':'transparent',
+                      color:settingsSection===s.id?'#64ffda':'#64748b',
+                      borderRight:settingsSection===s.id?'2px solid #64ffda':'2px solid transparent',transition:'all 0.15s'}}>
+                    <span>{s.icon}</span>{s.label}
+                  </div>
+                ))}
               </div>
-              <button className="db-modal-close" onClick={() => setShowIncomeSettings(false)}>✕</button>
-            </div>
-            <div className="db-modal-body">
-
-              {/* Summary strip */}
-              {incomeSummary.currentFYTotal > 0 && (
-                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10, marginBottom:20 }}>
-                  {[
-                    { label:'FY26 Total', val: fmt(incomeSummary.currentFYTotal), color:'#64ffda' },
-                    { label:'This Month', val: fmt(incomeSummary.thisMonthTotal),  color:'#a78bfa' },
-                    { label:'Entries',    val: incomeEntries.length,               color:'#0ea5e9' },
-                  ].map(s => (
-                    <div key={s.label} style={{ background:'#0a1628', borderRadius:8, padding:'10px 14px', border:'1px solid #1e3a5f', textAlign:'center' }}>
-                      <div style={{ color:s.color, fontWeight:700, fontSize:18 }}>{s.val}</div>
-                      <div style={{ color:'#475569', fontSize:11, marginTop:2 }}>{s.label}</div>
-                    </div>
-                  ))}
+              {/* Content */}
+              <div style={{flex:1,padding:'20px 24px',overflowY:'auto'}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:18}}>
+                  <div>
+                    <div style={{color:'#e2e8f0',fontWeight:700,fontSize:16}}>{settingsSection==='income'?'₹ Income Tracking':'💸 Expense Tracking'}</div>
+                    <div style={{color:'#475569',fontSize:12,marginTop:3}}>{settingsSection==='income'?'Auto-detect income from bank credit emails every 30 min':'Coming soon'}</div>
+                  </div>
+                  <button onClick={()=>{setShowSettings(false);setShowRuleForm(false);}} style={{background:'none',border:'none',color:'#64748b',fontSize:20,cursor:'pointer',padding:4}}>✕</button>
                 </div>
-              )}
 
-              {/* Rule Form */}
-              {showRuleForm ? (
-                <div style={{ background:'#0a1628', borderRadius:10, padding:18, border:'1px solid #1e3a5f', marginBottom:16 }}>
-                  <div style={{ color:'#64ffda', fontWeight:700, fontSize:13, marginBottom:14 }}>
-                    {editingRule ? '✎ Edit Rule' : '+ New Income Rule'}
+                {settingsSection==='expense' && (
+                  <div style={{textAlign:'center',padding:'50px 20px',color:'#334155'}}>
+                    <div style={{fontSize:40,marginBottom:12}}>💸</div>
+                    <div style={{fontSize:14}}>Expense Tracking coming soon</div>
                   </div>
+                )}
 
-                  {/* Row 1: Name + Category */}
-                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:12 }}>
-                    <div>
-                      <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:5 }}>RULE NAME <span style={{color:'#f43f5e'}}>*</span></label>
-                      <input className="db-input" placeholder="e.g. HDFC Salary"
-                        value={ruleForm.rule_name} onChange={e => setRuleForm(p=>({...p,rule_name:e.target.value}))} />
-                    </div>
-                    <div>
-                      <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:5 }}>INCOME CATEGORY <span style={{color:'#f43f5e'}}>*</span></label>
-                      <select className="db-input" value={ruleForm.category} onChange={e => setRuleForm(p=>({...p,category:e.target.value}))}
-                        style={{ background:'#0f1c2e', color:'#e2e8f0', cursor:'pointer' }}>
-                        {INCOME_CATS.map(c => <option key={c} value={c}>{c}</option>)}
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Row 2: Bank Sender */}
-                  <div style={{ marginBottom:12 }}>
-                    <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:5 }}>BANK SENDER EMAIL</label>
-                    <input className="db-input" placeholder="e.g. alerts@hdfcbank.net or noreply@icicibank.com"
-                      value={ruleForm.bank_sender} onChange={e => setRuleForm(p=>({...p,bank_sender:e.target.value}))} />
-                    <span style={{ color:'#334155', fontSize:10, marginTop:3, display:'block' }}>
-                      Check a real bank credit email → From: field. Partial match works e.g. "hdfcbank"
-                    </span>
-                  </div>
-
-                  {/* Row 3: Subject + Body */}
-                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:12 }}>
-                    <div>
-                      <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:5 }}>SUBJECT CONTAINS</label>
-                      <input className="db-input" placeholder="e.g. SALARY CREDIT"
-                        value={ruleForm.subject_pattern} onChange={e => setRuleForm(p=>({...p,subject_pattern:e.target.value}))} />
-                    </div>
-                    <div>
-                      <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:5 }}>BODY CONTAINS</label>
-                      <input className="db-input" placeholder="e.g. credited to your account"
-                        value={ruleForm.body_pattern} onChange={e => setRuleForm(p=>({...p,body_pattern:e.target.value}))} />
-                    </div>
-                  </div>
-
-                  {/* Row 4: Account Last 4 + Min Amount + Period */}
-                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10, marginBottom:12 }}>
-                    <div>
-                      <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:5 }}>ACCOUNT LAST 4</label>
-                      <input className="db-input" placeholder="e.g. 7823" maxLength={4}
-                        value={ruleForm.account_last4} onChange={e => setRuleForm(p=>({...p,account_last4:e.target.value}))} />
-                    </div>
-                    <div>
-                      <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:5 }}>MIN AMOUNT (₹)</label>
-                      <input className="db-input" type="number" placeholder="e.g. 10000"
-                        value={ruleForm.min_amount} onChange={e => setRuleForm(p=>({...p,min_amount:e.target.value}))} />
-                    </div>
-                    <div>
-                      <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:5 }}>PERIOD</label>
-                      <select className="db-input" value={ruleForm.period} onChange={e => setRuleForm(p=>({...p,period:e.target.value}))}
-                        style={{ background:'#0f1c2e', color:'#e2e8f0', cursor:'pointer' }}>
-                        <option value="monthly">Monthly</option>
-                        <option value="weekly">Weekly</option>
-                        <option value="irregular">Irregular</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Remark */}
-                  <div style={{ marginBottom:14 }}>
-                    <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:5 }}>REMARK (optional)</label>
-                    <input className="db-input" placeholder="e.g. Main salary account, credited on 1st"
-                      value={ruleForm.remark} onChange={e => setRuleForm(p=>({...p,remark:e.target.value}))} />
-                  </div>
-
-                  {ruleError && (
-                    <div style={{ color:'#f43f5e', fontSize:12, marginBottom:10, padding:'7px 10px',
-                      background:'rgba(244,63,94,0.08)', borderRadius:6, border:'1px solid rgba(244,63,94,0.2)' }}>
-                      ⚠ {ruleError}
-                    </div>
-                  )}
-
-                  <div style={{ display:'flex', gap:8 }}>
-                    <button onClick={saveRule} disabled={ruleSaving}
-                      style={{ flex:1, background:'#64ffda', color:'#0a0a0a', border:'none',
-                        borderRadius:8, padding:'11px', fontWeight:700, fontSize:13, cursor:'pointer' }}>
-                      {ruleSaving ? '⟳ Saving…' : (editingRule ? '✎ Update Rule' : '+ Save Rule')}
-                    </button>
-                    <button onClick={() => setShowRuleForm(false)}
-                      style={{ padding:'11px 18px', background:'#1e2d3d', color:'#94a3b8',
-                        border:'1px solid #334155', borderRadius:8, cursor:'pointer', fontSize:13 }}>
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  {/* Existing rules list */}
-                  {incomeRules.length > 0 && (
-                    <div style={{ marginBottom:16 }}>
-                      <div style={{ color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:8 }}>ACTIVE RULES</div>
-                      {incomeRules.map(rule => (
-                        <div key={rule.id} style={{ background:'#0a1628', border:'1px solid #1e3a5f',
-                          borderRadius:8, padding:'12px 14px', marginBottom:8,
-                          display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
-                          <div>
-                            <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:4 }}>
-                              <span style={{ color:'#e2e8f0', fontWeight:700, fontSize:13 }}>{rule.rule_name}</span>
-                              <span style={{ fontSize:10, background:'rgba(100,255,218,0.1)', color:'#64ffda',
-                                borderRadius:4, padding:'1px 7px', fontWeight:600 }}>{rule.category}</span>
-                              <span style={{ fontSize:10, background:'rgba(255,255,255,0.04)', color:'#475569',
-                                borderRadius:4, padding:'1px 7px' }}>{rule.period}</span>
-                            </div>
-                            <div style={{ color:'#475569', fontSize:11, lineHeight:1.6 }}>
-                              {rule.bank_sender && <span>From: <span style={{color:'#64748b'}}>{rule.bank_sender}</span> · </span>}
-                              {rule.subject_pattern && <span>Subject: <span style={{color:'#64748b'}}>"{rule.subject_pattern}"</span> · </span>}
-                              {rule.body_pattern && <span>Body: <span style={{color:'#64748b'}}>"{rule.body_pattern}"</span></span>}
-                            </div>
-                            {rule.remark && <div style={{ color:'#334155', fontSize:10, marginTop:3 }}>💬 {rule.remark}</div>}
-                          </div>
-                          <div style={{ display:'flex', gap:6, flexShrink:0, marginLeft:10 }}>
-                            <button onClick={() => openRuleForm(rule)}
-                              style={{ background:'#1e2d3d', border:'1px solid #334155', color:'#94a3b8',
-                                borderRadius:6, padding:'4px 10px', cursor:'pointer', fontSize:11 }}>Edit</button>
-                            <button onClick={() => deleteRule(rule.id)}
-                              style={{ background:'rgba(244,63,94,0.08)', border:'1px solid rgba(244,63,94,0.2)',
-                                color:'#f43f5e', borderRadius:6, padding:'4px 10px', cursor:'pointer', fontSize:11 }}>✕</button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {incomeRules.length === 0 && (
-                    <div style={{ textAlign:'center', padding:'20px 0', color:'#334155', fontSize:13, marginBottom:16 }}>
-                      No rules yet. Create your first rule to start capturing income.
-                    </div>
-                  )}
-
-                  {/* Action buttons */}
-                  <div style={{ display:'flex', gap:10, marginBottom:16 }}>
-                    <button onClick={() => openRuleForm()}
-                      style={{ flex:1, background:'rgba(100,255,218,0.1)', border:'1px solid rgba(100,255,218,0.3)',
-                        color:'#64ffda', borderRadius:8, padding:'11px', fontWeight:700,
-                        fontSize:13, cursor:'pointer' }}>
-                      + New Rule
-                    </button>
-                    <button onClick={scanIncome} disabled={incomeScanning || incomeRules.length === 0}
-                      style={{ flex:1, background: incomeRules.length > 0 ? '#0ea5e9' : '#1e2d3d',
-                        border:'none', color: incomeRules.length > 0 ? '#fff' : '#334155',
-                        borderRadius:8, padding:'11px', fontWeight:700,
-                        fontSize:13, cursor: incomeRules.length > 0 ? 'pointer' : 'not-allowed' }}>
-                      {incomeScanning ? '⟳ Scanning Gmail…' : '⟳ Scan Gmail Now'}
-                    </button>
-                  </div>
-
-                  {incomeScanResult && (
-                    <div style={{ padding:'10px 14px', borderRadius:8, marginBottom:14, fontSize:13,
-                      background: incomeScanResult.success ? 'rgba(0,212,161,0.08)' : 'rgba(244,63,94,0.08)',
-                      border: `1px solid ${incomeScanResult.success ? 'rgba(0,212,161,0.2)' : 'rgba(244,63,94,0.2)'}`,
-                      color: incomeScanResult.success ? '#00d4a1' : '#f43f5e' }}>
-                      {incomeScanResult.success ? '✅' : '⚠'} {incomeScanResult.message}
-                    </div>
-                  )}
-
-                  {/* Recent entries */}
-                  {incomeEntries.length > 0 && (
-                    <div>
-                      <div style={{ color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:8 }}>RECENT INCOME ENTRIES</div>
-                      <div style={{ maxHeight:200, overflowY:'auto', borderRadius:8, border:'1px solid #1e3a5f' }}>
-                        {incomeEntries.slice(0,15).map((e, i) => (
-                          <div key={e.id} style={{ padding:'9px 14px', borderBottom:'1px solid #0f1b2d',
-                            display:'flex', justifyContent:'space-between', alignItems:'center',
-                            background: i%2===0 ? '#0a1628' : 'transparent' }}>
-                            <div>
-                              <div style={{ color:'#e2e8f0', fontSize:12, fontWeight:600 }}>{e.description || e.category}</div>
-                              <div style={{ color:'#475569', fontSize:10, marginTop:1 }}>
-                                {new Date(e.credited_on).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}
-                                {' · '}<span style={{ color:'#334155' }}>{e.category}</span>
-                                {e.source==='auto' && <span style={{ color:'#0ea5e9', marginLeft:6 }}>auto</span>}
-                              </div>
-                            </div>
-                            <div style={{ color:'#64ffda', fontWeight:700, fontSize:13 }}>{fmt(e.amount)}</div>
+                {settingsSection==='income' && (
+                  <>
+                    {(incomeSummary.currentFYTotal>0||incomeEntries.length>0) && (
+                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:18}}>
+                        {[{label:`${incomeSummary.fyLabel||'FY26'} Total`,val:fmt(incomeSummary.currentFYTotal||0),color:'#64ffda'},
+                          {label:'This Month',val:fmt(incomeSummary.thisMonthTotal||0),color:'#a78bfa'},
+                          {label:'Entries',val:incomeEntries.length,color:'#0ea5e9'}].map(s=>(
+                          <div key={s.label} style={{background:'#060e1a',borderRadius:8,padding:'10px 14px',border:'1px solid #1e3a5f',textAlign:'center'}}>
+                            <div style={{color:s.color,fontWeight:700,fontSize:18}}>{s.val}</div>
+                            <div style={{color:'#475569',fontSize:11,marginTop:2}}>{s.label}</div>
                           </div>
                         ))}
                       </div>
-                    </div>
-                  )}
+                    )}
 
-                  {/* How it works tip */}
-                  <div style={{ marginTop:14, padding:'10px 12px', background:'#0a1628', borderRadius:6,
-                    border:'1px solid #1e3a5f', fontSize:11, color:'#334155', lineHeight:1.8 }}>
-                    <span style={{ color:'#0ea5e9', fontWeight:700 }}>HOW IT WORKS</span><br/>
-                    1. Create a rule matching your bank credit email (sender + keyword)<br/>
-                    2. Click <b style={{color:'#94a3b8'}}>Scan Gmail Now</b> — scans last 90 days automatically<br/>
-                    3. Detected credits appear in entries + on the dashboard tile
-                  </div>
-                </>
-              )}
+                    {showRuleForm ? (
+                      <div style={{background:'#060e1a',borderRadius:10,padding:18,border:'1px solid #1e3a5f',marginBottom:16}}>
+                        <div style={{color:'#64ffda',fontWeight:700,fontSize:13,marginBottom:16}}>{editingRule?'✎ Edit Rule':'+ New Income Rule'}</div>
+
+                        {/* Name + Category */}
+                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
+                          <div>
+                            <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:5}}>RULE NAME <span style={{color:'#f43f5e'}}>*</span></label>
+                            <input className="db-input" placeholder="e.g. HDFC Salary" value={ruleForm.rule_name} onChange={e=>setRuleForm(p=>({...p,rule_name:e.target.value}))} />
+                          </div>
+                          <div>
+                            <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:5}}>CATEGORY <span style={{color:'#f43f5e'}}>*</span></label>
+                            <div style={{display:'flex',gap:6}}>
+                              <select className="db-input" style={{flex:1,background:'#0f1c2e',color:'#e2e8f0',cursor:'pointer'}}
+                                value={INCOME_CATS.includes(ruleForm.category)?ruleForm.category:'__custom'}
+                                onChange={e=>{if(e.target.value!=='__custom')setRuleForm(p=>({...p,category:e.target.value}));}}>
+                                {INCOME_CATS.map(cat=><option key={cat} value={cat}>{cat}</option>)}
+                                <option value="__custom">Custom…</option>
+                              </select>
+                              {!INCOME_CATS.includes(ruleForm.category) && (
+                                <input className="db-input" style={{flex:1}} placeholder="Custom category" value={ruleForm.category} onChange={e=>setRuleForm(p=>({...p,category:e.target.value}))} />
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Receive bank - mandatory */}
+                        <div style={{marginBottom:12}}>
+                          <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:5}}>
+                            RECEIVE BANK <span style={{color:'#f43f5e'}}>*</span>
+                            <span style={{color:'#334155',fontWeight:400,marginLeft:6}}>— which account receives the money</span>
+                          </label>
+                          <select className="db-input" style={{background:'#0f1c2e',color:ruleForm.receive_bank?'#e2e8f0':'#475569',cursor:'pointer',width:'100%'}}
+                            value={ruleForm.receive_bank} onChange={e=>setRuleForm(p=>({...p,receive_bank:e.target.value}))}>
+                            <option value="">Select your bank…</option>
+                            {(indianBanks.length?indianBanks:[{label:'HDFC Bank'},{label:'ICICI Bank'},{label:'SBI'},{label:'Axis Bank'},{label:'Kotak Mahindra'},{label:'IndusInd Bank'},{label:'Yes Bank'},{label:'Punjab National'},{label:'Tamilnad Mercantile'},{label:'Other'}]).map(b=>(
+                              <option key={b.label} value={b.label}>{b.label}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* Date window */}
+                        <div style={{background:'#0a1628',borderRadius:8,padding:'12px 14px',marginBottom:12,border:'1px solid #1a2a40'}}>
+                          <div style={{color:'#64748b',fontSize:11,fontWeight:700,marginBottom:10}}>
+                            📅 DATE WINDOW — when does this income typically arrive?
+                          </div>
+                          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+                            <div>
+                              <label style={{display:'block',color:'#94a3b8',fontSize:11,marginBottom:4}}>FROM (day of prev month)</label>
+                              <input className="db-input" type="number" min="1" max="31" placeholder="28"
+                                value={ruleForm.date_day_from} onChange={e=>setRuleForm(p=>({...p,date_day_from:e.target.value}))} />
+                              <div style={{color:'#334155',fontSize:10,marginTop:3}}>e.g. 28 = 28th of last month</div>
+                            </div>
+                            <div>
+                              <label style={{display:'block',color:'#94a3b8',fontSize:11,marginBottom:4}}>TO (day of this month)</label>
+                              <input className="db-input" type="number" min="1" max="31" placeholder="5"
+                                value={ruleForm.date_day_to} onChange={e=>setRuleForm(p=>({...p,date_day_to:e.target.value}))} />
+                              <div style={{color:'#334155',fontSize:10,marginTop:3}}>e.g. 5 = 5th of this month</div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Bank sender + Subject */}
+                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
+                          <div>
+                            <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:5}}>BANK SENDER EMAIL</label>
+                            <input className="db-input" placeholder="e.g. alerts@hdfcbank.net" value={ruleForm.bank_sender} onChange={e=>setRuleForm(p=>({...p,bank_sender:e.target.value}))} />
+                            <div style={{color:'#334155',fontSize:10,marginTop:3}}>Check a real bank email → From: field</div>
+                          </div>
+                          <div>
+                            <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:5}}>SUBJECT CONTAINS</label>
+                            <input className="db-input" placeholder="e.g. SALARY CREDIT" value={ruleForm.subject_pattern} onChange={e=>setRuleForm(p=>({...p,subject_pattern:e.target.value}))} />
+                          </div>
+                        </div>
+
+                        {/* Body + Account */}
+                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
+                          <div>
+                            <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:5}}>BODY CONTAINS</label>
+                            <input className="db-input" placeholder="e.g. credited to your account" value={ruleForm.body_pattern} onChange={e=>setRuleForm(p=>({...p,body_pattern:e.target.value}))} />
+                          </div>
+                          <div>
+                            <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:5}}>ACCOUNT LAST 4 DIGITS</label>
+                            <input className="db-input" placeholder="e.g. 7823" maxLength={4} value={ruleForm.account_last4} onChange={e=>setRuleForm(p=>({...p,account_last4:e.target.value}))} />
+                          </div>
+                        </div>
+
+                        {/* Min amount + Period + Lookback */}
+                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:12}}>
+                          <div>
+                            <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:5}}>MIN AMOUNT (₹)</label>
+                            <input className="db-input" type="number" placeholder="e.g. 10000" value={ruleForm.min_amount} onChange={e=>setRuleForm(p=>({...p,min_amount:e.target.value}))} />
+                          </div>
+                          <div>
+                            <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:5}}>PERIOD</label>
+                            <select className="db-input" value={ruleForm.period} onChange={e=>setRuleForm(p=>({...p,period:e.target.value}))} style={{background:'#0f1c2e',color:'#e2e8f0',cursor:'pointer'}}>
+                              <option value="monthly">Monthly</option>
+                              <option value="weekly">Weekly</option>
+                              <option value="irregular">Irregular</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:5}}>SCAN HISTORY</label>
+                            <select className="db-input" value={ruleForm.lookback_months} onChange={e=>setRuleForm(p=>({...p,lookback_months:e.target.value}))} style={{background:'#0f1c2e',color:'#e2e8f0',cursor:'pointer'}}>
+                              <option value="0">From now (default)</option>
+                              <option value="1">Last 1 month</option>
+                              <option value="3">Last 3 months</option>
+                              <option value="6">Last 6 months</option>
+                              <option value="12">Last 12 months</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Credit only toggle */}
+                        <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:14,padding:'10px 12px',background:'#060e1a',borderRadius:8,border:'1px solid #1a2a40'}}>
+                          <div onClick={()=>setRuleForm(p=>({...p,credit_only:!p.credit_only}))}
+                            style={{width:38,height:22,borderRadius:11,background:ruleForm.credit_only?'#64ffda':'#1e293b',cursor:'pointer',position:'relative',transition:'background 0.2s',flexShrink:0}}>
+                            <div style={{position:'absolute',top:4,left:ruleForm.credit_only?20:4,width:14,height:14,borderRadius:'50%',background:'#fff',transition:'left 0.2s'}}/>
+                          </div>
+                          <div>
+                            <div style={{color:'#e2e8f0',fontSize:12,fontWeight:600}}>Credit emails only (recommended)</div>
+                            <div style={{color:'#475569',fontSize:11}}>Ignore debit/payment emails — only capture money received</div>
+                          </div>
+                        </div>
+
+                        {/* Remark */}
+                        <div style={{marginBottom:14}}>
+                          <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:5}}>REMARK (optional)</label>
+                          <input className="db-input" placeholder="e.g. Main salary, credited around 1st" value={ruleForm.remark} onChange={e=>setRuleForm(p=>({...p,remark:e.target.value}))} />
+                        </div>
+
+                        {ruleError && (
+                          <div style={{color:'#f43f5e',fontSize:12,marginBottom:10,padding:'7px 10px',background:'rgba(244,63,94,0.08)',borderRadius:6,border:'1px solid rgba(244,63,94,0.2)'}}>
+                            ⚠ {ruleError}
+                          </div>
+                        )}
+
+                        <div style={{display:'flex',gap:8}}>
+                          <button onClick={saveRule} disabled={ruleSaving}
+                            style={{flex:1,background:'#64ffda',color:'#0a0a0a',border:'none',borderRadius:8,padding:'11px',fontWeight:700,fontSize:13,cursor:'pointer'}}>
+                            {ruleSaving?'⟳ Saving…':(editingRule?'✎ Update Rule':'+ Save Rule')}
+                          </button>
+                          <button onClick={()=>{setShowRuleForm(false);setRuleError('');}}
+                            style={{padding:'11px 18px',background:'#1e2d3d',color:'#94a3b8',border:'1px solid #334155',borderRadius:8,cursor:'pointer',fontSize:13}}>
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        {incomeRules.map(rule=>(
+                          <div key={rule.id} style={{background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,padding:'12px 14px',marginBottom:8,display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+                            <div style={{flex:1}}>
+                              <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4,flexWrap:'wrap'}}>
+                                <span style={{color:'#e2e8f0',fontWeight:700,fontSize:13}}>{rule.rule_name}</span>
+                                <span style={{fontSize:10,background:'rgba(100,255,218,0.1)',color:'#64ffda',borderRadius:4,padding:'1px 7px',fontWeight:600}}>{rule.category}</span>
+                                {rule.receive_bank && <span style={{fontSize:10,background:'rgba(14,165,233,0.1)',color:'#38bdf8',borderRadius:4,padding:'1px 7px'}}>🏦 {rule.receive_bank}</span>}
+                              </div>
+                              <div style={{color:'#475569',fontSize:11,lineHeight:1.7}}>
+                                {rule.bank_sender&&<span>Sender: <b style={{color:'#64748b'}}>{rule.bank_sender}</b> · </span>}
+                                {rule.date_day_from&&<span>Window: <b style={{color:'#64748b'}}>Day {rule.date_day_from}–{rule.date_day_to}</b> · </span>}
+                                {rule.lookback_months>0&&<span>History: <b style={{color:'#64748b'}}>{rule.lookback_months}mo</b></span>}
+                              </div>
+                              {rule.remark&&<div style={{color:'#334155',fontSize:10,marginTop:2}}>💬 {rule.remark}</div>}
+                            </div>
+                            <div style={{display:'flex',gap:6,marginLeft:10,flexShrink:0}}>
+                              <button onClick={()=>openRuleForm(rule)} style={{background:'#1e2d3d',border:'1px solid #334155',color:'#94a3b8',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:11}}>Edit</button>
+                              <button onClick={()=>deleteRule(rule.id)} style={{background:'rgba(244,63,94,0.08)',border:'1px solid rgba(244,63,94,0.2)',color:'#f43f5e',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:11}}>✕</button>
+                            </div>
+                          </div>
+                        ))}
+
+                        {incomeRules.length===0 && (
+                          <div style={{textAlign:'center',padding:'20px 0',color:'#334155',fontSize:13,marginBottom:14}}>
+                            No rules yet. Create your first rule to auto-capture income.
+                          </div>
+                        )}
+
+                        <div style={{display:'flex',gap:10,marginBottom:14}}>
+                          <button onClick={()=>openRuleForm()} style={{flex:1,background:'rgba(100,255,218,0.1)',border:'1px solid rgba(100,255,218,0.3)',color:'#64ffda',borderRadius:8,padding:'11px',fontWeight:700,fontSize:13,cursor:'pointer'}}>
+                            + New Rule
+                          </button>
+                          <button onClick={scanIncome} disabled={incomeScanning||incomeRules.length===0}
+                            style={{flex:1,background:incomeRules.length>0?'#0ea5e9':'#1e2d3d',border:'none',color:incomeRules.length>0?'#fff':'#334155',borderRadius:8,padding:'11px',fontWeight:700,fontSize:13,cursor:incomeRules.length>0?'pointer':'not-allowed'}}>
+                            {incomeScanning?'⟳ Scanning…':'⟳ Scan Gmail Now'}
+                          </button>
+                        </div>
+
+                        {incomeScanResult && (
+                          <div style={{padding:'10px 14px',borderRadius:8,fontSize:13,
+                            background:incomeScanResult.success?'rgba(0,212,161,0.08)':'rgba(244,63,94,0.08)',
+                            border:`1px solid ${incomeScanResult.success?'rgba(0,212,161,0.2)':'rgba(244,63,94,0.2)'}`,
+                            color:incomeScanResult.success?'#00d4a1':'#f43f5e'}}>
+                            {incomeScanResult.success?'✅':'⚠'} {incomeScanResult.message}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* ── ADD STOCK MODAL ── */}
-      {showAddStock && (
-        <div className="db-modal-overlay" onClick={e => { if(e.target===e.currentTarget){ setShowAddStock(false); setStockResults([]); }}}>
-          <div className="db-modal fade-in" style={{ maxWidth:460 }}>
+      {/* ── MANUAL INCOME ENTRY ── */}
+      {showManualEntry && (
+        <div className="db-modal-overlay" onClick={e=>{if(e.target===e.currentTarget)setShowManualEntry(false);}}>
+          <div className="db-modal fade-in" style={{maxWidth:480}}>
             <div className="db-modal-header">
-              <div className="db-modal-title">+ Add Stock Holding</div>
-              <button className="db-modal-close" onClick={() => { setShowAddStock(false); setStockResults([]); }}>✕</button>
+              <div className="db-modal-title">✎ Add Income Entry</div>
+              <button className="db-modal-close" onClick={()=>setShowManualEntry(false)}>✕</button>
             </div>
             <div className="db-modal-body">
-
-              {/* Stock Search */}
-              <div style={{ marginBottom:16 }}>
-                <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:6 }}>
-                  SEARCH STOCK
-                </label>
-                <div style={{ position:'relative' }}>
-                  <input
-                    className="db-input"
-                    placeholder="Type company name or NSE symbol e.g. HDFC, Infosys…"
-                    value={stockSearch}
-                    onChange={e => handleStockSearch(e.target.value)}
-                    autoFocus
-                    style={{ width:'100%', paddingRight: searchLoading ? 36 : 12 }}
-                  />
-                  {searchLoading && (
-                    <div style={{ position:'absolute', right:10, top:'50%', transform:'translateY(-50%)',
-                      width:14, height:14, border:'2px solid #334155', borderTopColor:'#64ffda',
-                      borderRadius:'50%', animation:'spin 0.6s linear infinite' }} />
-                  )}
-
-                  {/* Dropdown results */}
-                  {stockResults.length > 0 && (
-                    <div style={{ position:'absolute', top:'calc(100% + 4px)', left:0, right:0,
-                      background:'#1a2235', border:'1px solid #1e3a5f', borderRadius:8,
-                      zIndex:1000, maxHeight:260, overflowY:'auto', boxShadow:'0 8px 32px rgba(0,0,0,0.4)' }}>
-                      {stockResults.map(s => (
-                        <div key={s.symbol} onClick={() => handleSelectStock(s)}
-                          style={{ padding:'10px 14px', cursor:'pointer', borderBottom:'1px solid #0f1b2d',
-                            display:'flex', justifyContent:'space-between', alignItems:'center',
-                            transition:'background 0.1s' }}
-                          onMouseEnter={e => e.currentTarget.style.background='rgba(100,255,218,0.06)'}
-                          onMouseLeave={e => e.currentTarget.style.background='transparent'}>
-                          <div>
-                            <div style={{ color:'#e2e8f0', fontWeight:700, fontSize:13 }}>{s.symbol}</div>
-                            <div style={{ color:'#64748b', fontSize:11, marginTop:2 }}>{s.company}</div>
-                          </div>
-                          <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:3 }}>
-                            <span style={{ fontSize:10, color:'#334155', background:'rgba(255,255,255,0.05)',
-                              borderRadius:4, padding:'2px 6px' }}>{s.sector}</span>
-                            <span style={{ fontSize:9, color:'#1e3a5f' }}>{s.isin}</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Selected Stock preview */}
-              {selectedStock && (
-                <div style={{ background:'rgba(100,255,218,0.06)', border:'1px solid rgba(100,255,218,0.15)',
-                  borderRadius:8, padding:'12px 14px', marginBottom:16,
-                  display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-                  <div>
-                    <div style={{ color:'#64ffda', fontWeight:700, fontSize:14 }}>{selectedStock.symbol}</div>
-                    <div style={{ color:'#94a3b8', fontSize:12, marginTop:2 }}>{selectedStock.company}</div>
-                    <div style={{ color:'#334155', fontSize:10, marginTop:2 }}>{selectedStock.isin}</div>
-                  </div>
-                  <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:4 }}>
-                    <span style={{ fontSize:11, color:'#0ea5e9', background:'rgba(14,165,233,0.1)',
-                      borderRadius:4, padding:'2px 8px' }}>{selectedStock.sector}</span>
-                    <span style={{ fontSize:10, color:'#64748b' }}>NSE</span>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+                <div>
+                  <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:5}}>CATEGORY <span style={{color:'#f43f5e'}}>*</span></label>
+                  <div style={{display:'flex',gap:6}}>
+                    <select className="db-input" style={{flex:1,background:'#0f1c2e',color:'#e2e8f0',cursor:'pointer'}}
+                      value={INCOME_CATS.includes(manualEntryForm.category)?manualEntryForm.category:'__custom'}
+                      onChange={e=>{if(e.target.value!=='__custom')setManualEntryForm(p=>({...p,category:e.target.value}));}}>
+                      {INCOME_CATS.map(cat=><option key={cat} value={cat}>{cat}</option>)}
+                      <option value="__custom">Custom…</option>
+                    </select>
+                    {!INCOME_CATS.includes(manualEntryForm.category) && (
+                      <input className="db-input" style={{flex:1}} placeholder="Custom" value={manualEntryForm.category} onChange={e=>setManualEntryForm(p=>({...p,category:e.target.value}))} />
+                    )}
                   </div>
                 </div>
-              )}
-
-              {/* Quantity + Cost */}
-              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:20 }}>
                 <div>
-                  <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:6 }}>
-                    QUANTITY <span style={{ color:'#f43f5e' }}>*</span>
-                  </label>
-                  <input className="db-input" type="number" min="1" placeholder="e.g. 100"
-                    value={stockQty} onChange={e => setStockQty(e.target.value)} />
-                </div>
-                <div>
-                  <label style={{ display:'block', color:'#94a3b8', fontSize:11, fontWeight:700, marginBottom:6 }}>
-                    AVG COST <span style={{ color:'#475569', fontWeight:400 }}>(optional)</span>
-                  </label>
-                  <input className="db-input" type="number" min="0" placeholder="₹ per share"
-                    value={stockCost} onChange={e => setStockCost(e.target.value)} />
+                  <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:5}}>AMOUNT (₹) <span style={{color:'#f43f5e'}}>*</span></label>
+                  <input className="db-input" type="number" placeholder="e.g. 75000" value={manualEntryForm.amount} onChange={e=>setManualEntryForm(p=>({...p,amount:e.target.value}))} />
                 </div>
               </div>
-
-              <div style={{ background:'#0a1628', borderRadius:6, padding:'10px 12px', marginBottom:16,
-                border:'1px solid #1e3a5f', fontSize:11, color:'#475569', lineHeight:1.7 }}>
-                <span style={{ color:'#0ea5e9', fontWeight:700 }}>ℹ Auto-sync:</span> Current price &
-                sector will be fetched from Yahoo Finance automatically when you click <b style={{ color:'#94a3b8' }}>Sync Yahoo</b>.
-                Avg cost is optional — only needed for P&L tracking.
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+                <div>
+                  <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:5}}>DATE <span style={{color:'#f43f5e'}}>*</span></label>
+                  <input className="db-input" type="date" value={manualEntryForm.credited_on} onChange={e=>setManualEntryForm(p=>({...p,credited_on:e.target.value}))} />
+                </div>
+                <div>
+                  <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:5}}>RECEIVE BANK</label>
+                  <select className="db-input" style={{background:'#0f1c2e',color:'#e2e8f0',cursor:'pointer'}}
+                    value={manualEntryForm.receive_bank} onChange={e=>setManualEntryForm(p=>({...p,receive_bank:e.target.value}))}>
+                    <option value="">Select bank…</option>
+                    {(indianBanks.length?indianBanks:[{label:'HDFC Bank'},{label:'ICICI Bank'},{label:'SBI'},{label:'Axis Bank'},{label:'Other'}]).map(b=>(
+                      <option key={b.label} value={b.label}>{b.label}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
-
-              {stockError && (
-                <div style={{ color:'#f43f5e', fontSize:12, marginBottom:12, padding:'8px 12px',
-                  background:'rgba(244,63,94,0.08)', borderRadius:6, border:'1px solid rgba(244,63,94,0.2)' }}>
-                  ⚠ {stockError}
-                </div>
-              )}
-              {stockSaved && (
-                <div style={{ color:'#00d4a1', fontSize:12, marginBottom:12, padding:'8px 12px',
-                  background:'rgba(0,212,161,0.08)', borderRadius:6, border:'1px solid rgba(0,212,161,0.2)' }}>
-                  ✅ Stock added successfully!
-                </div>
-              )}
-
-              <button onClick={handleSaveStock} disabled={stockSaving || !selectedStock}
-                style={{ width:'100%', background: selectedStock ? '#64ffda' : '#1e2d3d',
-                  color: selectedStock ? '#0a0a0a' : '#334155',
-                  border:'none', borderRadius:8, padding:'13px', fontWeight:700,
-                  fontSize:14, cursor: selectedStock ? 'pointer' : 'not-allowed', transition:'all 0.2s' }}>
-                {stockSaving ? '⟳ Saving…' : '+ Add to Holdings'}
+              <div style={{marginBottom:16}}>
+                <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:5}}>DESCRIPTION</label>
+                <input className="db-input" placeholder="e.g. February Salary, Rent from tenant" value={manualEntryForm.description} onChange={e=>setManualEntryForm(p=>({...p,description:e.target.value}))} />
+              </div>
+              <button onClick={addManualEntry} disabled={!manualEntryForm.amount||!manualEntryForm.credited_on||manualEntrySaving}
+                style={{width:'100%',background:'#64ffda',color:'#0a0a0a',border:'none',borderRadius:8,padding:'12px',fontWeight:700,fontSize:14,cursor:'pointer'}}>
+                {manualEntrySaving?'⟳ Saving…':'+ Save Entry'}
               </button>
             </div>
           </div>
