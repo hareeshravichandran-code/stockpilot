@@ -538,40 +538,19 @@ export default function Dashboard() {
 
         <nav className="db-nav">
           <div className="db-nav-label">Overview</div>
-          {[
-            { id:'dashboard', icon:'⬡', label:'Dashboard' },
-            { id:'holdings',     icon:'◈', label:'Stock Holdings' },
-            { id:'mutualfunds',  icon:'◉', label:'Mutual Funds' },
-            { id:'dividends',    icon:'◎', label:'Dividends' },
-            { id:'transactions', icon:'⇄', label:'Transactions' },
-          ].map(n => (
-            <div key={n.id} className={`db-nav-item ${tab === n.id ? 'active' : ''}`}
-              onClick={() => loadTab(n.id)}>
-              <span>{n.icon}</span> {n.label}
-            </div>
-          ))}
+          <div className={`db-nav-item ${tab==='dashboard'?'active':''}`} onClick={()=>loadTab('dashboard')}><span>⬡</span> Dashboard</div>
+          <div className={`db-nav-item ${tab==='holdings'?'active':''}`} onClick={()=>loadTab('holdings')}><span>◈</span> Stock Holdings</div>
+          <div className={`db-nav-item ${tab==='mutualfunds'?'active':''}`} onClick={()=>loadTab('mutualfunds')}><span>◉</span> Mutual Funds</div>
+          <div className={`db-nav-item ${tab==='dividends'?'active':''}`} onClick={()=>loadTab('dividends')}><span>◎</span> Dividends</div>
+          <div className={`db-nav-item ${tab==='transactions'?'active':''}`} onClick={()=>loadTab('transactions')}><span>⇄</span> Transactions</div>
 
           <div className="db-nav-label" style={{marginTop:12}}>Finance</div>
-          {[
-            { id:'income',   icon:'₹',  label:'Income' },
-            { id:'expenses', icon:'💸', label:'Expenses' },
-          ].map(n => (
-            <div key={n.id} className={`db-nav-item ${tab === n.id ? 'active' : ''}`}
-              onClick={() => loadTab(n.id)}>
-              <span>{n.icon}</span> {n.label}
-            </div>
-          ))}
+          <div className={`db-nav-item ${tab==='income'?'active':''}`} onClick={()=>loadTab('income')}><span>₹</span> Income</div>
+          <div className={`db-nav-item ${tab==='expenses'?'active':''}`} onClick={()=>loadTab('expenses')}><span>💸</span> Expenses</div>
 
           <div className="db-nav-label" style={{marginTop:12}}>Analytics</div>
-          {[
-            { id:'tax', icon:'⊞', label:'Tax Summary' },
-            { id:'admin', icon:'⚙', label:'Sync Logs' },
-          ].map(n => (
-            <div key={n.id} className={`db-nav-item ${tab === n.id ? 'active' : ''}`}
-              onClick={() => loadTab(n.id)}>
-              <span>{n.icon}</span> {n.label}
-            </div>
-          ))}
+          <div className={`db-nav-item ${tab==='tax'?'active':''}`} onClick={()=>loadTab('tax')}><span>⊞</span> Tax Summary</div>
+          <div className={`db-nav-item ${tab==='admin'?'active':''}`} onClick={()=>loadTab('admin')}><span>⚙</span> Sync Logs</div>
         </nav>
 
         <div className="db-sidebar-footer">
