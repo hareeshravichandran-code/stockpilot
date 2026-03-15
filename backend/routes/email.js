@@ -523,9 +523,11 @@ async function saveSingleMF(userId, h, statementDate) {
 
   if (error) {
     console.error(JSON.stringify({ event: 'MF_SAVE_ERROR', fund: record.fund_name, folio: record.folio_number, isin: record.isin, error: error.message, errorCode: error.code }));
+    console.error('[MF_SAVE_ERROR] ' + record.fund_name + ' folio=' + record.folio_number + ' isin=' + record.isin + ' err=' + error.message + ' code=' + error.code);
     return false;
   }
   console.log(JSON.stringify({ event: 'MF_SAVE_OK', fund: record.fund_name?.slice(0,40), folio: record.folio_number, isin: record.isin, units: record.units, statementDate: record.statement_date }));
+  console.log('[MF_SAVE_OK] ' + record.fund_name?.slice(0,40) + ' folio=' + record.folio_number + ' units=' + record.units);
   return true;
 }
 
@@ -641,6 +643,58 @@ router.get('/failures', requireAuth, async (req, res) => {
     .order('logged_at', { ascending: false }).limit(50);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ failures: data || [] });
+});
+
+
+// ── MF Debug: diagnose mf_holdings table ─────────────────────────────
+router.get('/debug-mf', requireAuth, async (req, res) => {
+  const supabase = require('../services/supabase');
+  const results = {};
+
+  // 1. Check if table exists and count rows
+  try {
+    const { data, error, count } = await supabase
+      .from('mf_holdings').select('*', { count: 'exact', head: true });
+    results.tableExists = !error;
+    results.rowCount = count;
+    results.tableError = error ? { message: error.message, code: error.code, details: error.details, hint: error.hint } : null;
+  } catch(e) {
+    results.tableExists = false;
+    results.tableException = e.message;
+  }
+
+  // 2. Try a test insert to see exact error
+  if (results.tableExists) {
+    const testRecord = {
+      user_id: req.user.id,
+      isin: 'TEST_ISIN_DELETE_ME',
+      folio_number: 'TEST_FOLIO',
+      fund_name: 'Test Fund DELETE ME',
+      units: 1.0,
+      source: 'NSDL',
+    };
+    const { data: ins, error: insErr } = await supabase.from('mf_holdings').insert(testRecord).select();
+    results.insertTest = insErr
+      ? { success: false, error: insErr.message, code: insErr.code, details: insErr.details, hint: insErr.hint }
+      : { success: true, id: ins?.[0]?.id };
+
+    // Clean up test row
+    if (!insErr && ins?.[0]?.id) {
+      await supabase.from('mf_holdings').delete().eq('id', ins[0].id);
+    }
+  }
+
+  // 3. Show sample rows
+  if (results.tableExists) {
+    const { data: rows } = await supabase.from('mf_holdings')
+      .select('isin, folio_number, fund_name, units, source').eq('user_id', req.user.id).limit(5);
+    results.sampleRows = rows || [];
+  }
+
+  // 4. Show current user_id
+  results.userId = req.user.id;
+
+  return res.json(results);
 });
 
 module.exports = router;
