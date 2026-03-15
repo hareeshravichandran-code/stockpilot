@@ -722,23 +722,23 @@ router.get('/debug-mf-text', async (req, res) => {
     const { data: userRow } = await supabase.from('users')
       .select('pan, dob').eq('id', conn.user_id).single();
 
-    // Specifically search for NSDL CAS email
-    const query = 'subject:"NSDL CAS" has:attachment';
-    let emails = await fetchEmails(conn.access_token, conn.refresh_token, query, userRow || {});
+    // Show ALL emails found — we need to see what subjects are available
+    const query = 'from:(nsdl.co.in OR nsdlindia.com OR cdslstatement.com OR cvlindia.com) has:attachment';
+    const emails = await fetchEmails(conn.access_token, conn.refresh_token, query, userRow || {});
 
-    // Fallback: broader search
-    if (!emails?.length) {
-      const q2 = 'from:(nsdl.co.in OR nsdlindia.com) has:attachment';
-      emails = await fetchEmails(conn.access_token, conn.refresh_token, q2, userRow || {});
-    }
-
-    if (!emails?.length) return res.json({ error: 'No NSDL emails found', tried: [query] });
+    if (!emails?.length) return res.json({ error: 'No emails found', query });
 
     emails.sort((a, b) => new Date(b.date) - new Date(a.date));
-    // Pick the most recent NSDL CAS (not e-voting, not newsletter)
+
+    // Show all subjects found
+    const allSubjects = emails.map(e => ({ subject: e.subject, from: e.from, date: e.date, hasPdf: e.hasPdf }));
+
+    // Pick the one most likely to be NSDL CAS with MF data
     const email = emails.find(e =>
-      e.subject?.includes('NSDL CAS') || e.subject?.includes('NSDL ID')
-    ) || emails[0];
+      e.subject?.includes('NSDL ID') ||
+      e.subject?.includes('NSDL CAS') ||
+      (e.subject?.toLowerCase().includes('nsdl') && e.subject?.toLowerCase().includes('cas'))
+    ) || emails.find(e => e.hasPdf) || emails[0];
 
     const pdfMarker = '--- PDF ATTACHMENT ---';
     const pdfIdx = email.body?.indexOf(pdfMarker) ?? -1;
@@ -752,7 +752,9 @@ router.get('/debug-mf-text', async (req, res) => {
     const parsed = parseCAS(fullText);
 
     return res.json({
-      subject: email.subject,
+      allEmailsFound: allSubjects,
+      selectedEmail: email?.subject,
+      subject: email?.subject,
       pdfFound: pdfIdx >= 0,
       fullTextLen: fullText.length,
       mfSectionFound: mfIdx >= 0,
