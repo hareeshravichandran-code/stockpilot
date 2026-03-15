@@ -144,7 +144,14 @@ router.post('/sync-prices', requireAuth, async (req, res) => {
 
     res.json({ success: true, updated, total: holdings.length,
       message: `Synced ${updated}/${holdings.length} holdings from Yahoo Finance` });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    console.error(JSON.stringify({
+      event:   'PORTFOLIO_500',
+      message: err.message,
+      stack:   err.stack?.split('\n').slice(0,5).join(' | '),
+    }));
+    res.status(500).json({ error: err.message || 'Portfolio fetch failed' });
+  }
 });
 
 // ── Stock search autocomplete ──────────────────────────────────────
