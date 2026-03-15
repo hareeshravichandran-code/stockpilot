@@ -461,50 +461,31 @@ async function saveCASHoldings(userId, holdings, mfHoldings, casDate) {
       updated_at:     new Date().toISOString(),
     }));
 
-    // Insert all in one batch
-    const { data: inserted, error: bulkErr } = await supabase
-      .from('mf_holdings').insert(records).select('id');
-
-    if (bulkErr) {
-      console.error('[MF_BULK_ERROR] ' + bulkErr.message + ' code=' + bulkErr.code);
-      console.error(JSON.stringify({ event: 'MF_BULK_ERROR', error: bulkErr.message, code: bulkErr.code, details: bulkErr.details }));
-      // Store error in sync_logs for visibility
-      try { await supabase.from('sync_logs').insert({
-        user_id: userId, session_id: 'mf-bulk-' + Date.now(),
-        phase: 'mf_bulk_save', error_type: 'MF_BULK_ERROR',
-        error_message: bulkErr.message + ' code=' + bulkErr.code,
-        logged_at: new Date().toISOString(),
-      }); } catch(e) {}
-      // Fallback: insert one by one to save what we can
-      for (const rec of records) {
-        const { error: singleErr } = await supabase.from('mf_holdings').insert(rec);
-        if (singleErr) {
-          console.error('[MF_SINGLE_ERROR] ' + rec.fund_name + ' err=' + singleErr.message);
-          try { await supabase.from('sync_logs').insert({
-            user_id: userId, session_id: 'mf-single-' + Date.now(),
-            phase: 'mf_single_save', error_type: 'MF_SINGLE_ERROR',
-            error_message: rec.fund_name + ' folio=' + rec.folio_number + ' err=' + singleErr.message,
-            email_subject: rec.isin,
-            logged_at: new Date().toISOString(),
-          }); } catch(e) {}
-        } else {
-          saved++;
-          console.log('[MF_SAVE_OK] ' + rec.fund_name?.slice(0,40) + ' folio=' + rec.folio_number);
-        }
+    // Insert one-by-one after DELETE.
+    // Bulk insert fails if same ISIN appears multiple times (e.g. HDFC Nifty 50 in 3 folios)
+    // because the old unique constraint fires within the batch.
+    // One-by-one is safe: each row is a fresh insert into an empty table.
+    let savedCount = 0;
+    const errors = [];
+    for (const rec of records) {
+      const { error: insErr } = await supabase.from('mf_holdings').insert(rec);
+      if (insErr) {
+        errors.push(rec.isin + ':' + rec.folio_number + '=' + insErr.message);
+        console.error('[MF_INSERT_ERROR] isin=' + rec.isin + ' folio=' + rec.folio_number + ' err=' + insErr.message + ' code=' + insErr.code);
+      } else {
+        savedCount++;
+        console.log('[MF_SAVE_OK] ' + (rec.fund_name||rec.isin).slice(0,35) + ' folio=' + rec.folio_number + ' units=' + rec.units);
       }
-    } else {
-      saved += (inserted?.length || records.length);
-      console.log('[MF_BULK_OK] Saved ' + (inserted?.length || records.length) + ' MF holdings');
-      records.forEach(r => console.log('[MF_SAVE_OK] ' + r.fund_name?.slice(0,40) + ' folio=' + r.folio_number + ' units=' + r.units));
-      // Store success in sync_logs
-      try { await supabase.from('sync_logs').insert({
-        user_id: userId, session_id: 'mf-ok-' + Date.now(),
-        phase: 'mf_bulk_save', error_type: 'MF_BULK_OK',
-        error_message: 'Saved ' + (inserted?.length || records.length) + ' MF holdings: ' +
-          records.map(r => r.fund_name?.slice(0,20) + '(folio=' + r.folio_number + ')').join(', '),
-        logged_at: new Date().toISOString(),
-      }); } catch(e) {}
     }
+    saved += savedCount;
+    const statusMsg = 'Saved ' + savedCount + '/' + records.length + ' MF holdings' + (errors.length ? ' ERRORS: ' + errors.join('; ') : '');
+    console.log('[MF_DONE] ' + statusMsg);
+    try { await supabase.from('sync_logs').insert({
+      user_id: userId, session_id: 'mf-' + Date.now(),
+      phase: 'mf_save', error_type: savedCount === records.length ? 'MF_BULK_OK' : 'MF_PARTIAL',
+      error_message: statusMsg,
+      logged_at: new Date().toISOString(),
+    }); } catch(e) {}
   }
 
   console.log(JSON.stringify({
