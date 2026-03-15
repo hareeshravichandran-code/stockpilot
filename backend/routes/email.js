@@ -468,11 +468,25 @@ async function saveCASHoldings(userId, holdings, mfHoldings, casDate) {
     if (bulkErr) {
       console.error('[MF_BULK_ERROR] ' + bulkErr.message + ' code=' + bulkErr.code);
       console.error(JSON.stringify({ event: 'MF_BULK_ERROR', error: bulkErr.message, code: bulkErr.code, details: bulkErr.details }));
+      // Store error in sync_logs for visibility
+      await supabase.from('sync_logs').insert({
+        user_id: userId, session_id: 'mf-bulk-' + Date.now(),
+        phase: 'mf_bulk_save', error_type: 'MF_BULK_ERROR',
+        error_message: bulkErr.message + ' code=' + bulkErr.code,
+        logged_at: new Date().toISOString(),
+      }).catch(() => {});
       // Fallback: insert one by one to save what we can
       for (const rec of records) {
         const { error: singleErr } = await supabase.from('mf_holdings').insert(rec);
         if (singleErr) {
           console.error('[MF_SINGLE_ERROR] ' + rec.fund_name + ' err=' + singleErr.message);
+          await supabase.from('sync_logs').insert({
+            user_id: userId, session_id: 'mf-single-' + Date.now(),
+            phase: 'mf_single_save', error_type: 'MF_SINGLE_ERROR',
+            error_message: rec.fund_name + ' folio=' + rec.folio_number + ' err=' + singleErr.message,
+            email_subject: rec.isin,
+            logged_at: new Date().toISOString(),
+          }).catch(() => {});
         } else {
           saved++;
           console.log('[MF_SAVE_OK] ' + rec.fund_name?.slice(0,40) + ' folio=' + rec.folio_number);
@@ -482,6 +496,14 @@ async function saveCASHoldings(userId, holdings, mfHoldings, casDate) {
       saved += (inserted?.length || records.length);
       console.log('[MF_BULK_OK] Saved ' + (inserted?.length || records.length) + ' MF holdings');
       records.forEach(r => console.log('[MF_SAVE_OK] ' + r.fund_name?.slice(0,40) + ' folio=' + r.folio_number + ' units=' + r.units));
+      // Store success in sync_logs
+      await supabase.from('sync_logs').insert({
+        user_id: userId, session_id: 'mf-ok-' + Date.now(),
+        phase: 'mf_bulk_save', error_type: 'MF_BULK_OK',
+        error_message: 'Saved ' + (inserted?.length || records.length) + ' MF holdings: ' +
+          records.map(r => r.fund_name?.slice(0,20) + '(folio=' + r.folio_number + ')').join(', '),
+        logged_at: new Date().toISOString(),
+      }).catch(() => {});
     }
   }
 
@@ -800,6 +822,46 @@ router.get('/debug-mf-text', requireAuth, async (req, res) => {
   } catch(e) {
     return res.json({ error: e.message });
   }
+});
+
+
+// ── MF Status: view MF sync results and current holdings ─────────────
+router.get('/mf-status', requireAuth, async (req, res) => {
+  const supabase = require('../services/supabase');
+
+  // Current MF holdings count
+  const { data: mfRows, error: mfErr } = await supabase
+    .from('mf_holdings').select('isin, folio_number, fund_name, units, current_value, source')
+    .eq('user_id', req.user.id);
+
+  // Recent MF-related sync log entries
+  const { data: logs } = await supabase
+    .from('sync_logs')
+    .select('phase, error_type, error_message, logged_at')
+    .eq('user_id', req.user.id)
+    .or('phase.eq.mf_bulk_save,phase.eq.mf_single_save,error_type.like.MF_%')
+    .order('logged_at', { ascending: false })
+    .limit(20);
+
+  // Also get the last successful CAS sync
+  const { data: lastSync } = await supabase
+    .from('sync_logs')
+    .select('error_type, error_message, logged_at')
+    .eq('user_id', req.user.id)
+    .eq('error_type', 'MF_BULK_OK')
+    .order('logged_at', { ascending: false })
+    .limit(1);
+
+  return res.json({
+    mfHoldingsInDB: mfRows?.length || 0,
+    mfError: mfErr?.message || null,
+    holdings: mfRows || [],
+    recentMFLogs: logs || [],
+    lastSuccessfulMFSync: lastSync?.[0] || null,
+    hint: mfRows?.length === 0
+      ? 'No MF data. Sync emails to populate. Check recentMFLogs for errors.'
+      : 'MF data present.',
+  });
 });
 
 module.exports = router;
