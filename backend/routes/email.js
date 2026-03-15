@@ -722,15 +722,23 @@ router.get('/debug-mf-text', async (req, res) => {
     const { data: userRow } = await supabase.from('users')
       .select('pan, dob').eq('id', conn.user_id).single();
 
-    const query = 'from:(cdslstatement.com OR nsdl.co.in OR nsdlindia.com OR cvlindia.com) has:attachment';
-    const emails = await fetchEmails(conn.access_token, conn.refresh_token, query, userRow || {});
+    // Specifically search for NSDL CAS email
+    const query = 'subject:"NSDL CAS" has:attachment';
+    let emails = await fetchEmails(conn.access_token, conn.refresh_token, query, userRow || {});
 
-    if (!emails?.length) return res.json({ error: 'No CAS emails found', querySent: query });
+    // Fallback: broader search
+    if (!emails?.length) {
+      const q2 = 'from:(nsdl.co.in OR nsdlindia.com) has:attachment';
+      emails = await fetchEmails(conn.access_token, conn.refresh_token, q2, userRow || {});
+    }
 
-    // Sort latest first, find NSDL one
+    if (!emails?.length) return res.json({ error: 'No NSDL emails found', tried: [query] });
+
     emails.sort((a, b) => new Date(b.date) - new Date(a.date));
-    const nsdlEmail = emails.find(e => e.subject?.toLowerCase().includes('nsdl')) || emails[0];
-    const email = nsdlEmail;
+    // Pick the most recent NSDL CAS (not e-voting, not newsletter)
+    const email = emails.find(e =>
+      e.subject?.includes('NSDL CAS') || e.subject?.includes('NSDL ID')
+    ) || emails[0];
 
     const pdfMarker = '--- PDF ATTACHMENT ---';
     const pdfIdx = email.body?.indexOf(pdfMarker) ?? -1;
