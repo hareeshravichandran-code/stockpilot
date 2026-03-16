@@ -125,8 +125,10 @@ function inDateWindow(emailDate, dayFrom, dayTo) {
 // ── Helper: compute Gmail "after:" timestamp from lookback ───────────
 function lookbackToGmailAfter(lookbackMonths) {
   if (!lookbackMonths || lookbackMonths === 0) {
-    // From now — only recent (last 2 days to catch today)
-    return Math.floor((Date.now() - 2 * 86400000) / 1000);
+    // Default: scan from 1st of current month to catch this month's income
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    return Math.floor(startOfMonth.getTime() / 1000);
   }
   const ms = lookbackMonths * 30 * 86400000;
   return Math.floor((Date.now() - ms) / 1000);
@@ -168,8 +170,8 @@ router.post('/rules', requireAuth, async (req, res) => {
     min_amount:      min_amount ? parseFloat(min_amount) : 0,
     period:          period     || 'monthly',
     remark:          remark     || null,
-    date_day_from:   date_day_from ? parseInt(date_day_from) : 28,
-    date_day_to:     date_day_to   ? parseInt(date_day_to)   : 5,
+    date_day_from:   date_day_from ? parseInt(date_day_from) : null,
+    date_day_to:     date_day_to   ? parseInt(date_day_to)   : null,
     lookback_months: lookback_months ? parseInt(lookback_months) : 0,
     credit_only:     credit_only !== false,
     is_active: true,
@@ -236,8 +238,14 @@ router.post('/scan', requireAuth, async (req, res) => {
 
     const { data: rules } = await supabase.from('income_rules')
       .select('*').eq('user_id', req.user.id).eq('is_active', true);
-    if (!rules || rules.length === 0)
-      return res.json({ found: 0, entries: [], message: 'No active rules. Create a rule first.' });
+    // If no rules, use a broad default scan for the current month
+    const effectiveRules = (rules && rules.length > 0) ? rules : [{
+      id: null, rule_name: 'Default Scan', category: 'Other',
+      receive_bank: null, bank_sender: null, subject_pattern: null,
+      body_pattern: null, account_last4: null, min_amount: 0,
+      credit_only: true, lookback_months: 0,
+      date_day_from: null, date_day_to: null,
+    }];
 
     const { google } = require('googleapis');
     const oauth2Client = new google.auth.OAuth2(
@@ -262,20 +270,37 @@ router.post('/scan', requireAuth, async (req, res) => {
     const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
     const newEntries = [];
     const scanTime = new Date().toISOString();
+    // Per-rule tracking for detailed response
+    const ruleStats = {};
+    for (const rule of effectiveRules) {
+      ruleStats[rule.rule_name] = {
+        ruleName: rule.rule_name, category: rule.category || 'Other',
+        receiveBank: rule.receive_bank || null,
+        emailsFound: 0, emailsRead: 0, captured: 0, skipped: 0,
+        skipReasons: {},
+      };
+    }
 
-    for (const rule of rules) {
+    for (const rule of effectiveRules) {
       // Build Gmail query
       const afterTs = lookbackToGmailAfter(rule.lookback_months || 0);
       const parts = [`after:${afterTs}`];
 
-      // Bank sender filter
-      if (rule.bank_sender) {
-        // If user entered a bank label, map to domain; otherwise use as-is
-        const bankMatch = INDIAN_BANKS.find(b =>
-          b.label.toLowerCase() === (rule.bank_sender || '').toLowerCase()
-        );
-        parts.push(`from:${bankMatch ? bankMatch.domain : rule.bank_sender}`);
+      // Build from: filter using receive_bank (mandatory) + bank_sender (optional override)
+      const senderToSearch = rule.bank_sender || null;
+      const bankLabel = rule.receive_bank || '';
+      const bankRecord = INDIAN_BANKS.find(b =>
+        b.label.toLowerCase() === bankLabel.toLowerCase()
+      );
+
+      if (senderToSearch) {
+        // User typed explicit sender email - use as-is
+        parts.push(`from:${senderToSearch}`);
+      } else if (bankRecord) {
+        // Use bank domain from our lookup table
+        parts.push(`from:${bankRecord.domain}`);
       }
+      // If neither - no from: filter, rely on credit keywords
 
       // Subject pattern
       if (rule.subject_pattern) parts.push(`subject:"${rule.subject_pattern}"`);
@@ -294,16 +319,19 @@ router.post('/scan', requireAuth, async (req, res) => {
           userId: 'me', q: query, maxResults: 100
         });
         messageIds = listRes.data.messages || [];
+        if (ruleStats[rule.rule_name]) ruleStats[rule.rule_name].emailsFound = messageIds.length;
       } catch(e) {
         console.warn(`[INCOME_SCAN] Gmail search failed rule=${rule.id}: ${e.message}`);
+        if (ruleStats[rule.rule_name]) ruleStats[rule.rule_name].skipReasons['query_error'] = e.message;
         continue;
       }
 
       for (const msg of messageIds) {
+        if (ruleStats[rule.rule_name]) ruleStats[rule.rule_name].emailsRead++;
         // Skip already-imported emails
         const { data: existing } = await supabase.from('income_entries')
           .select('id').eq('user_id', req.user.id).eq('email_id', msg.id).maybeSingle();
-        if (existing) continue;
+        if (existing) continue; // already imported - not counted
 
         let fullMsg;
         try {
@@ -332,26 +360,49 @@ router.post('/scan', requireAuth, async (req, res) => {
         getBody(fullMsg.data.payload?.parts);
 
         // ── Filter 1: Credit only ──
-        if (rule.credit_only !== false && !isCreditEmail(subject, bodyText)) continue;
+        if (rule.credit_only !== false && !isCreditEmail(subject, bodyText)) {
+          if (ruleStats[rule.rule_name]) { ruleStats[rule.rule_name].skipped++; const k='not credit'; ruleStats[rule.rule_name].skipReasons[k]=(ruleStats[rule.rule_name].skipReasons[k]||0)+1; }
+          continue;
+        }
 
         // ── Filter 2: Body pattern ──
         const combined = (subject + ' ' + bodyText).toLowerCase();
-        if (rule.body_pattern && !combined.includes(rule.body_pattern.toLowerCase())) continue;
+        if (rule.body_pattern && !combined.includes(rule.body_pattern.toLowerCase())) {
+          if (ruleStats[rule.rule_name]) { ruleStats[rule.rule_name].skipped++; const k='body pattern'; ruleStats[rule.rule_name].skipReasons[k]=(ruleStats[rule.rule_name].skipReasons[k]||0)+1; }
+          continue;
+        }
 
         // ── Filter 3: Account last 4 ──
-        if (rule.account_last4 && !combined.includes(rule.account_last4)) continue;
+        if (rule.account_last4 && !combined.includes(rule.account_last4)) {
+          if (ruleStats[rule.rule_name]) { ruleStats[rule.rule_name].skipped++; const k='account mismatch'; ruleStats[rule.rule_name].skipReasons[k]=(ruleStats[rule.rule_name].skipReasons[k]||0)+1; }
+          continue;
+        }
 
-        // ── Filter 4: Date window ──
+        // ── Get email date ──
         let credited_on;
         try { credited_on = new Date(dateHdr).toISOString().split('T')[0]; }
         catch(e) { credited_on = new Date().toISOString().split('T')[0]; }
 
-        if (!inDateWindow(credited_on, rule.date_day_from, rule.date_day_to)) continue;
+        // ── Filter: Date window (only if user explicitly set it) ──
+        // e.g. window 28→5: salary arrives between 28th of prev month and 5th of this month
+        // If date_day_from/to are null, all dates pass through
+        if (rule.date_day_from && rule.date_day_to) {
+          if (!inDateWindow(credited_on, rule.date_day_from, rule.date_day_to)) {
+            if (ruleStats[rule.rule_name]) { ruleStats[rule.rule_name].skipped++; const k=`outside date window ${rule.date_day_from}-${rule.date_day_to}`; ruleStats[rule.rule_name].skipReasons[k]=(ruleStats[rule.rule_name].skipReasons[k]||0)+1; }
+            continue;
+          }
+        }
 
         // ── Extract amount ──
         const amount = extractAmount(subject, bodyText);
-        if (!amount || isNaN(amount) || amount <= 0) continue;
-        if (rule.min_amount > 0 && amount < rule.min_amount) continue;
+        if (!amount || isNaN(amount) || amount <= 0) {
+          if (ruleStats[rule.rule_name]) { ruleStats[rule.rule_name].skipped++; const k='no amount found'; ruleStats[rule.rule_name].skipReasons[k]=(ruleStats[rule.rule_name].skipReasons[k]||0)+1; }
+          continue;
+        }
+        if (rule.min_amount > 0 && amount < rule.min_amount) {
+          if (ruleStats[rule.rule_name]) { ruleStats[rule.rule_name].skipped++; const k=`below min ₹${rule.min_amount}`; ruleStats[rule.rule_name].skipReasons[k]=(ruleStats[rule.rule_name].skipReasons[k]||0)+1; }
+          continue;
+        }
 
         // ── Save entry ──
         const { data: entry, error: insertErr } = await supabase
@@ -372,25 +423,43 @@ router.post('/scan', requireAuth, async (req, res) => {
 
         if (!insertErr && entry) {
           newEntries.push(entry);
-          console.log(`[INCOME_SCAN] Saved entry: rule="${rule.rule_name}" amount=${amount} date=${credited_on}`);
+          if (ruleStats[rule.rule_name]) ruleStats[rule.rule_name].captured++;
+          console.log(`[INCOME_SCAN] Saved entry: rule="${rule.rule_name}" amount=₹${amount} date=${credited_on}`);
+        } else if (insertErr) {
+          console.error('[INCOME_SCAN] Insert failed:', insertErr.message);
         }
       }
     }
 
-    // Update last_scan_at on rules
-    const ruleIds = [...new Set(rules.map(r => r.id))];
-    await supabase.from('income_rules')
-      .update({ updated_at: scanTime })
-      .in('id', ruleIds)
-      .eq('user_id', req.user.id);
+    // Update last_scan_at on real rules (not the default placeholder)
+    const realRuleIds = [...new Set(effectiveRules.filter(r => r.id).map(r => r.id))];
+    if (realRuleIds.length > 0) {
+      await supabase.from('income_rules')
+        .update({ updated_at: scanTime })
+        .in('id', realRuleIds)
+        .eq('user_id', req.user.id);
+    }
+
+    const totalEmailsRead    = Object.values(ruleStats).reduce((s,r)=>s+r.emailsRead,0);
+    const totalEmailsFound   = Object.values(ruleStats).reduce((s,r)=>s+r.emailsFound,0);
+    const totalSkipped       = Object.values(ruleStats).reduce((s,r)=>s+r.skipped,0);
+
+    const summary = newEntries.length > 0
+      ? `✅ Captured ${newEntries.length} income entr${newEntries.length>1?'ies':'y'} from ${totalEmailsRead} emails read`
+      : `📭 No new income found. Read ${totalEmailsRead} email${totalEmailsRead!==1?'s':''} across ${effectiveRules.length} rule${effectiveRules.length!==1?'s':''}.`;
+
+    console.log(`[INCOME_SCAN] Done: found=${totalEmailsFound} read=${totalEmailsRead} captured=${newEntries.length} skipped=${totalSkipped}`);
 
     res.json({
-      found:   newEntries.length,
-      entries: newEntries,
-      scannedAt: scanTime,
-      message: newEntries.length > 0
-        ? `Found ${newEntries.length} new income credit${newEntries.length > 1 ? 's' : ''}`
-        : 'No new income found. Rules active, will check again on next scan.',
+      found:          newEntries.length,
+      emailsFound:    totalEmailsFound,
+      emailsRead:     totalEmailsRead,
+      emailsSkipped:  totalSkipped,
+      rulesApplied:   effectiveRules.length,
+      ruleResults:    Object.values(ruleStats),
+      entries:        newEntries,
+      scannedAt:      scanTime,
+      message:        summary,
     });
   } catch (err) {
     console.error('[INCOME_SCAN_ERROR]', err.message);

@@ -261,7 +261,8 @@ function extractMerchantAndAmount(subject, body) {
   const amtPatterns = [
     /₹\s*([\d,]+(?:\.\d{1,2})?)/,
     /(?:Rs\.?|INR)\s*([\d,]+(?:\.\d{1,2})?)/i,
-    /(?:debited|paid|amount)\s*(?:of|:)?\s*(?:₹|Rs\.?|INR)?\s*([\d,]+(?:\.\d{1,2})?)/i,
+    /(?:debited|paid|spent|transaction|amount)\s*(?:of|:)?\s*(?:₹|Rs\.?|INR)?\s*([\d,]+(?:\.\d{1,2})?)/i,
+    /(?:Rs\.?|INR|₹)?\s*([\d,]{4,}(?:\.\d{2})?)\s*(?:debited|paid|spent|charged)/i,
   ];
   for (const p of amtPatterns) {
     const m = text.match(p);
@@ -296,6 +297,10 @@ function isDebitEmail(subject, body) {
     'debited', 'debit alert', 'payment successful', 'paid to',
     'amount debited', 'has been debited', 'sent to', 'transferred to',
     'upi debit', 'dr alert', 'purchase', 'spent',
+    'payment made', 'payment of', 'via upi', 'made via',
+    'transaction at', 'transaction of',
+    'your payment', 'bill payment', 'emi paid', 'emi debited',
+    'used at', 'charged at', 'pos transaction',
   ];
   const creditSignals = [
     'credited', 'credit alert', 'amount credited', 'received',
@@ -488,32 +493,53 @@ router.post('/scan', requireAuth, async (req, res) => {
     const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
     // Build queries: use rules OR default debit query
+    // Build Gmail queries from rules (or default if none)
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthTs = Math.floor(startOfMonth.getTime() / 1000);
+
     const queries = rules && rules.length > 0
       ? rules.map(r => {
-          const parts = [`after:${Math.floor((Date.now() - (r.lookback_months||0)*30*86400000 || Date.now() - 2*86400000) / 1000)}`];
-          if (r.email_sender)     parts.push(`from:${r.email_sender}`);
-          if (r.subject_pattern)  parts.push(`subject:"${r.subject_pattern}"`);
-          return { query: parts.join(' '), rule: r };
+          const lookbackTs = r.lookback_months > 0
+            ? Math.floor((Date.now() - r.lookback_months * 30 * 86400000) / 1000)
+            : monthTs;
+          const parts = [`after:${lookbackTs}`];
+          if (r.email_sender)    parts.push(`from:${r.email_sender}`);
+          if (r.subject_pattern) parts.push(`subject:"${r.subject_pattern}"`);
+          // Always add debit signals to narrow results
+          parts.push('(debited OR "paid to" OR "payment successful" OR "UPI debit" OR "amount debited" OR "payment made" OR "spent" OR "transaction")');
+          return { query: parts.join(' '), rule: r, label: r.rule_name };
         })
       : [{
-          query: `(debited OR "paid to" OR "payment successful" OR "UPI debit" OR "amount debited") after:${Math.floor((Date.now() - 2*86400000)/1000)}`,
-          rule: null
+          query: `(debited OR "paid to" OR "payment successful" OR "UPI debit" OR "amount debited" OR "payment made" OR "spent" OR "transaction") after:${monthTs}`,
+          rule: null, label: 'Default Scan'
         }];
 
     const newEntries = [];
+    const queryStats = [];  // per-query tracking
 
-    for (const { query, rule } of queries) {
+    for (const { query, rule, label } of queries) {
+      const qStat = { ruleName: label, query, emailsFound: 0, emailsRead: 0, captured: 0, skipped: 0, skipReasons: {} };
+      queryStats.push(qStat);
+
       let messageIds = [];
       try {
         const listRes = await gmail.users.messages.list({ userId:'me', q:query, maxResults:100 });
         messageIds = listRes.data.messages || [];
-      } catch(e) { continue; }
+        qStat.emailsFound = messageIds.length;
+        console.log(`[EXPENSE_SCAN] rule="${label}" query="${query.slice(0,80)}" found=${messageIds.length} emails`);
+      } catch(e) {
+        qStat.skipReasons['query_error'] = e.message;
+        console.warn(`[EXPENSE_SCAN] Query failed: ${e.message}`);
+        continue;
+      }
 
       for (const msg of messageIds) {
+        qStat.emailsRead++;
         // Skip already imported
         const { data: existing } = await supabase.from('expense_entries')
           .select('id').eq('user_id', req.user.id).eq('email_id', msg.id).maybeSingle();
-        if (existing) continue;
+        if (existing) { qStat.emailsRead--; continue; } // already imported, don't count
 
         let fullMsg;
         try {
@@ -539,10 +565,16 @@ router.post('/scan', requireAuth, async (req, res) => {
         getBody(fullMsg.data.payload?.parts);
 
         // Must be a debit email
-        if (!isDebitEmail(subject, bodyText)) continue;
+        if (!isDebitEmail(subject, bodyText)) {
+          qStat.skipped++; qStat.skipReasons['not debit']=(qStat.skipReasons['not debit']||0)+1;
+          continue;
+        }
 
         const { amount, merchant } = extractMerchantAndAmount(subject, bodyText);
-        if (!amount || amount <= 0) continue;
+        if (!amount || amount <= 0) {
+          qStat.skipped++; qStat.skipReasons['no amount']=(qStat.skipReasons['no amount']||0)+1;
+          continue;
+        }
 
         let expense_date;
         try { expense_date = new Date(dateHdr).toISOString().split('T')[0]; }
@@ -566,16 +598,35 @@ router.post('/scan', requireAuth, async (req, res) => {
           category_source: catResult.source,
         }).select().single();
 
-        if (!insertErr && entry) newEntries.push(entry);
+        if (!insertErr && entry) {
+          newEntries.push(entry);
+          qStat.captured++;
+          console.log(`[EXPENSE_SCAN] Captured: ₹${amount} at "${catResult.merchant_name||'unknown'}" (${catResult.category||'uncategorized'})`);
+        } else if (insertErr) {
+          console.error('[EXPENSE_SCAN] Insert error:', insertErr.message);
+        }
       }
     }
 
+    const totalRead    = queryStats.reduce((s,q)=>s+q.emailsRead, 0);
+    const totalFound   = queryStats.reduce((s,q)=>s+q.emailsFound, 0);
+    const totalSkipped = queryStats.reduce((s,q)=>s+q.skipped, 0);
+
+    const summary = newEntries.length > 0
+      ? `✅ Captured ${newEntries.length} expense${newEntries.length>1?'s':''} from ${totalRead} emails read`
+      : `📭 No new expenses found. Read ${totalRead} email${totalRead!==1?'s':''} across ${queries.length} rule${queries.length!==1?'s':''}.`;
+
+    console.log(`[EXPENSE_SCAN] Done: found=${totalFound} read=${totalRead} captured=${newEntries.length} skipped=${totalSkipped}`);
+
     res.json({
-      found: newEntries.length,
-      entries: newEntries,
-      message: newEntries.length > 0
-        ? `Found ${newEntries.length} new expense${newEntries.length > 1 ? 's' : ''}`
-        : 'No new expenses found. Expenses are auto-scanned every 30 minutes.',
+      found:         newEntries.length,
+      emailsFound:   totalFound,
+      emailsRead:    totalRead,
+      emailsSkipped: totalSkipped,
+      rulesApplied:  queries.length,
+      ruleResults:   queryStats,
+      entries:       newEntries,
+      message:       summary,
     });
   } catch (err) {
     console.error('[EXPENSE_SCAN]', err.message);
