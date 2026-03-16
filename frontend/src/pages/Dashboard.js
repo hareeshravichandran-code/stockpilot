@@ -74,7 +74,7 @@ export default function Dashboard() {
     rule_name:'', category:'Salary', receive_bank:'', bank_sender:'',
     subject_pattern:'', body_pattern:'', account_last4:'',
     min_amount:'', period:'monthly', remark:'',
-    date_day_from:'28', date_day_to:'5',
+    date_day_from:'', date_day_to:'',
     lookback_months:'0', credit_only: true,
   };
   const [ruleForm, setRuleForm] = useState(EMPTY_RULE);
@@ -180,10 +180,18 @@ export default function Dashboard() {
     setExpenseScanning(true); setExpenseScanResult(null);
     try {
       const r = await api.post('/api/expense/scan');
-      setExpenseScanResult({ success:true, message:r.data.message, found:r.data.found });
+      setExpenseScanResult({
+        success:      true,
+        message:      r.data.message,
+        found:        r.data.found        || 0,
+        emailsFound:  r.data.emailsFound  || 0,
+        emailsRead:   r.data.emailsRead   || 0,
+        rulesApplied: r.data.rulesApplied || 0,
+        ruleResults:  r.data.ruleResults  || [],
+      });
       await loadExpenses();
     } catch(e) {
-      setExpenseScanResult({ success:false, message: e.response?.data?.error || 'Scan failed' });
+      setExpenseScanResult({ success:false, message: e.response?.data?.error || 'Scan failed. Check Gmail is connected.' });
     } finally { setExpenseScanning(false); }
   };
 
@@ -349,10 +357,19 @@ export default function Dashboard() {
     setIncomeScanning(true); setIncomeScanResult(null);
     try {
       const r = await incomeAPI.scan();
-      setIncomeScanResult({ success: true, message: r.data.message, found: r.data.found });
-      if (r.data.found > 0) await loadIncome();
+      setIncomeScanResult({
+        success:      true,
+        message:      r.data.message,
+        found:        r.data.found        || 0,
+        emailsFound:  r.data.emailsFound  || 0,
+        emailsRead:   r.data.emailsRead   || 0,
+        rulesApplied: r.data.rulesApplied || 0,
+        ruleResults:  r.data.ruleResults  || [],
+        scannedAt:    r.data.scannedAt,
+      });
+      await loadIncome(); // always reload to refresh list
     } catch(e) {
-      setIncomeScanResult({ success: false, message: e.response?.data?.error || 'Scan failed' });
+      setIncomeScanResult({ success: false, message: e.response?.data?.error || 'Scan failed. Check Gmail is connected.' });
     } finally { setIncomeScanning(false); }
   };
 
@@ -378,7 +395,7 @@ export default function Dashboard() {
     } else {
       setRuleForm({ rule_name:'', category:'Salary', receive_bank:'', bank_sender:'',
         subject_pattern:'', body_pattern:'', account_last4:'', min_amount:'',
-        period:'monthly', remark:'', date_day_from:'28', date_day_to:'5',
+        period:'monthly', remark:'', date_day_from:'', date_day_to:'',
         lookback_months:'0', credit_only: true });
       setEditingRule(null);
     }
@@ -1373,11 +1390,36 @@ export default function Dashboard() {
               </div>
 
               {expenseScanResult&&(
-                <div style={{padding:'10px 16px',borderRadius:8,marginBottom:18,fontSize:13,
-                  background:expenseScanResult.success?'rgba(0,212,161,0.08)':'rgba(244,63,94,0.08)',
-                  border:`1px solid ${expenseScanResult.success?'rgba(0,212,161,0.2)':'rgba(244,63,94,0.2)'}`,
-                  color:expenseScanResult.success?'#00d4a1':'#f43f5e'}}>
-                  {expenseScanResult.success?'✅':'⚠'} {expenseScanResult.message}
+                <div style={{background:expenseScanResult.success?'rgba(251,146,60,0.06)':'rgba(244,63,94,0.06)',border:`1px solid ${expenseScanResult.success?'rgba(251,146,60,0.25)':'rgba(244,63,94,0.25)'}`,borderRadius:10,padding:'14px 18px',marginBottom:18}}>
+                  <div style={{fontSize:13,fontWeight:600,color:expenseScanResult.success?'#fb923c':'#f43f5e',marginBottom:expenseScanResult.emailsRead>0?8:0}}>
+                    {expenseScanResult.success?'✅':'⚠'} {expenseScanResult.message}
+                  </div>
+                  {expenseScanResult.success&&expenseScanResult.emailsRead>0&&(
+                    <div style={{display:'flex',gap:20,flexWrap:'wrap',marginBottom:expenseScanResult.ruleResults?.length?10:0}}>
+                      {[{label:'Emails Found',val:expenseScanResult.emailsFound||0},{label:'Emails Read',val:expenseScanResult.emailsRead||0},{label:'Captured',val:expenseScanResult.found||0,hi:true},{label:'Rules',val:expenseScanResult.rulesApplied||0}].map(s=>(
+                        <div key={s.label} style={{textAlign:'center',minWidth:55}}>
+                          <div style={{fontWeight:700,fontSize:20,color:s.hi?'#fb923c':'#e2e8f0'}}>{s.val}</div>
+                          <div style={{fontSize:10,color:'#475569',marginTop:1}}>{s.label}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {expenseScanResult.ruleResults?.length>0&&(
+                    <div style={{borderTop:'1px solid rgba(255,255,255,0.05)',paddingTop:10}}>
+                      <div style={{fontSize:10,color:'#475569',fontWeight:700,letterSpacing:1,marginBottom:6,textTransform:'uppercase'}}>Per Rule</div>
+                      {expenseScanResult.ruleResults.map((r,i)=>(
+                        <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 8px',marginBottom:3,background:'rgba(255,255,255,0.02)',borderRadius:6}}>
+                          <span style={{color:'#e2e8f0',fontSize:12,fontWeight:600,flex:1}}>{r.ruleName}</span>
+                          <div style={{display:'flex',gap:12,fontSize:11}}>
+                            <span style={{color:'#475569'}}>{r.emailsFound||0} found</span>
+                            <span style={{color:'#64748b'}}>{r.emailsRead||0} read</span>
+                            <span style={{color:r.captured>0?'#fb923c':'#475569',fontWeight:r.captured>0?700:400}}>{r.captured||0} captured</span>
+                            {(r.skipped||0)>0&&<span style={{color:'#374151'}}>{r.skipped} skipped</span>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1559,12 +1601,37 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {incomeScanResult && (
-                <div style={{ padding:'10px 16px', borderRadius:8, marginBottom:18, fontSize:13,
-                  background: incomeScanResult.success ? 'rgba(0,212,161,0.08)' : 'rgba(244,63,94,0.08)',
-                  border: `1px solid ${incomeScanResult.success ? 'rgba(0,212,161,0.2)' : 'rgba(244,63,94,0.2)'}`,
-                  color: incomeScanResult.success ? '#00d4a1' : '#f43f5e' }}>
-                  {incomeScanResult.success ? '✅' : '⚠'} {incomeScanResult.message}
+              {incomeScanResult&&(
+                <div style={{background:incomeScanResult.success?'rgba(0,212,161,0.06)':'rgba(244,63,94,0.06)',border:`1px solid ${incomeScanResult.success?'rgba(0,212,161,0.25)':'rgba(244,63,94,0.25)'}`,borderRadius:10,padding:'14px 18px',marginBottom:18}}>
+                  <div style={{fontSize:13,fontWeight:600,color:incomeScanResult.success?'#00d4a1':'#f43f5e',marginBottom:incomeScanResult.emailsRead>0?8:0}}>
+                    {incomeScanResult.success?'✅':'⚠'} {incomeScanResult.message}
+                  </div>
+                  {incomeScanResult.success&&incomeScanResult.emailsRead>0&&(
+                    <div style={{display:'flex',gap:20,flexWrap:'wrap',marginBottom:incomeScanResult.ruleResults?.length?10:0}}>
+                      {[{label:'Emails Found',val:incomeScanResult.emailsFound||0},{label:'Emails Read',val:incomeScanResult.emailsRead||0},{label:'Captured',val:incomeScanResult.found||0,hi:true},{label:'Rules',val:incomeScanResult.rulesApplied||0}].map(s=>(
+                        <div key={s.label} style={{textAlign:'center',minWidth:55}}>
+                          <div style={{fontWeight:700,fontSize:20,color:s.hi?'#00d4a1':'#e2e8f0'}}>{s.val}</div>
+                          <div style={{fontSize:10,color:'#475569',marginTop:1}}>{s.label}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {incomeScanResult.ruleResults?.length>0&&(
+                    <div style={{borderTop:'1px solid rgba(255,255,255,0.05)',paddingTop:10}}>
+                      <div style={{fontSize:10,color:'#475569',fontWeight:700,letterSpacing:1,marginBottom:6,textTransform:'uppercase'}}>Per Rule</div>
+                      {incomeScanResult.ruleResults.map((r,i)=>(
+                        <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 8px',marginBottom:3,background:'rgba(255,255,255,0.02)',borderRadius:6}}>
+                          <span style={{color:'#e2e8f0',fontSize:12,fontWeight:600,flex:1}}>{r.ruleName}</span>
+                          <div style={{display:'flex',gap:12,fontSize:11}}>
+                            <span style={{color:'#475569'}}>{r.emailsFound||0} found</span>
+                            <span style={{color:'#64748b'}}>{r.emailsRead||0} read</span>
+                            <span style={{color:r.captured>0?'#00d4a1':'#475569',fontWeight:r.captured>0?700:400}}>{r.captured||0} captured</span>
+                            {(r.skipped||0)>0&&<span style={{color:'#374151'}}>{r.skipped} skipped</span>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -2050,7 +2117,7 @@ export default function Dashboard() {
                           <button onClick={()=>setShowExpenseRuleForm(true)} style={{flex:1,background:'rgba(251,146,60,0.1)',border:'1px solid rgba(251,146,60,0.3)',color:'#fb923c',borderRadius:8,padding:'10px',fontWeight:700,fontSize:13,cursor:'pointer'}}>+ New Rule</button>
                           <button onClick={scanExpenses} disabled={expenseScanning} style={{flex:1,background:'#fb923c',border:'none',color:'#fff',borderRadius:8,padding:'10px',fontWeight:700,fontSize:13,cursor:'pointer'}}>{expenseScanning?'⟳ Scanning…':'⟳ Scan Now'}</button>
                         </div>
-                        {expenseScanResult&&<div style={{marginTop:12,padding:'9px 12px',borderRadius:8,fontSize:12,background:expenseScanResult.success?'rgba(0,212,161,0.08)':'rgba(244,63,94,0.08)',border:`1px solid ${expenseScanResult.success?'rgba(0,212,161,0.2)':'rgba(244,63,94,0.2)'}`,color:expenseScanResult.success?'#00d4a1':'#f43f5e'}}>{expenseScanResult.success?'✅':'⚠'} {expenseScanResult.message}</div>}
+                        {expenseScanResult&&<div style={{marginTop:10,padding:'8px 12px',borderRadius:8,fontSize:12,background:expenseScanResult.success?'rgba(251,146,60,0.08)':'rgba(244,63,94,0.08)',border:`1px solid ${expenseScanResult.success?'rgba(251,146,60,0.2)':'rgba(244,63,94,0.2)'}`,color:expenseScanResult.success?'#fb923c':'#f43f5e'}}>{expenseScanResult.success?'✅':'⚠'} {expenseScanResult.message}{(expenseScanResult.emailsRead||0)>0&&` · ${expenseScanResult.emailsRead} read, ${expenseScanResult.found} captured`}</div>}
                       </>
                     )}
                   </>
@@ -2259,14 +2326,7 @@ export default function Dashboard() {
                           </button>
                         </div>
 
-                        {incomeScanResult && (
-                          <div style={{padding:'10px 14px',borderRadius:8,fontSize:13,
-                            background:incomeScanResult.success?'rgba(0,212,161,0.08)':'rgba(244,63,94,0.08)',
-                            border:`1px solid ${incomeScanResult.success?'rgba(0,212,161,0.2)':'rgba(244,63,94,0.2)'}`,
-                            color:incomeScanResult.success?'#00d4a1':'#f43f5e'}}>
-                            {incomeScanResult.success?'✅':'⚠'} {incomeScanResult.message}
-                          </div>
-                        )}
+                        {incomeScanResult&&<div style={{marginTop:10,padding:'8px 12px',borderRadius:8,fontSize:12,background:incomeScanResult.success?'rgba(0,212,161,0.08)':'rgba(244,63,94,0.08)',border:`1px solid ${incomeScanResult.success?'rgba(0,212,161,0.2)':'rgba(244,63,94,0.2)'}`,color:incomeScanResult.success?'#00d4a1':'#f43f5e'}}>{incomeScanResult.success?'✅':'⚠'} {incomeScanResult.message}{(incomeScanResult.emailsRead||0)>0&&` · ${incomeScanResult.emailsRead} read, ${incomeScanResult.found} captured`}</div>}
                       </>
                     )}
                   </>
