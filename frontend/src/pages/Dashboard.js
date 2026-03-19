@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
-import api, { portfolioAPI, emailAPI, authAPI, incomeAPI, mfAPI, goalsAPI } from '../lib/api';
+import api, { portfolioAPI, emailAPI, authAPI, incomeAPI, mfAPI, goalsAPI, familyAPI } from '../lib/api';
 import AdminPanel from './AdminPanel';
 import Dividends from './Dividends';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
@@ -115,6 +115,15 @@ export default function Dashboard() {
   const masked = (val) => hideValues ? '••••••' : val;
   const maskedNum = (val) => hideValues ? '₹ ••••' : val;
 
+  // ── Family state ─────────────────────────────────────────────────
+  const [familyMode, setFamilyMode]         = useState(false);
+  const [familyStatus, setFamilyStatus]     = useState({ inFamily:false, members:[], pendingInvites:[], sentInvites:[] });
+  const [familyLoading, setFamilyLoading]   = useState(false);
+  const [inviteEmail, setInviteEmail]       = useState('');
+  const [inviteSending, setInviteSending]   = useState(false);
+  const [inviteResult, setInviteResult]     = useState(null);
+  const [showFamilySettings, setShowFamilySettings] = useState(false);
+
   // ── Goals state ──────────────────────────────────────────────────
   const [goals, setGoals]                     = useState([]);
   const [goalsSummary, setGoalsSummary]       = useState({ total:0, new:0, inprogress:0, completed:0, totalTargetValue:0, totalCurrentValue:0 });
@@ -197,9 +206,12 @@ export default function Dashboard() {
   // ── Expense handlers ─────────────────────────────────────────────
   const loadExpenses = async () => {
     try {
-      const [entriesRes, rulesRes, catsRes] = await Promise.all([
-        api.get('/api/expense/entries'), api.get('/api/expense/rules'), api.get('/api/expense/categories')
+      const [rulesRes, catsRes] = await Promise.all([
+        api.get('/api/expense/rules'), api.get('/api/expense/categories')
       ]);
+      const entriesRes = familyMode
+        ? await familyAPI.combinedExpenses()
+        : await api.get('/api/expense/entries');
       setExpenseEntries(entriesRes.data.entries || []);
       setExpenseSummary(entriesRes.data.summary || { currentFYTotal:0, thisMonthTotal:0, byCategory:{}, byMonth:{}, fyLabel:'FY26', uncategorized:0 });
       setExpenseRules(rulesRes.data || []);
@@ -282,10 +294,83 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, []); // eslint-disable-line
 
+  // ── Family handlers ──────────────────────────────────────────────
+  const loadFamilyStatus = async () => {
+    setFamilyLoading(true);
+    try {
+      const r = await familyAPI.status();
+      setFamilyStatus(r.data);
+    } catch(e) { console.error(e); }
+    finally { setFamilyLoading(false); }
+  };
+
+  const sendInvite = async () => {
+    if (!inviteEmail.trim()) return;
+    setInviteSending(true); setInviteResult(null);
+    try {
+      const r = await familyAPI.invite({ email: inviteEmail.trim() });
+      setInviteResult({ success: true, message: r.data.message });
+      setInviteEmail('');
+      await loadFamilyStatus();
+    } catch(e) {
+      setInviteResult({ success: false, message: e.response?.data?.error || 'Failed to send invite' });
+    } finally { setInviteSending(false); }
+  };
+
+  const respondInvite = async (id, action) => {
+    try {
+      if (action === 'accept') await familyAPI.acceptInvite(id);
+      else                     await familyAPI.rejectInvite(id);
+      await loadFamilyStatus();
+      if (action === 'accept') await loadFamilyData(); // refresh all data in family mode
+    } catch(e) { console.error(e); }
+  };
+
+  const removeFamilyMember = async (memberId) => {
+    if (!window.confirm('Remove this member from your family?')) return;
+    await familyAPI.removeMember(memberId).catch(() => {});
+    await loadFamilyStatus();
+    if (familyMode) await loadFamilyData();
+  };
+
+  // Load all combined data when family mode is toggled on
+  const loadFamilyData = async () => {
+    try {
+      const [portRes, mfRes] = await Promise.all([
+        familyAPI.combinedPortfolio(),
+        familyAPI.combinedMF(),
+      ]);
+      // Merge into existing portfolio state with _member tag
+      setPortfolio({ holdings: portRes.data.holdings, summary: portRes.data.summary });
+      setMfData({ holdings: mfRes.data.holdings });
+    } catch(e) { console.error('loadFamilyData', e); }
+  };
+
+  // Toggle family mode
+  const toggleFamilyMode = async () => {
+    const next = !familyMode;
+    setFamilyMode(next);
+    if (next) {
+      await loadFamilyData();
+    } else {
+      // Reload individual data
+      await loadPortfolio();
+      mfAPI.get().then(r => setMfData(r.data)).catch(() => {});
+    }
+  };
+
+  // Load family status on mount if in a family
+  useEffect(() => {
+    loadFamilyStatus();
+  // eslint-disable-line
+  }, []); // eslint-disable-line
+
   // ── Goals handlers ──────────────────────────────────────────────
   const loadGoals = async () => {
     try {
-      const r = await goalsAPI.getAll();
+      const r = familyMode
+        ? await familyAPI.combinedGoals()
+        : await goalsAPI.getAll();
       setGoals(r.data.goals || []);
       setGoalsSummary(r.data.summary || {});
     } catch(e) { console.error('loadGoals', e); }
@@ -422,11 +507,18 @@ export default function Dashboard() {
   // ── Income handlers ──────────────────────────────────────────────
   const loadIncome = async () => {
     try {
-      const [rulesRes, entriesRes, banksRes] = await Promise.all([
-        incomeAPI.getRules(), incomeAPI.getEntries(), incomeAPI.getBanks()
+      const [rulesRes, banksRes] = await Promise.all([
+        incomeAPI.getRules(), incomeAPI.getBanks()
       ]);
       setIncomeRules(rulesRes.data || []);
-      setIncomeEntries(entriesRes.data.entries || []);
+      // Family mode: merge all members' income
+      const entriesRes = familyMode
+        ? await familyAPI.combinedIncome()
+        : await incomeAPI.getEntries();
+      const entries = familyMode
+        ? (entriesRes.data.entries || [])
+        : (entriesRes.data.entries || []);
+      setIncomeEntries(entries);
       setIncomeSummary(entriesRes.data.summary || { currentFYTotal:0, thisMonthTotal:0, byCategory:{}, byMonth:{}, fyLabel:'FY26' });
       setIndianBanks(banksRes.data || []);
     } catch(e) { console.error('loadIncome', e); }
@@ -603,7 +695,23 @@ export default function Dashboard() {
   };
 
   const s = portfolio?.summary || {};
-  const holdings = portfolio?.holdings || [];
+  const holdings   = portfolio?.holdings || [];
+  const mfHoldings = mfData?.holdings  || [];
+
+  // Member badge for family mode
+  const MemberBadge = ({ entry }) => {
+    if (!familyMode || !entry?._member) return null;
+    return (
+      <span style={{
+        fontSize:9, padding:'1px 6px', borderRadius:10, fontWeight:700,
+        background: entry._isMe ? 'rgba(99,102,241,0.12)' : 'rgba(245,158,11,0.12)',
+        color:      entry._isMe ? '#818cf8' : '#f59e0b',
+        marginLeft: 5, whiteSpace:'nowrap',
+      }}>
+        {entry._isMe ? 'You' : entry._member}
+      </span>
+    );
+  };
 
   // Sector data for chart
   const sectorData = Object.entries(
@@ -701,6 +809,37 @@ export default function Dashboard() {
           </div>
           <div className="db-topbar-right">
             {/* Privacy toggle - eye button */}
+            {/* Family mode toggle - only shown if user is in a family */}
+            {familyStatus.inFamily && (
+              <button
+                onClick={toggleFamilyMode}
+                title={familyMode ? 'Switch to personal view' : 'Switch to family view'}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  background: familyMode ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)',
+                  border: `1px solid ${familyMode ? 'rgba(99,102,241,0.5)' : 'rgba(255,255,255,0.08)'}`,
+                  borderRadius: 8, padding: '6px 12px', cursor: 'pointer',
+                  transition: 'all 0.2s', color: familyMode ? '#818cf8' : '#64748b',
+                  fontSize: 12, fontWeight: 600,
+                }}>
+                <span style={{ fontSize: 14 }}>👨‍👩‍👧‍👦</span>
+                {familyMode ? 'Family View' : 'Personal'}
+              </button>
+            )}
+
+            {/* Pending invites bell */}
+            {familyStatus.pendingInvites?.length > 0 && (
+              <button
+                onClick={() => { setSettingsSection('family'); setShowSettings(true); }}
+                title={`${familyStatus.pendingInvites.length} pending family invite`}
+                style={{ position:'relative', background:'none', border:'none', cursor:'pointer', fontSize:20, padding:'4px 6px' }}>
+                🔔
+                <span style={{ position:'absolute', top:0, right:0, background:'#f43f5e', color:'#fff', borderRadius:'50%', fontSize:9, width:14, height:14, display:'flex', alignItems:'center', justifyContent:'center', fontWeight:700 }}>
+                  {familyStatus.pendingInvites.length}
+                </span>
+              </button>
+            )}
+
             <button
               onClick={toggleHide}
               title={hideValues ? 'Show dashboard values' : 'Hide dashboard values'}
@@ -725,6 +864,22 @@ export default function Dashboard() {
             <div className="db-live-badge">● Live · NSE</div>
           </div>
         </div>
+
+        {/* Family mode banner */}
+        {familyMode && familyStatus.inFamily && (
+          <div style={{display:'flex',alignItems:'center',gap:12,padding:'8px 28px',background:'rgba(99,102,241,0.08)',borderBottom:'1px solid rgba(99,102,241,0.2)',fontSize:12,color:'#818cf8'}}>
+            <span style={{fontSize:16}}>👨‍👩‍👧‍👦</span>
+            <span style={{fontWeight:600}}>Family View</span>
+            <span style={{color:'#475569'}}>•</span>
+            <span style={{color:'#64748b'}}>
+              Combined data from {familyStatus.members.length} member{familyStatus.members.length!==1?'s':''}:{' '}
+              {familyStatus.members.map(m=>m.isMe?'You':m.name).join(', ')}
+            </span>
+            <button onClick={toggleFamilyMode} style={{marginLeft:'auto',background:'none',border:'1px solid rgba(99,102,241,0.3)',color:'#818cf8',borderRadius:6,padding:'3px 10px',cursor:'pointer',fontSize:11}}>
+              Switch to personal
+            </button>
+          </div>
+        )}
 
         {syncResult && (
           <div className={`db-banner ${syncResult.success === true ? 'success' : syncResult.pdfLocked ? 'info' : syncResult.success === false ? 'error' : 'info'}`}>
@@ -928,14 +1083,14 @@ export default function Dashboard() {
                 <table className="db-table">
                   <thead>
                     <tr>
-                      <th>Stock</th><th>Qty</th><th className="right">Avg Cost</th>
+                      {familyMode && <th>Member</th>}<th>Stock</th><th>Qty</th><th className="right">Avg Cost</th>
                       <th className="right">LTP</th><th className="right">Value</th><th className="right">P&L</th>
                     </tr>
                   </thead>
                   <tbody>
                     {holdings.slice(0, 8).map(h => (
                       <tr key={h.symbol}>
-                        <td><div className="db-stock-name">{h.company || h.symbol}</div><div className="db-stock-sym">{h.symbol}</div></td>
+                        <td><div className="db-stock-name">{h.company || h.symbol}<MemberBadge entry={h}/></div><div className="db-stock-sym">{h.symbol}</div></td>
                         <td>{h.quantity}</td>
                         <td className="right mono">₹{Number(h.avg_cost).toFixed(2)}</td>
                         <td className="right mono">₹{Number(h.ltp).toFixed(2)}</td>
@@ -1297,7 +1452,7 @@ export default function Dashboard() {
                                 <div style={{ display:'flex', justifyContent:'space-between', fontSize:11, marginBottom:2 }}>
                                   <span style={{ color:'#cbd5e1', fontWeight:600, maxWidth:220,
                                     overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-                                    {h.fund_name}
+                                    {h.fund_name}<MemberBadge entry={h}/>
                                   </span>
                                   <div style={{ display:'flex', gap:8, flexShrink:0 }}>
                                     <span style={{ color:'#64748b' }}>{pct.toFixed(1)}%</span>
@@ -1352,7 +1507,7 @@ export default function Dashboard() {
                                   <td>
                                     <div style={{ fontWeight:600, color:'#e2e8f0', fontSize:12,
                                       maxWidth:220, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-                                      {h.fund_name}
+                                      {h.fund_name}<MemberBadge entry={h}/>
                                     </div>
                                     <div style={{ color:'#475569', fontSize:10, marginTop:1 }}>{h.fund_house}</div>
                                   </td>
@@ -1552,7 +1707,7 @@ export default function Dashboard() {
                             <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:10}}>
                               <div style={{flex:1}}>
                                 <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
-                                  <span style={{color:'#e2e8f0',fontWeight:700,fontSize:15}}>{goal.name}</span>
+                                  <span style={{color:'#e2e8f0',fontWeight:700,fontSize:15}}>{goal.name}<MemberBadge entry={goal}/></span>
                                   <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,fontWeight:700,background:`${statusColor}22`,color:statusColor}}>
                                     {goal.status==='inprogress'?'In Progress':goal.status.charAt(0).toUpperCase()+goal.status.slice(1)}
                                   </span>
@@ -1739,7 +1894,7 @@ export default function Dashboard() {
                 ):(
                   <table className="db-table" style={{width:'100%'}}>
                     <thead><tr>
-                      <th>Date</th><th>Merchant</th><th>Category</th>
+                      {familyMode&&<th>Member</th>}<th>Date</th><th>Merchant</th><th>Category</th>
                       <th>Sub-category</th><th>Source</th><th>Comments</th>
                       <th className="right">Amount</th><th></th>
                     </tr></thead>
@@ -1747,6 +1902,7 @@ export default function Dashboard() {
                       {expenseEntries.map(e=>(
                         <tr key={e.id} style={{cursor:'pointer'}} onClick={()=>setEditingExpense(editingExpense===e.id?null:e.id)}>
                           <td style={{color:'#64748b',fontSize:12,whiteSpace:'nowrap'}}>
+                            {familyMode && <MemberBadge entry={e}/>}
                             {new Date(e.expense_date+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}
                           </td>
                           <td>
@@ -1950,13 +2106,14 @@ export default function Dashboard() {
                 ) : (
                   <table className="db-table" style={{ width:'100%' }}>
                     <thead><tr>
-                      <th>Date</th><th>Description</th><th>Category</th>
+                      {familyMode&&<th>Member</th>}<th>Date</th><th>Description</th><th>Category</th>
                       <th>Bank</th><th>Source</th><th className="right">Amount</th><th></th>
                     </tr></thead>
                     <tbody>
                       {incomeEntries.map(e => (
                         <tr key={e.id}>
                           <td style={{color:'#64748b',fontSize:12,whiteSpace:'nowrap'}}>
+                            {familyMode && <MemberBadge entry={e}/>}
                             {new Date(e.credited_on+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}
                           </td>
                           <td>
@@ -2533,7 +2690,7 @@ export default function Dashboard() {
               {/* Left nav */}
               <div style={{width:190,borderRight:'1px solid #1e3a5f',padding:'20px 0',flexShrink:0}}>
                 <div style={{color:'#475569',fontSize:10,fontWeight:700,letterSpacing:2,padding:'0 16px 12px',textTransform:'uppercase'}}>Settings</div>
-                {[{id:'privacy',icon:'👁',label:'Privacy'},{id:'income',icon:'₹',label:'Income Tracking'},{id:'expense',icon:'💸',label:'Expense Tracking'},{id:'expensesettings',icon:'⚙',label:'Expense Rules'}].map(s=>(
+                {[{id:'family',icon:'👨‍👩‍👧‍👦',label:'Family'},{id:'privacy',icon:'👁',label:'Privacy'},{id:'income',icon:'₹',label:'Income Tracking'},{id:'expense',icon:'💸',label:'Expense Tracking'},{id:'expensesettings',icon:'⚙',label:'Expense Rules'}].map(s=>(
                   <div key={s.id} onClick={()=>setSettingsSection(s.id)}
                     style={{padding:'11px 16px',cursor:'pointer',display:'flex',alignItems:'center',gap:10,fontSize:13,
                       background:settingsSection===s.id?'rgba(100,255,218,0.08)':'transparent',
@@ -2620,7 +2777,90 @@ export default function Dashboard() {
                   </>
                 )}
 
-                {settingsSection==='privacy' && (
+                {settingsSection==='family' && (
+                <div>
+                  <div style={{color:'#e2e8f0',fontSize:14,fontWeight:700,marginBottom:16}}>👨‍👩‍👧‍👦 Family</div>
+
+                  {/* Pending invites */}
+                  {familyStatus.pendingInvites?.length > 0 && (
+                    <div style={{marginBottom:18}}>
+                      <div style={{color:'#f59e0b',fontSize:12,fontWeight:700,letterSpacing:1,marginBottom:8}}>PENDING INVITES</div>
+                      {familyStatus.pendingInvites.map(inv => (
+                        <div key={inv.id} style={{background:'rgba(245,158,11,0.06)',border:'1px solid rgba(245,158,11,0.2)',borderRadius:10,padding:'12px 16px',marginBottom:8}}>
+                          <div style={{color:'#e2e8f0',fontSize:13,fontWeight:600,marginBottom:4}}>{inv.inviterName} invited you to join <b>{inv.groupName}</b></div>
+                          <div style={{color:'#64748b',fontSize:11,marginBottom:10}}>You will share portfolio data with this family group</div>
+                          <div style={{display:'flex',gap:8}}>
+                            <button onClick={()=>respondInvite(inv.id,'accept')} style={{flex:1,background:'#00d4a1',border:'none',color:'#000',borderRadius:8,padding:'8px',fontWeight:700,fontSize:13,cursor:'pointer'}}>✅ Accept</button>
+                            <button onClick={()=>respondInvite(inv.id,'reject')} style={{flex:1,background:'rgba(244,63,94,0.1)',border:'1px solid rgba(244,63,94,0.3)',color:'#f43f5e',borderRadius:8,padding:'8px',fontWeight:700,fontSize:13,cursor:'pointer'}}>✕ Decline</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Current family members */}
+                  {familyStatus.inFamily && familyStatus.members.length > 0 && (
+                    <div style={{marginBottom:18}}>
+                      <div style={{color:'#94a3b8',fontSize:11,fontWeight:700,letterSpacing:1,marginBottom:8}}>FAMILY MEMBERS</div>
+                      {familyStatus.members.map(m => (
+                        <div key={m.user_id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 14px',background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,marginBottom:6}}>
+                          <div>
+                            <div style={{display:'flex',alignItems:'center',gap:8}}>
+                              <span style={{color:'#e2e8f0',fontSize:13,fontWeight:600}}>{m.name}</span>
+                              {m.isMe && <span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'rgba(99,102,241,0.1)',color:'#818cf8'}}>You</span>}
+                              {m.role==='admin' && <span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'rgba(0,212,161,0.1)',color:'#00d4a1'}}>Admin</span>}
+                            </div>
+                            <div style={{color:'#475569',fontSize:11,marginTop:2}}>{m.email}</div>
+                          </div>
+                          {!m.isMe && (
+                            <button onClick={()=>removeFamilyMember(m.user_id)} style={{background:'rgba(244,63,94,0.08)',border:'1px solid rgba(244,63,94,0.2)',color:'#f43f5e',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:11}}>Remove</button>
+                          )}
+                          {m.isMe && (
+                            <button onClick={()=>removeFamilyMember(m.user_id)} style={{background:'rgba(100,116,139,0.08)',border:'1px solid #1e3a5f',color:'#64748b',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:11}}>Leave</button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Sent invites */}
+                  {familyStatus.sentInvites?.filter(i=>i.status==='pending').length > 0 && (
+                    <div style={{marginBottom:18}}>
+                      <div style={{color:'#94a3b8',fontSize:11,fontWeight:700,letterSpacing:1,marginBottom:8}}>SENT INVITES (AWAITING)</div>
+                      {familyStatus.sentInvites.filter(i=>i.status==='pending').map(inv => (
+                        <div key={inv.id} style={{display:'flex',justifyContent:'space-between',padding:'8px 14px',background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,marginBottom:4,fontSize:12}}>
+                          <span style={{color:'#94a3b8'}}>{inv.invited_email}</span>
+                          <span style={{color:'#f59e0b'}}>⏳ Pending</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Invite new member */}
+                  <div style={{background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:10,padding:16}}>
+                    <div style={{color:'#e2e8f0',fontSize:13,fontWeight:600,marginBottom:4}}>Invite a family member</div>
+                    <div style={{color:'#475569',fontSize:11,marginBottom:12}}>They must have a Kanalyst account. Once accepted, you'll share portfolio data.</div>
+                    <div style={{display:'flex',gap:8}}>
+                      <input className="db-input" style={{flex:1}} type="email" placeholder="Enter email address"
+                        value={inviteEmail} onChange={e=>setInviteEmail(e.target.value)}
+                        onKeyDown={e=>e.key==='Enter'&&sendInvite()} />
+                      <button onClick={sendInvite} disabled={!inviteEmail.trim()||inviteSending}
+                        style={{background:'#6366f1',border:'none',color:'#fff',borderRadius:8,padding:'9px 16px',cursor:'pointer',fontWeight:700,fontSize:13,whiteSpace:'nowrap'}}>
+                        {inviteSending?'⟳':'Send Invite'}
+                      </button>
+                    </div>
+                    {inviteResult && (
+                      <div style={{marginTop:10,padding:'8px 12px',borderRadius:8,fontSize:12,
+                        background:inviteResult.success?'rgba(0,212,161,0.08)':'rgba(244,63,94,0.08)',
+                        color:inviteResult.success?'#00d4a1':'#f43f5e'}}>
+                        {inviteResult.success?'✅':'⚠'} {inviteResult.message}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {settingsSection==='privacy' && (
                 <div>
                   <div style={{color:'#e2e8f0',fontSize:14,fontWeight:700,marginBottom:16}}>Privacy Settings</div>
                   <div style={{background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:10,padding:16}}>
