@@ -108,4 +108,17 @@ export const goalsAPI = {
   durationTypes:()         => api.get('/api/goals/duration-types'),
 };
 
+export const familyAPI = {
+  status:           ()         => api.get('/api/family/status'),
+  invite:           (data)     => api.post('/api/family/invite', data),
+  acceptInvite:     (id)       => api.post(`/api/family/invites/${id}/accept`),
+  rejectInvite:     (id)       => api.post(`/api/family/invites/${id}/reject`),
+  removeMember:     (userId)   => api.delete(`/api/family/members/${userId}`),
+  combinedPortfolio:()         => api.get('/api/family/combined/portfolio'),
+  combinedMF:       ()         => api.get('/api/family/combined/mf'),
+  combinedIncome:   ()         => api.get('/api/family/combined/income'),
+  combinedExpenses: ()         => api.get('/api/family/combined/expenses'),
+  combinedGoals:    ()         => api.get('/api/family/combined/goals'),
+};
+
 export default api;
