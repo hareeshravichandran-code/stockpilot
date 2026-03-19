@@ -93,4 +93,19 @@ export const expenseAPI = {
   categories:   ()          => api.get('/api/expense/categories'),
 };
 
+export const goalsAPI = {
+  getAll:       (p)        => api.get('/api/goals', { params: p }),
+  create:       (data)     => api.post('/api/goals', data),
+  update:       (id, data) => api.put(`/api/goals/${id}`, data),
+  delete:       (id)       => api.delete(`/api/goals/${id}`),
+  uploadPic:    (id, form) => api.post(`/api/goals/${id}/picture`, form, { headers:{'Content-Type':'multipart/form-data'} }),
+  getAssets:    (id)       => api.get(`/api/goals/${id}/assets`),
+  linkAsset:    (id, data) => api.post(`/api/goals/${id}/assets`, data),
+  unlinkAsset:  (id, assetId) => api.delete(`/api/goals/${id}/assets/${assetId}`),
+  recompute:    (id)       => api.post(`/api/goals/${id}/progress`),
+  getCycles:    (id)       => api.get(`/api/goals/${id}/cycles`),
+  closeCycle:   (id, data) => api.post(`/api/goals/${id}/cycles`, data),
+  durationTypes:()         => api.get('/api/goals/duration-types'),
+};
+
 export default api;
