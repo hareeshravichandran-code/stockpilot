@@ -927,6 +927,32 @@ export default function Dashboard() {
                 ];
 
                 return (<>
+                  {/* Family combined bar - only in family mode */}
+                  {familyMode && familyStatus.inFamily && (() => {
+                    const fTotal    = holdings.reduce((s,h)=>s+(h.marketValue||0),0);
+                    const fInvested = holdings.reduce((s,h)=>s+((h.quantity||0)*(h.avg_cost||0)),0);
+                    const fPnl      = fTotal - fInvested;
+                    return (
+                      <div style={{background:'linear-gradient(135deg,rgba(99,102,241,0.12),rgba(139,92,246,0.08))',border:'1px solid rgba(99,102,241,0.25)',borderRadius:12,padding:'14px 20px',marginBottom:16,display:'flex',gap:28,alignItems:'center',flexWrap:'wrap'}}>
+                        <div style={{display:'flex',alignItems:'center',gap:8}}>
+                          <span style={{fontSize:18}}>👨‍👩‍👧‍👦</span>
+                          <span style={{color:'#818cf8',fontWeight:700,fontSize:13}}>Family Portfolio</span>
+                        </div>
+                        {[
+                          {label:'Combined Value',  val:fmtFull(fTotal),    color:'#64ffda'},
+                          {label:'Total Invested',  val:fmtFull(fInvested), color:'#94a3b8'},
+                          {label:'Total P&L',       val:fmtFull(fPnl),      color:fPnl>=0?'#00d4a1':'#f43f5e'},
+                          {label:'Holdings',        val:holdings.length+' stocks', color:'#818cf8'},
+                        ].map(stat=>(
+                          <div key={stat.label}>
+                            <div style={{color:'#475569',fontSize:10,fontWeight:600,letterSpacing:0.5,marginBottom:2}}>{stat.label}</div>
+                            <div style={{color:stat.color,fontWeight:700,fontSize:16}}>{stat.val}</div>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+
                   {/* Top 5 tiles */}
                   <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:12, marginBottom:20 }}>
                     {[
@@ -1135,6 +1161,38 @@ export default function Dashboard() {
 
             return (
               <div className="fade-in">
+                {/* Holdings total summary */}
+                <div style={{display:'flex',alignItems:'center',gap:24,padding:'12px 18px',background:'rgba(255,255,255,0.03)',borderRadius:10,border:'1px solid rgba(255,255,255,0.06)',marginBottom:16,flexWrap:'wrap'}}>
+                  <div>
+                    <div style={{color:'#475569',fontSize:10,fontWeight:700,letterSpacing:1,marginBottom:2}}>TOTAL VALUE</div>
+                    <div style={{color:'#64ffda',fontWeight:700,fontSize:22}}>{fmtFull(totalValue)}</div>
+                  </div>
+                  {(() => {
+                    const invested = holdings.reduce((s,h)=>s+((h.quantity||0)*(h.avg_cost||0)),0);
+                    const pnl      = totalValue - invested;
+                    const pnlPct   = invested>0 ? ((pnl/invested)*100).toFixed(2) : '0';
+                    return (<>
+                      <div>
+                        <div style={{color:'#475569',fontSize:10,fontWeight:700,letterSpacing:1,marginBottom:2}}>INVESTED</div>
+                        <div style={{color:'#94a3b8',fontWeight:700,fontSize:22}}>{fmtFull(invested)}</div>
+                      </div>
+                      <div>
+                        <div style={{color:'#475569',fontSize:10,fontWeight:700,letterSpacing:1,marginBottom:2}}>OVERALL P&L</div>
+                        <div style={{color:pnl>=0?'#00d4a1':'#f43f5e',fontWeight:700,fontSize:22}}>{fmtFull(pnl)} <span style={{fontSize:13}}>({pnlPct}%)</span></div>
+                      </div>
+                    </>);
+                  })()}
+                  <div>
+                    <div style={{color:'#475569',fontSize:10,fontWeight:700,letterSpacing:1,marginBottom:2}}>HOLDINGS</div>
+                    <div style={{color:'#818cf8',fontWeight:700,fontSize:22}}>{holdings.length} stocks</div>
+                  </div>
+                  {familyMode && holdings.some(h=>h._member) && (
+                    <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:6,fontSize:11,color:'#475569'}}>
+                      <span>👨‍👩‍👧‍👦</span>
+                      <span>{[...new Set(holdings.map(h=>h._member).filter(Boolean))].join(' + ')}</span>
+                    </div>
+                  )}
+                </div>
                 {/* Charts row */}
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1.6fr', gap:16, marginBottom:20 }}>
 
@@ -1244,6 +1302,7 @@ export default function Dashboard() {
                     <table className="db-table">
                       <thead>
                         <tr>
+                          {familyMode && <th style={{fontSize:10,color:'#818cf8'}}>Member</th>}
                           <th>Company</th>
                           <th>Sector</th>
                           <th className="right">Qty</th>
@@ -1267,6 +1326,7 @@ export default function Dashboard() {
                           const alloc = totalValue > 0 ? (h.marketValue / totalValue * 100).toFixed(1) : 0;
                           return (
                             <tr key={h.symbol + (h.demat_account||'')}>
+                              {familyMode && <td style={{verticalAlign:'middle'}}><MemberBadge entry={h}/></td>}
                               <td>
                                 <div className="db-stock-name">{h.company || h.symbol}</div>
                                 <div style={{display:'flex',gap:4,alignItems:'center',flexWrap:'wrap'}}>
@@ -1378,6 +1438,42 @@ export default function Dashboard() {
                     {syncing ? '⟳ Syncing…' : '⟳ Sync Gmail (CDSL/NSDL)'}
                   </button>
                 </div>
+
+                {/* MF total summary bar */}
+                {!mfLoading && holdings.length > 0 && (
+                  <div style={{display:'flex',alignItems:'center',gap:24,padding:'12px 18px',background:'rgba(255,255,255,0.03)',borderRadius:10,border:'1px solid rgba(255,255,255,0.06)',marginBottom:16,flexWrap:'wrap'}}>
+                    <div>
+                      <div style={{color:'#475569',fontSize:10,fontWeight:700,letterSpacing:1,marginBottom:2}}>TOTAL MF VALUE</div>
+                      <div style={{color:'#0ea5e9',fontWeight:700,fontSize:22}}>{fmt(summary.totalValue||0)}</div>
+                    </div>
+                    {(() => {
+                      const totalCost = holdings.reduce((s,h)=>s+parseFloat(h.total_cost||0),0);
+                      const totalVal  = summary.totalValue||0;
+                      const gain      = totalVal - totalCost;
+                      const gainPct   = totalCost>0 ? ((gain/totalCost)*100).toFixed(2) : '0';
+                      return totalCost>0 ? (<>
+                        <div>
+                          <div style={{color:'#475569',fontSize:10,fontWeight:700,letterSpacing:1,marginBottom:2}}>INVESTED</div>
+                          <div style={{color:'#94a3b8',fontWeight:700,fontSize:22}}>{fmt(totalCost)}</div>
+                        </div>
+                        <div>
+                          <div style={{color:'#475569',fontSize:10,fontWeight:700,letterSpacing:1,marginBottom:2}}>OVERALL GAIN</div>
+                          <div style={{color:gain>=0?'#00d4a1':'#f43f5e',fontWeight:700,fontSize:22}}>{fmt(gain)} <span style={{fontSize:13}}>({gainPct}%)</span></div>
+                        </div>
+                      </>) : null;
+                    })()}
+                    <div>
+                      <div style={{color:'#475569',fontSize:10,fontWeight:700,letterSpacing:1,marginBottom:2}}>FUNDS</div>
+                      <div style={{color:'#818cf8',fontWeight:700,fontSize:22}}>{holdings.length}</div>
+                    </div>
+                    {familyMode && holdings.some(h=>h._member) && (
+                      <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:6,fontSize:11,color:'#475569'}}>
+                        <span>👨‍👩‍👧‍👦</span>
+                        <span>{[...new Set(holdings.map(h=>h._member).filter(Boolean))].join(' + ')}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {mfLoading ? (
                   <div style={{ textAlign:'center', padding:60, color:'#334155' }}>Loading mutual funds…</div>
@@ -1901,8 +1997,8 @@ export default function Dashboard() {
                     <tbody>
                       {expenseEntries.map(e=>(
                         <tr key={e.id} style={{cursor:'pointer'}} onClick={()=>setEditingExpense(editingExpense===e.id?null:e.id)}>
+                          {familyMode && <td style={{verticalAlign:'middle'}}><MemberBadge entry={e}/></td>}
                           <td style={{color:'#64748b',fontSize:12,whiteSpace:'nowrap'}}>
-                            {familyMode && <MemberBadge entry={e}/>}
                             {new Date(e.expense_date+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}
                           </td>
                           <td>
@@ -2112,8 +2208,8 @@ export default function Dashboard() {
                     <tbody>
                       {incomeEntries.map(e => (
                         <tr key={e.id}>
+                          {familyMode && <td style={{verticalAlign:'middle'}}><MemberBadge entry={e}/></td>}
                           <td style={{color:'#64748b',fontSize:12,whiteSpace:'nowrap'}}>
-                            {familyMode && <MemberBadge entry={e}/>}
                             {new Date(e.credited_on+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}
                           </td>
                           <td>
