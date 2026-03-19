@@ -341,8 +341,28 @@ export default function Dashboard() {
         familyAPI.combinedMF(),
       ]);
       // Merge into existing portfolio state with _member tag
-      setPortfolio({ holdings: portRes.data.holdings, summary: portRes.data.summary });
-      setMfData({ holdings: mfRes.data.holdings });
+      setPortfolio({
+        holdings: portRes.data.holdings,
+        summary: {
+          ...portRes.data.summary,
+          totalMarket: portRes.data.summary?.totalValue || 0,
+        }
+      });
+      const mfHoldingsData = mfRes.data.holdings || [];
+      const mfTotalValue   = mfRes.data.totalValue ||
+        mfHoldingsData.reduce((s,h) => s + parseFloat(h.current_value||0), 0);
+      const mfTotalCost    = mfHoldingsData.reduce((s,h) => s + parseFloat(h.total_cost||h.avg_cost||0), 0);
+      setMfData({
+        holdings: mfHoldingsData,
+        summary: {
+          totalValue:    mfTotalValue,
+          count:         mfHoldingsData.length,
+          gainLoss:      mfTotalValue - mfTotalCost,
+          gainLossPct:   mfTotalCost > 0 ? ((mfTotalValue - mfTotalCost) / mfTotalCost * 100).toFixed(2) : 0,
+          byFundHouse:   [],
+          lastStatement: null,
+        }
+      });
     } catch(e) { console.error('loadFamilyData', e); }
   };
 
@@ -1582,6 +1602,7 @@ export default function Dashboard() {
                         <table className="db-table">
                           <thead>
                             <tr>
+                              {familyMode && <th style={{fontSize:10,color:'#818cf8'}}>Member</th>}
                               <th>Fund</th>
                               <th>Category</th>
                               <th className="right">Units</th>
@@ -1600,10 +1621,11 @@ export default function Dashboard() {
                               const glPct = h.invested_value > 0 ? (gl / h.invested_value * 100) : null;
                               return (
                                 <tr key={h.id || idx}>
+                                  {familyMode && <td style={{verticalAlign:'middle'}}><MemberBadge entry={h}/></td>}
                                   <td>
                                     <div style={{ fontWeight:600, color:'#e2e8f0', fontSize:12,
                                       maxWidth:220, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-                                      {h.fund_name}<MemberBadge entry={h}/>
+                                      {h.fund_name}
                                     </div>
                                     <div style={{ color:'#475569', fontSize:10, marginTop:1 }}>{h.fund_house}</div>
                                   </td>
