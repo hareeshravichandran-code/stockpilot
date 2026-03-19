@@ -703,20 +703,15 @@ export default function Dashboard() {
             {/* Privacy toggle - eye button */}
             <button
               onClick={toggleHide}
-              title={hideValues ? 'Show values' : 'Hide values'}
+              title={hideValues ? 'Show dashboard values' : 'Hide dashboard values'}
               style={{
-                background: hideValues ? 'rgba(244,63,94,0.1)' : 'rgba(0,212,161,0.08)',
-                border: `1px solid ${hideValues ? 'rgba(244,63,94,0.3)' : 'rgba(0,212,161,0.2)'}`,
-                borderRadius: 8, padding: '7px 12px', cursor: 'pointer',
-                fontSize: 16, lineHeight: 1, transition: 'all 0.2s',
-                display: 'flex', alignItems: 'center', gap: 6,
+                background: 'none', border: 'none',
+                cursor: 'pointer', fontSize: 20, lineHeight: 1,
+                opacity: hideValues ? 0.4 : 0.75,
+                transition: 'opacity 0.2s',
+                padding: '4px 6px',
               }}>
-              <span style={{ filter: hideValues ? 'grayscale(1)' : 'none', transition: 'filter 0.2s' }}>
-                {hideValues ? '🙈' : '👁'}
-              </span>
-              <span style={{ fontSize: 11, fontWeight: 600, color: hideValues ? '#f43f5e' : '#00d4a1' }}>
-                {hideValues ? 'Hidden' : 'Visible'}
-              </span>
+              {hideValues ? '🙈' : '👁'}
             </button>
             {emailStatus.length > 0 && (
               <button className="db-sync-btn" onClick={syncEmails} disabled={syncing}>
@@ -780,11 +775,11 @@ export default function Dashboard() {
                   {/* Top 5 tiles */}
                   <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:12, marginBottom:20 }}>
                     {[
-                      { label:'Total Net Worth', val: fmt(totalNetWorth), sub:'All assets combined', color:'#64ffda', icon:'💰' },
-                      { label:'Dividend Income FY26', val: fmt(dividendTotal||0), sub: dividendTotal > 0 ? `${s.yieldOnMarket||0}% yield on market` : 'Sync dividends to update', color:'#ffd700', icon:'💸' },
-                      { label:'Outstanding Credit', val: fmt(totalCredit), sub:'Loans + Credit Cards', color: totalCredit > 0 ? '#ff6b6b':'#888', icon:'🏦' },
-                      { label:'Monthly Income', val: fmt(monthlyIncome), sub:'Salary this month', color:'#00bcd4', icon:'💼' },
-                      { label:'This Month Expenses', val: fmt(monthlyExpenses), sub:'From transactions', color: monthlyExpenses > monthlyIncome*0.8 ? '#ff8a65':'#b39ddb', icon:'🧾' },
+                      { label:'Total Net Worth', val: hideValues ? '₹ ••••' : fmt(totalNetWorth), sub: hideValues ? '—' : 'All assets combined', color:'#64ffda', icon:'💰' },
+                      { label:'Dividend Income FY26', val: hideValues ? '₹ ••••' : fmt(dividendTotal||0), sub: hideValues ? '—' : dividendTotal > 0 ? `${s.yieldOnMarket||0}% yield on market` : 'Sync dividends to update', color:'#ffd700', icon:'💸' },
+                      { label:'Outstanding Credit', val: hideValues ? '₹ ••••' : fmt(totalCredit), sub: hideValues ? '—' : 'Loans + Credit Cards', color: totalCredit > 0 ? '#ff6b6b':'#888', icon:'🏦' },
+                      { label:'Monthly Income', val: hideValues ? '₹ ••••' : fmt(monthlyIncome), sub: hideValues ? '—' : 'Salary this month', color:'#00bcd4', icon:'💼' },
+                      { label:'This Month Expenses', val: hideValues ? '₹ ••••' : fmt(monthlyExpenses), sub: hideValues ? '—' : 'From transactions', color: monthlyExpenses > monthlyIncome*0.8 ? '#ff8a65':'#b39ddb', icon:'🧾' },
                     ].map(t => (
                       <div key={t.label} style={{ background:'rgba(255,255,255,0.04)', borderRadius:12, padding:'16px 14px', border:'1px solid rgba(255,255,255,0.08)', cursor:'default' }}>
                         <div style={{ fontSize:20, marginBottom:6 }}>{t.icon}</div>
@@ -1495,7 +1490,7 @@ export default function Dashboard() {
                   {label:'New',          val:goalsSummary.new||0,   color:'#94a3b8', icon:'⭕'},
                   {label:'In Progress',  val:goalsSummary.inprogress||0, color:'#f59e0b', icon:'🔄'},
                   {label:'Completed',    val:goalsSummary.completed||0,  color:'#00d4a1', icon:'✅'},
-                  {label:'Total Target', val:hideValues?'₹ ••••••':fmtFull(goalsSummary.totalTargetValue||0), color:'#6366f1', icon:'💰'},
+                  {label:'Total Target', val:fmtFull(goalsSummary.totalTargetValue||0), color:'#6366f1', icon:'💰'},
                 ].map(s=>(
                   <div key={s.label} style={{background:'#0a1628',borderRadius:10,padding:'14px 16px',border:'1px solid #1e3a5f'}}>
                     <div style={{fontSize:18,marginBottom:6}}>{s.icon}</div>
@@ -1573,7 +1568,7 @@ export default function Dashboard() {
                               </div>
                               <div style={{textAlign:'right',flexShrink:0,marginLeft:20}}>
                                 <div style={{color:'#6366f1',fontWeight:700,fontSize:18}}>{prog.toFixed(1)}%</div>
-                                <div style={{color:'#e2e8f0',fontSize:12,marginTop:2}}>{hideValues?'₹ ••••••':fmtFull(goal.current_value)} <span style={{color:'#475569'}}>of</span> {hideValues?'₹ ••••••':fmtFull(goal.target_value)}</div>
+                                <div style={{color:'#e2e8f0',fontSize:12,marginTop:2}}>{fmtFull(goal.current_value)} <span style={{color:'#475569'}}>of</span> {fmtFull(goal.target_value)}</div>
                               </div>
                             </div>
 
@@ -1873,8 +1868,8 @@ export default function Dashboard() {
               {/* Summary cards */}
               <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:14, marginBottom:24 }}>
                 {[
-                  { label:`${incomeSummary.fyLabel || 'FY26'} Total`, val: hideValues ? '₹ ••••••' : fmtFull(incomeSummary.currentFYTotal || 0), color:'#64ffda', icon:'📈' },
-                  { label:'This Month',  val: hideValues ? '₹ ••••••' : fmtFull(incomeSummary.thisMonthTotal || 0), color:'#a78bfa', icon:'📅' },
+                  { label:`${incomeSummary.fyLabel || 'FY26'} Total`, val: fmtFull(incomeSummary.currentFYTotal || 0), color:'#64ffda', icon:'📈' },
+                  { label:'This Month',  val: fmtFull(incomeSummary.thisMonthTotal || 0), color:'#a78bfa', icon:'📅' },
                   { label:'Total Entries', val: incomeEntries.length, color:'#0ea5e9', icon:'📋' },
                 ].map(s => (
                   <div key={s.label} style={{ background:'#0a1628', borderRadius:10, padding:'16px 20px', border:'1px solid #1e3a5f' }}>
@@ -2411,11 +2406,11 @@ export default function Dashboard() {
                 <div style={{display:'flex',justifyContent:'space-between',marginBottom:10}}>
                   <div>
                     <div style={{color:'#475569',fontSize:11,fontWeight:700,letterSpacing:1,marginBottom:2}}>CURRENT</div>
-                    <div style={{color:'#6366f1',fontWeight:700,fontSize:22}}>{hideValues?'₹ ••••••':fmtFull(goalDetail.current_value||0)}</div>
+                    <div style={{color:'#6366f1',fontWeight:700,fontSize:22}}>{fmtFull(goalDetail.current_value||0)}</div>
                   </div>
                   <div style={{textAlign:'right'}}>
                     <div style={{color:'#475569',fontSize:11,fontWeight:700,letterSpacing:1,marginBottom:2}}>TARGET</div>
-                    <div style={{color:'#e2e8f0',fontWeight:700,fontSize:22}}>{hideValues?'₹ ••••••':fmtFull(goalDetail.target_value)}</div>
+                    <div style={{color:'#e2e8f0',fontWeight:700,fontSize:22}}>{fmtFull(goalDetail.target_value)}</div>
                   </div>
                 </div>
                 <div style={{height:10,background:'#1e3a5f',borderRadius:5,overflow:'hidden',marginBottom:6}}>
@@ -2456,7 +2451,7 @@ export default function Dashboard() {
                     <div key={cy.id} style={{display:'flex',justifyContent:'space-between',padding:'8px 12px',background:'#060e1a',borderRadius:8,marginBottom:4,border:'1px solid #1e3a5f',fontSize:12}}>
                       <span style={{color:'#94a3b8'}}>Cycle {cy.cycle_number} · {cy.cycle_start}</span>
                       <div style={{display:'flex',gap:10,alignItems:'center'}}>
-                        {cy.achieved_value>0 && <span style={{color:'#e2e8f0'}}>{hideValues?'₹••••':fmtFull(cy.achieved_value)}</span>}
+                        {cy.achieved_value>0 && <span style={{color:'#e2e8f0'}}>{fmtFull(cy.achieved_value)}</span>}
                         <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:cy.status==='completed'?'rgba(0,212,161,0.1)':cy.status==='missed'?'rgba(244,63,94,0.1)':'rgba(245,158,11,0.1)',color:cy.status==='completed'?'#00d4a1':cy.status==='missed'?'#f43f5e':'#f59e0b'}}>{cy.status}</span>
                       </div>
                     </div>
@@ -2501,7 +2496,7 @@ export default function Dashboard() {
                         onMouseOver={e=>e.currentTarget.style.borderColor='#6366f1'}
                         onMouseOut={e=>e.currentTarget.style.borderColor='#1e3a5f'}>
                         <span style={{color:'#e2e8f0',fontSize:12,fontWeight:600}}>{h.company||h.symbol}</span>
-                        <span style={{color:'#6366f1',fontSize:11}}>{hideValues?'₹••••':fmtFull((h.quantity||0)*(h.last_price||0))}</span>
+                        <span style={{color:'#6366f1',fontSize:11}}>{fmtFull((h.quantity||0)*(h.last_price||0))}</span>
                       </div>
                     ))}
                   </div>
@@ -2519,7 +2514,7 @@ export default function Dashboard() {
                         onMouseOver={e=>e.currentTarget.style.borderColor='#6366f1'}
                         onMouseOut={e=>e.currentTarget.style.borderColor='#1e3a5f'}>
                         <span style={{color:'#e2e8f0',fontSize:12,fontWeight:600,flex:1,marginRight:8}}>{(h.scheme_name||h.fund_name||h.isin||'').slice(0,45)}</span>
-                        <span style={{color:'#6366f1',fontSize:11,flexShrink:0}}>{hideValues?'₹••••':fmtFull(h.current_value||0)}</span>
+                        <span style={{color:'#6366f1',fontSize:11,flexShrink:0}}>{fmtFull(h.current_value||0)}</span>
                       </div>
                     ))}
                   </div>
