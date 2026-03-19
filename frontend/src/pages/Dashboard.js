@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
-import api, { portfolioAPI, emailAPI, authAPI, incomeAPI, mfAPI } from '../lib/api';
+import api, { portfolioAPI, emailAPI, authAPI, incomeAPI, mfAPI, goalsAPI } from '../lib/api';
 import AdminPanel from './AdminPanel';
 import Dividends from './Dividends';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
@@ -102,6 +102,37 @@ export default function Dashboard() {
   const [showExpenseRuleForm, setShowExpenseRuleForm] = useState(false);
   const [editingExpenseRule, setEditingExpenseRule]   = useState(null);
   const [expenseRuleSaving, setExpenseRuleSaving]     = useState(false);
+
+  // ── Privacy toggle ───────────────────────────────────────────────
+  const [hideValues, setHideValues] = useState(() => {
+    try { return localStorage.getItem('kanalyst_hide_values') === 'true'; } catch(e) { return false; }
+  });
+  const toggleHide = () => {
+    const next = !hideValues;
+    setHideValues(next);
+    try { localStorage.setItem('kanalyst_hide_values', String(next)); } catch(e) {}
+  };
+  const masked = (val) => hideValues ? '••••••' : val;
+  const maskedNum = (val) => hideValues ? '₹ ••••' : val;
+
+  // ── Goals state ──────────────────────────────────────────────────
+  const [goals, setGoals]                     = useState([]);
+  const [goalsSummary, setGoalsSummary]       = useState({ total:0, new:0, inprogress:0, completed:0, totalTargetValue:0, totalCurrentValue:0 });
+  const [goalsFilter, setGoalsFilter]         = useState('all'); // all|new|inprogress|completed
+  const [goalsDurationFilter, setGoalsDurationFilter] = useState('all');
+  const [showGoalForm, setShowGoalForm]       = useState(false);
+  const [editingGoal, setEditingGoal]         = useState(null);
+  const [goalFormSaving, setGoalFormSaving]   = useState(false);
+  const [goalDetail, setGoalDetail]           = useState(null);   // goal being viewed
+  const [goalCycles, setGoalCycles]           = useState([]);
+  const [goalForm, setGoalForm]               = useState({
+    name:'', description:'', target_value:'',
+    duration_type:'mid', target_date:'',
+    is_recurring: false, recurrence:'monthly',
+    recurrence_day:'1', recurrence_month:'',
+  });
+  const [linkingGoalId, setLinkingGoalId]     = useState(null);  // goal we're linking assets to
+  const [picUploading, setPicUploading]       = useState(false);
   const [liabilities, setLiabilities] = useState({ homeLoan: 0, creditCard: 0 });
   const [monthlyIncome, setMonthlyIncome] = useState(0);
   const [monthlyExpenses, setMonthlyExpenses] = useState(0);
@@ -251,6 +282,62 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, []); // eslint-disable-line
 
+  // ── Goals handlers ──────────────────────────────────────────────
+  const loadGoals = async () => {
+    try {
+      const r = await goalsAPI.getAll();
+      setGoals(r.data.goals || []);
+      setGoalsSummary(r.data.summary || {});
+    } catch(e) { console.error('loadGoals', e); }
+  };
+
+  const saveGoal = async () => {
+    if (!goalForm.name || !goalForm.target_value) return;
+    setGoalFormSaving(true);
+    try {
+      if (editingGoal) await goalsAPI.update(editingGoal.id, goalForm);
+      else             await goalsAPI.create(goalForm);
+      setShowGoalForm(false); setEditingGoal(null);
+      setGoalForm({ name:'', description:'', target_value:'', duration_type:'mid', target_date:'', is_recurring:false, recurrence:'monthly', recurrence_day:'1', recurrence_month:'' });
+      await loadGoals();
+    } catch(e) { console.error(e); }
+    setGoalFormSaving(false);
+  };
+
+  const deleteGoal = async (id) => {
+    if (!window.confirm('Delete this goal? All linked assets will be unlinked.')) return;
+    await goalsAPI.delete(id).catch(() => {});
+    setGoalDetail(null);
+    await loadGoals();
+  };
+
+  const openGoalDetail = async (goal) => {
+    setGoalDetail(goal);
+    const r = await goalsAPI.getCycles(goal.id).catch(() => ({ data: [] }));
+    setGoalCycles(r.data || []);
+  };
+
+  const uploadGoalPic = async (goalId, file) => {
+    if (!file) return;
+    setPicUploading(true);
+    const form = new FormData(); form.append('file', file);
+    await goalsAPI.uploadPic(goalId, form).catch(() => {});
+    await loadGoals();
+    setPicUploading(false);
+  };
+
+  const linkAssetToGoal = async (goalId, assetType, assetRef, assetName) => {
+    await goalsAPI.linkAsset(goalId, { asset_type: assetType, asset_ref: assetRef, asset_name: assetName }).catch(() => {});
+    await loadGoals();
+    setLinkingGoalId(null);
+  };
+
+  const unlinkAsset = async (goalId, assetId) => {
+    await goalsAPI.unlinkAsset(goalId, assetId).catch(() => {});
+    if (goalDetail?.id === goalId) openGoalDetail({ ...goalDetail });
+    await loadGoals();
+  };
+
   const loadTab = async (t) => {
     setTab(t);
     if (t === 'transactions' && transactions.length === 0) {
@@ -259,6 +346,7 @@ export default function Dashboard() {
     }
     if (t === 'income')   { await loadIncome();   return; }
     if (t === 'expenses') { await loadExpenses(); return; }
+    if (t === 'goals')    { await loadGoals();    return; }
     if (t === 'dividends') { return; // Dividends component loads its own data
       const r = await portfolioAPI.dividends().catch(() => ({ data: { dividends: [], totalIncome: 0 } }));
       setDividends(r.data);
@@ -550,8 +638,8 @@ export default function Dashboard() {
       {/* SIDEBAR */}
       <aside className="db-sidebar">
         <div className="db-logo">
-          <div className="db-logo-mark">StockPilot</div>
-          <div className="db-logo-sub">Portfolio Intelligence</div>
+          <div className="db-logo-mark">Kanalyst</div>
+          <div className="db-logo-sub">See yourself, financially</div>
         </div>
 
         <nav className="db-nav">
@@ -565,6 +653,7 @@ export default function Dashboard() {
           <div className="db-nav-label" style={{marginTop:12}}>Finance</div>
           <div className={`db-nav-item ${tab==='income'?'active':''}`} onClick={()=>loadTab('income')}><span>₹</span> Income</div>
           <div className={`db-nav-item ${tab==='expenses'?'active':''}`} onClick={()=>loadTab('expenses')}><span>💸</span> Expenses</div>
+          <div className={`db-nav-item ${tab==='goals'?'active':''}`} onClick={()=>loadTab('goals')}><span>🎯</span> Goals</div>
 
           <div className="db-nav-label" style={{marginTop:12}}>Analytics</div>
           <div className={`db-nav-item ${tab==='tax'?'active':''}`} onClick={()=>loadTab('tax')}><span>⊞</span> Tax Summary</div>
@@ -611,6 +700,24 @@ export default function Dashboard() {
             </p>
           </div>
           <div className="db-topbar-right">
+            {/* Privacy toggle - eye button */}
+            <button
+              onClick={toggleHide}
+              title={hideValues ? 'Show values' : 'Hide values'}
+              style={{
+                background: hideValues ? 'rgba(244,63,94,0.1)' : 'rgba(0,212,161,0.08)',
+                border: `1px solid ${hideValues ? 'rgba(244,63,94,0.3)' : 'rgba(0,212,161,0.2)'}`,
+                borderRadius: 8, padding: '7px 12px', cursor: 'pointer',
+                fontSize: 16, lineHeight: 1, transition: 'all 0.2s',
+                display: 'flex', alignItems: 'center', gap: 6,
+              }}>
+              <span style={{ filter: hideValues ? 'grayscale(1)' : 'none', transition: 'filter 0.2s' }}>
+                {hideValues ? '🙈' : '👁'}
+              </span>
+              <span style={{ fontSize: 11, fontWeight: 600, color: hideValues ? '#f43f5e' : '#00d4a1' }}>
+                {hideValues ? 'Hidden' : 'Visible'}
+              </span>
+            </button>
             {emailStatus.length > 0 && (
               <button className="db-sync-btn" onClick={syncEmails} disabled={syncing}>
                 {syncing ? '⟳ Syncing… (up to 60s)' : '⟳ Sync Emails'}
@@ -839,6 +946,11 @@ export default function Dashboard() {
                         <td className="right mono">₹{Number(h.ltp).toFixed(2)}</td>
                         <td className="right mono">{fmt(h.marketValue)}</td>
                         <td className={`right mono ${h.pnl >= 0 ? 'pos' : 'neg'}`}>{pct(h.pnlPct)}</td>
+                        <td style={{textAlign:'center'}}>
+                          <button title="Link to Goal" onClick={()=>setLinkingGoalId(goals.length>0?goals[0].id:'prompt')}
+                            style={{background:'none',border:'none',fontSize:14,cursor:'pointer',opacity:0.5,transition:'opacity 0.15s'}}
+                            onMouseOver={e=>e.target.style.opacity=1} onMouseOut={e=>e.target.style.opacity=0.5}>🎯</button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -1359,6 +1471,129 @@ export default function Dashboard() {
             </div>
           )}
 
+
+          {/* GOALS TAB */}
+          {tab === 'goals' && (
+            <div style={{padding:'24px 28px'}} className="fade-in">
+
+              {/* Header */}
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:24}}>
+                <div>
+                  <h2 style={{color:'#e2e8f0',fontSize:22,fontWeight:700,margin:0}}>🎯 Goals</h2>
+                  <div style={{color:'#64748b',fontSize:13,marginTop:3}}>Track financial goals · link holdings · monitor progress</div>
+                </div>
+                <button onClick={()=>{setEditingGoal(null);setGoalForm({name:'',description:'',target_value:'',duration_type:'mid',target_date:'',is_recurring:false,recurrence:'monthly',recurrence_day:'1',recurrence_month:''});setShowGoalForm(true);}}
+                  style={{background:'linear-gradient(135deg,#6366f1,#8b5cf6)',border:'none',color:'#fff',borderRadius:10,padding:'10px 20px',cursor:'pointer',fontSize:13,fontWeight:700}}>
+                  + New Goal
+                </button>
+              </div>
+
+              {/* Summary cards */}
+              <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:12,marginBottom:24}}>
+                {[
+                  {label:'Total Goals',  val:goalsSummary.total||0, color:'#e2e8f0', icon:'🎯'},
+                  {label:'New',          val:goalsSummary.new||0,   color:'#94a3b8', icon:'⭕'},
+                  {label:'In Progress',  val:goalsSummary.inprogress||0, color:'#f59e0b', icon:'🔄'},
+                  {label:'Completed',    val:goalsSummary.completed||0,  color:'#00d4a1', icon:'✅'},
+                  {label:'Total Target', val:hideValues?'₹ ••••••':fmtFull(goalsSummary.totalTargetValue||0), color:'#6366f1', icon:'💰'},
+                ].map(s=>(
+                  <div key={s.label} style={{background:'#0a1628',borderRadius:10,padding:'14px 16px',border:'1px solid #1e3a5f'}}>
+                    <div style={{fontSize:18,marginBottom:6}}>{s.icon}</div>
+                    <div style={{color:s.color,fontWeight:700,fontSize:s.label==='Total Target'?14:22}}>{s.val}</div>
+                    <div style={{color:'#475569',fontSize:11,marginTop:3}}>{s.label}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Filters */}
+              <div style={{display:'flex',gap:8,marginBottom:20,flexWrap:'wrap'}}>
+                {['all','new','inprogress','completed'].map(f=>(
+                  <button key={f} onClick={()=>setGoalsFilter(f)}
+                    style={{padding:'6px 14px',borderRadius:20,border:`1px solid ${goalsFilter===f?'#6366f1':'#1e3a5f'}`,background:goalsFilter===f?'rgba(99,102,241,0.15)':'transparent',color:goalsFilter===f?'#818cf8':'#64748b',fontSize:12,fontWeight:600,cursor:'pointer',textTransform:'capitalize'}}>
+                    {f==='all'?'All':f==='inprogress'?'In Progress':f.charAt(0).toUpperCase()+f.slice(1)}
+                  </button>
+                ))}
+                <div style={{marginLeft:'auto',display:'flex',gap:8}}>
+                  {['all','ultra_short','short','mid','long'].map(d=>(
+                    <button key={d} onClick={()=>setGoalsDurationFilter(d)}
+                      style={{padding:'6px 12px',borderRadius:20,border:`1px solid ${goalsDurationFilter===d?'#8b5cf6':'#1e3a5f'}`,background:goalsDurationFilter===d?'rgba(139,92,246,0.15)':'transparent',color:goalsDurationFilter===d?'#a78bfa':'#64748b',fontSize:11,cursor:'pointer'}}>
+                      {d==='all'?'All Duration':d==='ultra_short'?'Ultra Short':d==='short'?'Short':d==='mid'?'Mid Term':'Long Term'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Goals list */}
+              {(() => {
+                const filtered = goals.filter(g =>
+                  (goalsFilter==='all' || g.status===goalsFilter) &&
+                  (goalsDurationFilter==='all' || g.duration_type===goalsDurationFilter)
+                );
+                if (filtered.length === 0) return (
+                  <div style={{textAlign:'center',padding:'60px 20px',background:'#0a1628',borderRadius:12,border:'1px solid #1e3a5f'}}>
+                    <div style={{fontSize:48,marginBottom:16}}>🎯</div>
+                    <div style={{color:'#e2e8f0',fontSize:16,fontWeight:600,marginBottom:8}}>No goals yet</div>
+                    <div style={{color:'#475569',fontSize:13}}>Create your first financial goal to start tracking progress</div>
+                  </div>
+                );
+                return (
+                  <div style={{display:'flex',flexDirection:'column',gap:14}}>
+                    {filtered.map(goal => {
+                      const prog   = Math.min(100, goal.progress || 0);
+                      const statusColor = goal.status==='completed'?'#00d4a1':goal.status==='inprogress'?'#f59e0b':'#64748b';
+                      const durLabel = {ultra_short:'Ultra Short',short:'Short',mid:'Mid Term',long:'Long Term'}[goal.duration_type] || goal.duration_type;
+                      return (
+                        <div key={goal.id} style={{background:'#0a1628',border:'1px solid #1e3a5f',borderRadius:12,padding:0,overflow:'hidden',transition:'border-color 0.2s',cursor:'pointer'}}
+                          onClick={()=>openGoalDetail(goal)}>
+
+                          {/* Goal picture strip if exists */}
+                          {goal.picture_url && (
+                            <div style={{height:100,backgroundImage:`url(${goal.picture_url})`,backgroundSize:'cover',backgroundPosition:'center',position:'relative'}}>
+                              <div style={{position:'absolute',inset:0,background:'linear-gradient(to bottom,transparent 40%,#0a1628)'}}/>
+                            </div>
+                          )}
+
+                          <div style={{padding:'16px 20px'}}>
+                            <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:10}}>
+                              <div style={{flex:1}}>
+                                <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
+                                  <span style={{color:'#e2e8f0',fontWeight:700,fontSize:15}}>{goal.name}</span>
+                                  <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,fontWeight:700,background:`${statusColor}22`,color:statusColor}}>
+                                    {goal.status==='inprogress'?'In Progress':goal.status.charAt(0).toUpperCase()+goal.status.slice(1)}
+                                  </span>
+                                  <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:'rgba(139,92,246,0.1)',color:'#a78bfa'}}>{durLabel}</span>
+                                  {goal.is_recurring && <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:'rgba(99,102,241,0.1)',color:'#818cf8'}}>🔄 {goal.recurrence}</span>}
+                                </div>
+                                {goal.description && <div style={{color:'#64748b',fontSize:12,marginBottom:4}}>{goal.description}</div>}
+                                <div style={{display:'flex',gap:14,fontSize:11,color:'#475569',flexWrap:'wrap'}}>
+                                  {goal.target_date && <span>📅 Target: {new Date(goal.target_date+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}</span>}
+                                  <span>🔗 {goal.asset_count} asset{goal.asset_count!==1?'s':''} linked</span>
+                                  <span>📅 Started {new Date(goal.started_on+'T00:00:00').toLocaleDateString('en-IN',{month:'short',year:'numeric'})}</span>
+                                </div>
+                              </div>
+                              <div style={{textAlign:'right',flexShrink:0,marginLeft:20}}>
+                                <div style={{color:'#6366f1',fontWeight:700,fontSize:18}}>{prog.toFixed(1)}%</div>
+                                <div style={{color:'#e2e8f0',fontSize:12,marginTop:2}}>{hideValues?'₹ ••••••':fmtFull(goal.current_value)} <span style={{color:'#475569'}}>of</span> {hideValues?'₹ ••••••':fmtFull(goal.target_value)}</div>
+                              </div>
+                            </div>
+
+                            {/* Progress bar */}
+                            <div style={{height:6,background:'#1e3a5f',borderRadius:3,overflow:'hidden'}}>
+                              <div style={{height:'100%',width:`${prog}%`,borderRadius:3,
+                                background:prog>=100?'#00d4a1':prog>50?'#6366f1':'#f59e0b',
+                                transition:'width 0.6s ease',boxShadow:prog>0?`0 0 8px ${prog>=100?'#00d4a1':prog>50?'#6366f1':'#f59e0b'}50`:undefined
+                              }}/>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
           {/* EXPENSES TAB */}
           {tab === 'expenses' && (
             <div style={{padding:'24px 28px'}} className="fade-in">
@@ -1638,8 +1873,8 @@ export default function Dashboard() {
               {/* Summary cards */}
               <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:14, marginBottom:24 }}>
                 {[
-                  { label:`${incomeSummary.fyLabel || 'FY26'} Total`, val: fmtFull(incomeSummary.currentFYTotal || 0), color:'#64ffda', icon:'📈' },
-                  { label:'This Month',  val: fmtFull(incomeSummary.thisMonthTotal || 0), color:'#a78bfa', icon:'📅' },
+                  { label:`${incomeSummary.fyLabel || 'FY26'} Total`, val: hideValues ? '₹ ••••••' : fmtFull(incomeSummary.currentFYTotal || 0), color:'#64ffda', icon:'📈' },
+                  { label:'This Month',  val: hideValues ? '₹ ••••••' : fmtFull(incomeSummary.thisMonthTotal || 0), color:'#a78bfa', icon:'📅' },
                   { label:'Total Entries', val: incomeEntries.length, color:'#0ea5e9', icon:'📋' },
                 ].map(s => (
                   <div key={s.label} style={{ background:'#0a1628', borderRadius:10, padding:'16px 20px', border:'1px solid #1e3a5f' }}>
@@ -1866,7 +2101,7 @@ export default function Dashboard() {
 
             {connectStep === 'choose' && (<>
               <div className="db-modal-title">Connect Your Email</div>
-              <div className="db-modal-sub">StockPilot reads your broker emails to automatically track your portfolio. Read-only access, no email modification.</div>
+              <div className="db-modal-sub">Kanalyst reads your broker emails to automatically track your portfolio. Read-only access, no email modification.</div>
               <div className="db-email-options">
                 <div className="db-email-option" onClick={connectGmail}>
                   <span style={{fontSize:28}}>📧</span>
@@ -2028,6 +2263,273 @@ export default function Dashboard() {
         </div>
       )}
 
+
+      {/* ── GOAL FORM MODAL ── */}
+      {showGoalForm && (
+        <div className="db-modal-overlay" onClick={e=>{if(e.target===e.currentTarget)setShowGoalForm(false);}}>
+          <div className="db-modal fade-in" style={{maxWidth:560,maxHeight:'90vh',overflowY:'auto'}}>
+            <div className="db-modal-header">
+              <div className="db-modal-title" style={{fontSize:18,fontWeight:700,color:'#e2e8f0'}}>
+                {editingGoal ? '✎ Edit Goal' : '🎯 New Goal'}
+              </div>
+              <button className="db-modal-close" onClick={()=>setShowGoalForm(false)}>✕</button>
+            </div>
+            <div className="db-modal-body">
+
+              {/* Name */}
+              <div style={{marginBottom:12}}>
+                <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:5}}>GOAL NAME *</label>
+                <input className="db-input" placeholder="e.g. Emergency Fund, House Down Payment, Retirement" value={goalForm.name} onChange={e=>setGoalForm(p=>({...p,name:e.target.value}))} />
+              </div>
+
+              {/* Description */}
+              <div style={{marginBottom:12}}>
+                <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:5}}>DESCRIPTION</label>
+                <textarea className="db-input" rows={2} placeholder="What is this goal for?" value={goalForm.description} onChange={e=>setGoalForm(p=>({...p,description:e.target.value}))} style={{resize:'vertical',minHeight:60}} />
+              </div>
+
+              {/* Target + Duration */}
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+                <div>
+                  <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:5}}>TARGET VALUE (₹) *</label>
+                  <input className="db-input" type="number" placeholder="e.g. 500000" value={goalForm.target_value} onChange={e=>setGoalForm(p=>({...p,target_value:e.target.value}))} />
+                </div>
+                <div>
+                  <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:5}}>TARGET DATE</label>
+                  <input className="db-input" type="date" value={goalForm.target_date} onChange={e=>setGoalForm(p=>({...p,target_date:e.target.value}))} />
+                </div>
+              </div>
+
+              {/* Duration type */}
+              <div style={{marginBottom:12}}>
+                <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:8}}>DURATION</label>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8}}>
+                  {[
+                    {id:'ultra_short',label:'Ultra Short',hint:'Days / Weeks',color:'#f59e0b'},
+                    {id:'short',      label:'Short',      hint:'Months',       color:'#0ea5e9'},
+                    {id:'mid',        label:'Mid Term',   hint:'1–5 Years',    color:'#6366f1'},
+                    {id:'long',       label:'Long Term',  hint:'5+ Years',     color:'#00d4a1'},
+                  ].map(d=>(
+                    <div key={d.id} onClick={()=>setGoalForm(p=>({...p,duration_type:d.id}))}
+                      style={{padding:'10px 8px',borderRadius:8,border:`1px solid ${goalForm.duration_type===d.id?d.color:'#1e3a5f'}`,background:goalForm.duration_type===d.id?`${d.color}15`:'#060e1a',cursor:'pointer',textAlign:'center'}}>
+                      <div style={{color:goalForm.duration_type===d.id?d.color:'#e2e8f0',fontSize:12,fontWeight:600}}>{d.label}</div>
+                      <div style={{color:'#475569',fontSize:10,marginTop:2}}>{d.hint}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Recurring toggle */}
+              <div style={{marginBottom:12,background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,padding:12}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:goalForm.is_recurring?12:0}}>
+                  <div>
+                    <div style={{color:'#e2e8f0',fontSize:13,fontWeight:600}}>Recurring Goal</div>
+                    <div style={{color:'#475569',fontSize:11}}>Repeats on a schedule (SIP, yearly savings, etc.)</div>
+                  </div>
+                  <div onClick={()=>setGoalForm(p=>({...p,is_recurring:!p.is_recurring}))}
+                    style={{width:44,height:24,borderRadius:12,background:goalForm.is_recurring?'#6366f1':'#334155',cursor:'pointer',position:'relative',transition:'background 0.2s',flexShrink:0}}>
+                    <div style={{position:'absolute',top:2,left:goalForm.is_recurring?20:2,width:20,height:20,borderRadius:'50%',background:'#fff',transition:'left 0.2s'}}/>
+                  </div>
+                </div>
+                {goalForm.is_recurring && (
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
+                    <div>
+                      <label style={{display:'block',color:'#94a3b8',fontSize:10,fontWeight:700,marginBottom:4}}>FREQUENCY</label>
+                      <select className="db-input" style={{background:'#0f1c2e',color:'#e2e8f0'}} value={goalForm.recurrence} onChange={e=>setGoalForm(p=>({...p,recurrence:e.target.value}))}>
+                        <option value="monthly">Monthly</option>
+                        <option value="yearly">Yearly</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{display:'block',color:'#94a3b8',fontSize:10,fontWeight:700,marginBottom:4}}>DAY</label>
+                      <input className="db-input" type="number" min="1" max="31" placeholder="1-31" value={goalForm.recurrence_day} onChange={e=>setGoalForm(p=>({...p,recurrence_day:e.target.value}))} />
+                    </div>
+                    {goalForm.recurrence==='yearly' && (
+                      <div>
+                        <label style={{display:'block',color:'#94a3b8',fontSize:10,fontWeight:700,marginBottom:4}}>MONTH</label>
+                        <select className="db-input" style={{background:'#0f1c2e',color:'#e2e8f0'}} value={goalForm.recurrence_month} onChange={e=>setGoalForm(p=>({...p,recurrence_month:e.target.value}))}>
+                          {['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].map((m,i)=>(
+                            <option key={i+1} value={i+1}>{m}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Picture upload - only when editing existing */}
+              {editingGoal && (
+                <div style={{marginBottom:16}}>
+                  <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:8}}>GOAL PICTURE</label>
+                  <label style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',border:'1px dashed #1e3a5f',borderRadius:8,cursor:'pointer',color:'#475569',fontSize:12}}>
+                    {picUploading ? '⟳ Uploading...' : '📷 Upload a picture for this goal'}
+                    <input type="file" accept="image/*" style={{display:'none'}} onChange={e=>uploadGoalPic(editingGoal.id,e.target.files[0])} />
+                  </label>
+                  {editingGoal.picture_url && <img src={editingGoal.picture_url} alt="" style={{marginTop:8,width:'100%',height:80,objectFit:'cover',borderRadius:8}} />}
+                </div>
+              )}
+
+              <button onClick={saveGoal} disabled={!goalForm.name||!goalForm.target_value||goalFormSaving}
+                style={{width:'100%',background:'linear-gradient(135deg,#6366f1,#8b5cf6)',color:'#fff',border:'none',borderRadius:10,padding:'13px',fontWeight:700,fontSize:14,cursor:'pointer',marginTop:4}}>
+                {goalFormSaving ? '⟳ Saving...' : (editingGoal ? 'Update Goal' : '🎯 Create Goal')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── GOAL DETAIL MODAL ── */}
+      {goalDetail && (
+        <div className="db-modal-overlay" onClick={e=>{if(e.target===e.currentTarget)setGoalDetail(null);}}>
+          <div className="db-modal fade-in" style={{maxWidth:640,maxHeight:'90vh',overflowY:'auto',padding:0}}>
+            {/* Picture header */}
+            {goalDetail.picture_url ? (
+              <div style={{height:140,backgroundImage:`url(${goalDetail.picture_url})`,backgroundSize:'cover',backgroundPosition:'center',borderRadius:'20px 20px 0 0',position:'relative'}}>
+                <div style={{position:'absolute',inset:0,background:'linear-gradient(to bottom,rgba(0,0,0,0.2),rgba(10,22,40,0.95))',borderRadius:'20px 20px 0 0'}}/>
+                <div style={{position:'absolute',bottom:16,left:24,right:24,display:'flex',justifyContent:'space-between',alignItems:'flex-end'}}>
+                  <div>
+                    <div style={{color:'#fff',fontSize:20,fontWeight:700}}>{goalDetail.name}</div>
+                    <div style={{color:'rgba(255,255,255,0.6)',fontSize:12}}>{goalDetail.description}</div>
+                  </div>
+                  <button onClick={()=>setGoalDetail(null)} style={{background:'rgba(255,255,255,0.15)',border:'1px solid rgba(255,255,255,0.2)',color:'#fff',borderRadius:8,padding:'6px 12px',cursor:'pointer',fontSize:12,backdropFilter:'blur(8px)'}}>✕ Close</button>
+                </div>
+              </div>
+            ) : (
+              <div style={{padding:'20px 24px 0',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <div>
+                  <div style={{color:'#e2e8f0',fontSize:18,fontWeight:700}}>{goalDetail.name}</div>
+                  {goalDetail.description && <div style={{color:'#64748b',fontSize:12,marginTop:2}}>{goalDetail.description}</div>}
+                </div>
+                <button onClick={()=>setGoalDetail(null)} style={{background:'#1e293b',border:'1px solid #334155',color:'#94a3b8',borderRadius:8,padding:'6px 12px',cursor:'pointer',fontSize:12}}>✕ Close</button>
+              </div>
+            )}
+
+            <div style={{padding:'20px 24px 24px'}}>
+              {/* Progress */}
+              <div style={{background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:10,padding:16,marginBottom:16}}>
+                <div style={{display:'flex',justifyContent:'space-between',marginBottom:10}}>
+                  <div>
+                    <div style={{color:'#475569',fontSize:11,fontWeight:700,letterSpacing:1,marginBottom:2}}>CURRENT</div>
+                    <div style={{color:'#6366f1',fontWeight:700,fontSize:22}}>{hideValues?'₹ ••••••':fmtFull(goalDetail.current_value||0)}</div>
+                  </div>
+                  <div style={{textAlign:'right'}}>
+                    <div style={{color:'#475569',fontSize:11,fontWeight:700,letterSpacing:1,marginBottom:2}}>TARGET</div>
+                    <div style={{color:'#e2e8f0',fontWeight:700,fontSize:22}}>{hideValues?'₹ ••••••':fmtFull(goalDetail.target_value)}</div>
+                  </div>
+                </div>
+                <div style={{height:10,background:'#1e3a5f',borderRadius:5,overflow:'hidden',marginBottom:6}}>
+                  <div style={{height:'100%',width:`${Math.min(100,goalDetail.progress||0)}%`,borderRadius:5,background:goalDetail.progress>=100?'#00d4a1':goalDetail.progress>50?'#6366f1':'#f59e0b',transition:'width 0.6s',boxShadow:`0 0 10px ${goalDetail.progress>=100?'#00d4a1':'#6366f1'}60`}} />
+                </div>
+                <div style={{display:'flex',justifyContent:'space-between',fontSize:11,color:'#475569'}}>
+                  <span>{(goalDetail.progress||0).toFixed(1)}% achieved</span>
+                  {goalDetail.target_date && <span>Target: {new Date(goalDetail.target_date+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}</span>}
+                </div>
+              </div>
+
+              {/* Linked assets */}
+              <div style={{marginBottom:16}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+                  <div style={{color:'#e2e8f0',fontWeight:700,fontSize:13}}>Linked Assets</div>
+                  <button onClick={()=>{setLinkingGoalId(goalDetail.id);setGoalDetail(null);}} style={{background:'rgba(99,102,241,0.1)',border:'1px solid rgba(99,102,241,0.3)',color:'#818cf8',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:11}}>+ Link Asset</button>
+                </div>
+                {goalDetail.assets?.length===0 ? (
+                  <div style={{textAlign:'center',padding:'20px',color:'#334155',fontSize:13,border:'1px dashed #1e3a5f',borderRadius:8}}>
+                    No assets linked yet. Link your stocks or MF folios to track progress automatically.
+                  </div>
+                ) : goalDetail.assets?.map(a=>(
+                  <div key={a.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 12px',background:'#060e1a',borderRadius:8,marginBottom:6,border:'1px solid #1e3a5f'}}>
+                    <div>
+                      <span style={{color:'#e2e8f0',fontSize:13,fontWeight:600}}>{a.asset_name}</span>
+                      <span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'rgba(99,102,241,0.1)',color:'#818cf8',marginLeft:8}}>{a.asset_type.toUpperCase()}</span>
+                    </div>
+                    <button onClick={()=>unlinkAsset(goalDetail.id, a.id)} style={{background:'none',border:'none',color:'#334155',cursor:'pointer',fontSize:14}}>✕</button>
+                  </div>
+                ))}
+              </div>
+
+              {/* Cycles (if recurring) */}
+              {goalDetail.is_recurring && goalCycles.length > 0 && (
+                <div style={{marginBottom:16}}>
+                  <div style={{color:'#e2e8f0',fontWeight:700,fontSize:13,marginBottom:10}}>Cycles</div>
+                  {goalCycles.slice(0,5).map(cy=>(
+                    <div key={cy.id} style={{display:'flex',justifyContent:'space-between',padding:'8px 12px',background:'#060e1a',borderRadius:8,marginBottom:4,border:'1px solid #1e3a5f',fontSize:12}}>
+                      <span style={{color:'#94a3b8'}}>Cycle {cy.cycle_number} · {cy.cycle_start}</span>
+                      <div style={{display:'flex',gap:10,alignItems:'center'}}>
+                        {cy.achieved_value>0 && <span style={{color:'#e2e8f0'}}>{hideValues?'₹••••':fmtFull(cy.achieved_value)}</span>}
+                        <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:cy.status==='completed'?'rgba(0,212,161,0.1)':cy.status==='missed'?'rgba(244,63,94,0.1)':'rgba(245,158,11,0.1)',color:cy.status==='completed'?'#00d4a1':cy.status==='missed'?'#f43f5e':'#f59e0b'}}>{cy.status}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Actions */}
+              <div style={{display:'flex',gap:10}}>
+                <button onClick={()=>{setEditingGoal(goalDetail);setGoalForm({name:goalDetail.name,description:goalDetail.description||'',target_value:String(goalDetail.target_value),duration_type:goalDetail.duration_type,target_date:goalDetail.target_date||'',is_recurring:goalDetail.is_recurring,recurrence:goalDetail.recurrence||'monthly',recurrence_day:String(goalDetail.recurrence_day||1),recurrence_month:String(goalDetail.recurrence_month||'')});setGoalDetail(null);setShowGoalForm(true);}}
+                  style={{flex:1,background:'rgba(99,102,241,0.1)',border:'1px solid rgba(99,102,241,0.3)',color:'#818cf8',borderRadius:8,padding:'10px',cursor:'pointer',fontSize:13,fontWeight:600}}>✎ Edit</button>
+                <button onClick={()=>{const f=new FormData();document.getElementById(`goal-pic-${goalDetail.id}`)?.click();}} style={{flex:1,background:'rgba(14,165,233,0.1)',border:'1px solid rgba(14,165,233,0.3)',color:'#38bdf8',borderRadius:8,padding:'10px',cursor:'pointer',fontSize:13,fontWeight:600}}>
+                  📷 Upload Picture
+                  <input id={`goal-pic-${goalDetail.id}`} type="file" accept="image/*" style={{display:'none'}} onChange={e=>{uploadGoalPic(goalDetail.id,e.target.files[0]);}} />
+                </button>
+                <button onClick={()=>deleteGoal(goalDetail.id)} style={{background:'rgba(244,63,94,0.08)',border:'1px solid rgba(244,63,94,0.2)',color:'#f43f5e',borderRadius:8,padding:'10px 14px',cursor:'pointer',fontSize:13}}>🗑</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── LINK ASSET MODAL ── */}
+      {linkingGoalId && (
+        <div className="db-modal-overlay" onClick={e=>{if(e.target===e.currentTarget)setLinkingGoalId(null);}}>
+          <div className="db-modal fade-in" style={{maxWidth:520}}>
+            <div className="db-modal-header">
+              <div className="db-modal-title" style={{fontSize:16,fontWeight:700,color:'#e2e8f0'}}>🔗 Link Asset to Goal</div>
+              <button className="db-modal-close" onClick={()=>setLinkingGoalId(null)}>✕</button>
+            </div>
+            <div className="db-modal-body">
+              <div style={{color:'#64748b',fontSize:13,marginBottom:16}}>Select a stock or mutual fund holding to link to this goal</div>
+
+              {/* Stocks */}
+              {holdings.length > 0 && (
+                <div style={{marginBottom:16}}>
+                  <div style={{color:'#94a3b8',fontSize:11,fontWeight:700,letterSpacing:1,marginBottom:8}}>STOCKS</div>
+                  <div style={{maxHeight:160,overflowY:'auto',display:'flex',flexDirection:'column',gap:4}}>
+                    {holdings.slice(0,20).map(h=>(
+                      <div key={h.symbol} onClick={()=>linkAssetToGoal(linkingGoalId,'stock',h.isin||h.symbol,h.company||h.symbol)}
+                        style={{display:'flex',justifyContent:'space-between',padding:'8px 12px',background:'#060e1a',borderRadius:8,cursor:'pointer',border:'1px solid #1e3a5f',transition:'border-color 0.15s'}}
+                        onMouseOver={e=>e.currentTarget.style.borderColor='#6366f1'}
+                        onMouseOut={e=>e.currentTarget.style.borderColor='#1e3a5f'}>
+                        <span style={{color:'#e2e8f0',fontSize:12,fontWeight:600}}>{h.company||h.symbol}</span>
+                        <span style={{color:'#6366f1',fontSize:11}}>{hideValues?'₹••••':fmtFull((h.quantity||0)*(h.last_price||0))}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Mutual Funds */}
+              {mfHoldings.length > 0 && (
+                <div>
+                  <div style={{color:'#94a3b8',fontSize:11,fontWeight:700,letterSpacing:1,marginBottom:8}}>MUTUAL FUNDS</div>
+                  <div style={{maxHeight:160,overflowY:'auto',display:'flex',flexDirection:'column',gap:4}}>
+                    {mfHoldings.slice(0,20).map(h=>(
+                      <div key={h.isin||h.folio_number} onClick={()=>linkAssetToGoal(linkingGoalId,'mf',h.isin||h.folio_number,h.scheme_name||h.fund_name||h.isin)}
+                        style={{display:'flex',justifyContent:'space-between',padding:'8px 12px',background:'#060e1a',borderRadius:8,cursor:'pointer',border:'1px solid #1e3a5f',transition:'border-color 0.15s'}}
+                        onMouseOver={e=>e.currentTarget.style.borderColor='#6366f1'}
+                        onMouseOut={e=>e.currentTarget.style.borderColor='#1e3a5f'}>
+                        <span style={{color:'#e2e8f0',fontSize:12,fontWeight:600,flex:1,marginRight:8}}>{(h.scheme_name||h.fund_name||h.isin||'').slice(0,45)}</span>
+                        <span style={{color:'#6366f1',fontSize:11,flexShrink:0}}>{hideValues?'₹••••':fmtFull(h.current_value||0)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── SETTINGS MODAL ── */}
       {showSettings && (
         <div className="db-modal-overlay" onClick={e=>{if(e.target===e.currentTarget){setShowSettings(false);setShowRuleForm(false);}}}>
@@ -2036,7 +2538,7 @@ export default function Dashboard() {
               {/* Left nav */}
               <div style={{width:190,borderRight:'1px solid #1e3a5f',padding:'20px 0',flexShrink:0}}>
                 <div style={{color:'#475569',fontSize:10,fontWeight:700,letterSpacing:2,padding:'0 16px 12px',textTransform:'uppercase'}}>Settings</div>
-                {[{id:'income',icon:'₹',label:'Income Tracking'},{id:'expense',icon:'💸',label:'Expense Tracking'},{id:'expensesettings',icon:'⚙',label:'Expense Rules'}].map(s=>(
+                {[{id:'privacy',icon:'👁',label:'Privacy'},{id:'income',icon:'₹',label:'Income Tracking'},{id:'expense',icon:'💸',label:'Expense Tracking'},{id:'expensesettings',icon:'⚙',label:'Expense Rules'}].map(s=>(
                   <div key={s.id} onClick={()=>setSettingsSection(s.id)}
                     style={{padding:'11px 16px',cursor:'pointer',display:'flex',alignItems:'center',gap:10,fontSize:13,
                       background:settingsSection===s.id?'rgba(100,255,218,0.08)':'transparent',
@@ -2059,7 +2561,7 @@ export default function Dashboard() {
                 {(settingsSection==='expense' || settingsSection==='expensesettings') && (
                   <>
                     <div style={{background:'rgba(251,146,60,0.06)',border:'1px solid rgba(251,146,60,0.2)',borderRadius:8,padding:'10px 14px',marginBottom:16,fontSize:12,color:'#fb923c'}}>
-                      💡 StockPilot auto-detects expenses from UPI debit & credit card emails every 30 min. Add rules to focus on specific banks.
+                      💡 Kanalyst auto-detects expenses from UPI debit & credit card emails every 30 min. Add rules to focus on specific banks.
                     </div>
 
                     {showExpenseRuleForm ? (
@@ -2123,7 +2625,29 @@ export default function Dashboard() {
                   </>
                 )}
 
-                {settingsSection==='income' && (
+                {settingsSection==='privacy' && (
+                <div>
+                  <div style={{color:'#e2e8f0',fontSize:14,fontWeight:700,marginBottom:16}}>Privacy Settings</div>
+                  <div style={{background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:10,padding:16}}>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+                      <div>
+                        <div style={{color:'#e2e8f0',fontSize:13,fontWeight:600}}>Hide values on startup</div>
+                        <div style={{color:'#475569',fontSize:11,marginTop:2}}>Dashboard opens with values hidden by default</div>
+                      </div>
+                      <div
+                        onClick={()=>{ const next=!hideValues; setHideValues(next); try{localStorage.setItem('kanalyst_hide_values',String(next));}catch(e){} }}
+                        style={{ width:44,height:24,borderRadius:12,background:hideValues?'#f43f5e':'#334155',cursor:'pointer',position:'relative',transition:'background 0.2s',flexShrink:0 }}>
+                        <div style={{ position:'absolute',top:2,left:hideValues?20:2,width:20,height:20,borderRadius:'50%',background:'#fff',transition:'left 0.2s' }}/>
+                      </div>
+                    </div>
+                    <div style={{fontSize:11,color:'#334155',padding:'8px 10px',background:'rgba(255,255,255,0.02)',borderRadius:6}}>
+                      💡 You can also toggle visibility anytime with the 👁 button in the top bar
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {settingsSection==='income' && (
                   <>
                     {(incomeSummary.currentFYTotal>0||incomeEntries.length>0) && (
                       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:18}}>

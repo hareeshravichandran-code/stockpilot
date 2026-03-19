@@ -89,7 +89,7 @@ export default function Login() {
   return (
     <div className="auth-page">
       <div className="auth-card fade-in">
-        <div className="auth-logo">StockPilot</div>
+        <div className="auth-logo">Kanalyst</div>
 
         {mode === 'login' && <>
           <h1 className="auth-title">Welcome back</h1>

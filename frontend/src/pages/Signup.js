@@ -47,7 +47,7 @@ export default function Signup() {
   return (
     <div className="auth-page">
       <div className="auth-card fade-in">
-        <div className="auth-logo">StockPilot</div>
+        <div className="auth-logo">Kanalyst</div>
         <h1 className="auth-title">Create your account</h1>
         <p className="auth-sub">Free forever. Connect your email. Track everything.</p>
 
