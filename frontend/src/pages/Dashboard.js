@@ -1395,7 +1395,24 @@ export default function Dashboard() {
                             <tr key={h.symbol + (h.demat_account||'')}>
                               {familyMode && <td style={{verticalAlign:'middle'}}><MemberBadge entry={h}/></td>}
                               <td>
-                                <div className="db-stock-name">{h.company || h.symbol}</div>
+                                <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:2}}>
+                                  <div className="db-stock-name" style={{flex:1,marginBottom:0}}>{h.company || h.symbol}</div>
+                                  {(()=>{
+                                    const _r=h.isin||h.symbol;
+                                    const _g=goals.find(g=>g.assets&&g.assets.some(a=>a.asset_ref===_r));
+                                    return _g?(
+                                      <span onClick={()=>setLinkingAsset({type:'stock',ref:_r,name:h.company||h.symbol,value:(h.quantity||0)*(h.last_price||0)})}
+                                        title={'Goal: '+_g.name} style={{fontSize:10,padding:'2px 7px',borderRadius:8,background:'rgba(99,102,241,0.15)',color:'#818cf8',cursor:'pointer',whiteSpace:'nowrap',flexShrink:0,fontWeight:600}}>
+                                        🎯 {_g.name.slice(0,10)}{_g.name.length>10?'…':''}
+                                      </span>
+                                    ):(
+                                      <button onClick={()=>setLinkingAsset({type:'stock',ref:_r,name:h.company||h.symbol,value:(h.quantity||0)*(h.last_price||0)})}
+                                        style={{flexShrink:0,background:'rgba(99,102,241,0.07)',border:'1px solid rgba(99,102,241,0.2)',borderRadius:7,fontSize:10,color:'#6366f1',padding:'2px 8px',cursor:'pointer',whiteSpace:'nowrap',fontWeight:600}}>
+                                        🎯 Goal
+                                      </button>
+                                    );
+                                  })()}
+                                </div>
                                 <div style={{display:'flex',gap:4,alignItems:'center',flexWrap:'wrap'}}>
                                   <span className="db-stock-sym">{h.symbol}</span>
                                   {h.demat_account && (
@@ -1660,7 +1677,6 @@ export default function Dashboard() {
                               <th>Folio / ISIN</th>
                               <th>Holding Date</th>
                               <th>Source</th>
-                              <th style={{width:80}}>Goal</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1670,12 +1686,31 @@ export default function Dashboard() {
                               return (
                                 <tr key={h.id || idx}>
                                   {familyMode && <td style={{verticalAlign:'middle'}}><MemberBadge entry={h}/></td>}
-                                  <td>
-                                    <div style={{ fontWeight:600, color:'#e2e8f0', fontSize:12,
-                                      maxWidth:220, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-                                      {h.fund_name}
+                                  <td style={{minWidth:200}}>
+                                    <div style={{display:'flex',alignItems:'flex-start',gap:6}}>
+                                      <div style={{flex:1}}>
+                                        <div style={{ fontWeight:600, color:'#e2e8f0', fontSize:12,
+                                          maxWidth:200, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                                          {h.fund_name}
+                                        </div>
+                                        <div style={{ color:'#475569', fontSize:10, marginTop:1 }}>{h.fund_house}</div>
+                                      </div>
+                                      {(()=>{
+                                        const _r=h.isin||h.folio_number;
+                                        const _g=goals.find(g=>g.assets&&g.assets.some(a=>a.asset_ref===_r));
+                                        return _g?(
+                                          <span onClick={()=>setLinkingAsset({type:'mf',ref:_r,name:h.fund_name||h.scheme_name||_r,value:h.current_value||0})}
+                                            title={'Goal: '+_g.name} style={{fontSize:10,padding:'2px 7px',borderRadius:8,background:'rgba(99,102,241,0.15)',color:'#818cf8',cursor:'pointer',whiteSpace:'nowrap',flexShrink:0,fontWeight:600,marginTop:2}}>
+                                            🎯 {_g.name.slice(0,10)}{_g.name.length>10?'…':''}
+                                          </span>
+                                        ):(
+                                          <button onClick={()=>setLinkingAsset({type:'mf',ref:_r,name:h.fund_name||h.scheme_name||_r,value:h.current_value||0})}
+                                            style={{flexShrink:0,background:'rgba(99,102,241,0.07)',border:'1px solid rgba(99,102,241,0.2)',borderRadius:7,fontSize:10,color:'#6366f1',padding:'2px 8px',cursor:'pointer',whiteSpace:'nowrap',fontWeight:600,marginTop:2}}>
+                                            🎯 Goal
+                                          </button>
+                                        );
+                                      })()}
                                     </div>
-                                    <div style={{ color:'#475569', fontSize:10, marginTop:1 }}>{h.fund_house}</div>
                                   </td>
                                   <td>
                                     <span style={{ fontSize:10, background:'rgba(14,165,233,0.1)', color:'#0ea5e9',
@@ -1734,23 +1769,7 @@ export default function Dashboard() {
                                       {h.source || 'CDSL'}
                                     </span>
                                   </td>
-                                  <td style={{textAlign:'center',paddingRight:8}}>
-                                    {(()=>{
-                                      const ref=h.isin||h.folio_number;
-                                      const lGoal=goals.find(g=>g.assets&&g.assets.some(a=>a.asset_ref===ref));
-                                      return lGoal ? (
-                                        <span title={lGoal.name} onClick={()=>setLinkingAsset({type:'mf',ref,name:h.fund_name||h.scheme_name||ref,value:h.current_value||0})}
-                                          style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:'rgba(99,102,241,0.15)',color:'#818cf8',cursor:'pointer',whiteSpace:'nowrap'}}>
-                                          🎯 {lGoal.name.slice(0,12)}{lGoal.name.length>12?'...':''}
-                                        </span>
-                                      ) : (
-                                        <button onClick={()=>setLinkingAsset({type:'mf',ref,name:h.fund_name||h.scheme_name||ref,value:h.current_value||0})} title='Link to Goal'
-                                          style={{background:'none',border:'1px dashed #334155',borderRadius:6,fontSize:10,cursor:'pointer',color:'#475569',padding:'2px 8px',transition:'all 0.15s'}}
-                                          onMouseOver={e=>{e.currentTarget.style.borderColor='#6366f1';e.currentTarget.style.color='#818cf8';}}
-                                          onMouseOut={e=>{e.currentTarget.style.borderColor='#334155';e.currentTarget.style.color='#475569';}}>Link Goal</button>
-                                      );
-                                    })()}
-                                  </td>
+                                  
                                 </tr>
                               );
                             })}
