@@ -240,5 +240,80 @@ async function saveMFHolding(userId, h) {
   return true;
 }
 
+// ── POST /api/mf/sync-nav ─────────────────────────────────────────────────────
+// Fetch latest NAV from AMFI (amfiindia.com) and update all user's MF holdings
+router.post('/sync-nav', requireAuth, async (req, res) => {
+  const userId = req.user.id;
+
+  // 1. Get user's holdings that have an ISIN
+  const { data: holdings, error } = await supabase
+    .from('mf_holdings')
+    .select('id, isin, fund_name, units')
+    .eq('user_id', userId)
+    .not('isin', 'is', null);
+
+  if (error) return res.status(500).json({ error: error.message });
+  if (!holdings || holdings.length === 0) {
+    return res.json({ updated: 0, message: 'No holdings with ISIN found' });
+  }
+
+  // 2. Fetch AMFI NAV data (covers all Indian MFs, updated daily)
+  let navMap = {}; // isin → nav
+  try {
+    const https = require('https');
+    const rawData = await new Promise((resolve, reject) => {
+      https.get('https://www.amfiindia.com/spages/NAVAll.txt', (r) => {
+        let data = '';
+        r.on('data', chunk => data += chunk);
+        r.on('end', () => resolve(data));
+      }).on('error', reject);
+    });
+
+    // Parse AMFI format: SchemeCode;ISIN_Div;ISIN_Growth;SchemeName;NAV;Date
+    for (const line of rawData.split("\n")) {
+      const parts = line.split(';');
+      if (parts.length < 6) continue;
+      const nav = parseFloat(parts[4]);
+      if (isNaN(nav)) continue;
+      // Both ISIN columns (index 1 = dividend, 2 = growth)
+      if (parts[1] && parts[1].startsWith('INF')) navMap[parts[1].trim()] = nav;
+      if (parts[2] && parts[2].startsWith('INF')) navMap[parts[2].trim()] = nav;
+    }
+    console.log(JSON.stringify({ event: 'AMFI_NAV_FETCHED', total: Object.keys(navMap).length }));
+  } catch (e) {
+    return res.status(502).json({ error: 'Failed to fetch NAV data from AMFI: ' + e.message });
+  }
+
+  // 3. Update each holding
+  let updated = 0, notFound = 0;
+  const navDate = new Date().toISOString().split('T')[0];
+
+  for (const h of holdings) {
+    const nav = navMap[h.isin];
+    if (!nav) { notFound++; continue; }
+
+    const currentValue = parseFloat(h.units) * nav;
+    const { error: updateErr } = await supabase
+      .from('mf_holdings')
+      .update({
+        nav,
+        current_value: currentValue,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', h.id)
+      .eq('user_id', userId);
+
+    if (!updateErr) updated++;
+  }
+
+  return res.json({
+    updated,
+    notFound,
+    total: holdings.length,
+    navDate,
+    message: `Updated NAV for ${updated} of ${holdings.length} fund${holdings.length !== 1 ? 's' : ''}${notFound > 0 ? ` (${notFound} ISIN not in AMFI data)` : ''}.`,
+  });
+});
+
 module.exports = router;
 module.exports.saveMFHolding = saveMFHolding;
