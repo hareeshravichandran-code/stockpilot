@@ -143,6 +143,8 @@ export default function Dashboard() {
   const [linkingGoalId, setLinkingGoalId]     = useState(null);  // goal we're linking assets to
   const [linkingAsset, setLinkingAsset]       = useState(null);  // {type,ref,name,value} being linked
   const [bulkLinkMode, setBulkLinkMode]        = useState(null);  // null | 'stock' | 'mf'
+  const [syncingNAV, setSyncingNAV]            = useState(false);
+  const [navSyncResult, setNavSyncResult]      = useState(null);
   const [bulkLinking, setBulkLinking]          = useState(false);
   const [bulkLinkResult, setBulkLinkResult]    = useState(null);  // {linked, skipped} — bulk link all to one goal
   const [picUploading, setPicUploading]       = useState(false);
@@ -499,6 +501,18 @@ export default function Dashboard() {
     await goalsAPI.unlinkAsset(goalId, assetId).catch(() => {});
     if (goalDetail?.id === goalId) openGoalDetail({ ...goalDetail });
     await loadGoals();
+  };
+
+  // Sync MF NAV from AMFI
+  const syncMFNav = async () => {
+    setSyncingNAV(true); setNavSyncResult(null);
+    try {
+      const r = await mfAPI.syncNAV();
+      setNavSyncResult({ success: true, message: r.data.message, updated: r.data.updated, total: r.data.total });
+      mfAPI.get().then(r => setMfData(r.data)).catch(() => {});
+    } catch(e) {
+      setNavSyncResult({ success: false, message: e.response?.data?.error || 'NAV sync failed' });
+    } finally { setSyncingNAV(false); }
   };
 
   const loadTab = async (t) => {
@@ -1556,6 +1570,13 @@ export default function Dashboard() {
                       🎯 Link All to Goal
                     </button>
                   )}
+                  <button onClick={syncMFNav} disabled={syncingNAV}
+                    title='Fetch latest NAV from AMFI for all funds'
+                    style={{ padding:'8px 16px', background:'rgba(245,158,11,0.08)',
+                      border:'1px solid rgba(245,158,11,0.2)', color:'#f59e0b',
+                      borderRadius:8, fontSize:12, fontWeight:700, cursor:'pointer' }}>
+                    {syncingNAV ? '⟳ Updating NAV…' : '⟳ Update NAV (AMFI)'}
+                  </button>
                   <button onClick={syncEmails} disabled={syncing}
                     style={{ padding:'8px 16px', background:'rgba(100,255,218,0.08)',
                       border:'1px solid rgba(100,255,218,0.2)', color:'#64ffda',
@@ -1563,6 +1584,19 @@ export default function Dashboard() {
                     {syncing ? '⟳ Syncing…' : '⟳ Sync Gmail (CDSL/NSDL)'}
                   </button>
                 </div>
+
+                {/* NAV sync result */}
+                {navSyncResult && (
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',
+                    padding:'8px 14px',borderRadius:8,marginBottom:10,fontSize:12,
+                    background:navSyncResult.success?'rgba(245,158,11,0.06)':'rgba(244,63,94,0.06)',
+                    border:`1px solid ${navSyncResult.success?'rgba(245,158,11,0.2)':'rgba(244,63,94,0.2)'}`}}>
+                    <span style={{color:navSyncResult.success?'#f59e0b':'#f43f5e'}}>
+                      {navSyncResult.success ? '✅' : '⚠'} {navSyncResult.message}
+                    </span>
+                    <button onClick={()=>setNavSyncResult(null)} style={{background:'none',border:'none',color:'#475569',cursor:'pointer',fontSize:14}}>✕</button>
+                  </div>
+                )}
 
                 {/* MF total summary bar */}
                 {!mfLoading && holdings.length > 0 && (
