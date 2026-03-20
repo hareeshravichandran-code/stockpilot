@@ -122,4 +122,18 @@ export const familyAPI = {
   combinedGoals:    ()         => api.get('/api/family/combined/goals'),
 };
 
+export const fdAPI = {
+  getAll:  ()         => api.get('/api/fd'),
+  create:  (data)     => api.post('/api/fd', data),
+  update:  (id, data) => api.put(`/api/fd/${id}`, data),
+  delete:  (id)       => api.delete(`/api/fd/${id}`),
+};
+
+export const rdAPI = {
+  getAll:  ()         => api.get('/api/rd'),
+  create:  (data)     => api.post('/api/rd', data),
+  update:  (id, data) => api.put(`/api/rd/${id}`, data),
+  delete:  (id)       => api.delete(`/api/rd/${id}`),
+};
+
 export default api;
