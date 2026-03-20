@@ -245,75 +245,144 @@ async function saveMFHolding(userId, h) {
 router.post('/sync-nav', requireAuth, async (req, res) => {
   const userId = req.user.id;
 
-  // 1. Get user's holdings that have an ISIN
+  // 1. Get user's holdings
   const { data: holdings, error } = await supabase
     .from('mf_holdings')
-    .select('id, isin, fund_name, units')
-    .eq('user_id', userId)
-    .not('isin', 'is', null);
+    .select('id, isin, folio_number, fund_name, units, nav, current_value')
+    .eq('user_id', userId);
 
   if (error) return res.status(500).json({ error: error.message });
   if (!holdings || holdings.length === 0) {
-    return res.json({ updated: 0, message: 'No holdings with ISIN found' });
+    return res.json({ updated: 0, message: 'No mutual fund holdings found' });
   }
 
-  // 2. Fetch AMFI NAV data (covers all Indian MFs, updated daily)
-  let navMap = {}; // isin → nav
+  // 2. Fetch AMFI NAV data
+  let navMap = {}; // isin → { nav, navDate }
+  let amfiError = null;
+
   try {
     const https = require('https');
     const rawData = await new Promise((resolve, reject) => {
-      https.get('https://www.amfiindia.com/spages/NAVAll.txt', (r) => {
-        let data = '';
-        r.on('data', chunk => data += chunk);
-        r.on('end', () => resolve(data));
-      }).on('error', reject);
+      const req = https.get(
+        'https://www.amfiindia.com/spages/NAVAll.txt',
+        { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Kanalyst/1.0)' } },
+        (r) => {
+          let data = '';
+          r.on('data', chunk => data += chunk);
+          r.on('end', () => resolve(data));
+        }
+      );
+      req.on('error', reject);
+      req.setTimeout(20000, () => { req.destroy(); reject(new Error('AMFI request timed out')); });
     });
 
-    // Parse AMFI format: SchemeCode;ISIN_Div;ISIN_Growth;SchemeName;NAV;Date
-    for (const line of rawData.split("\n")) {
+    // Normalise line endings, parse semicolon-delimited rows
+    // AMFI format: SchemeCode;ISINDivPayout;ISINDivReinvest;SchemeName;NAV;Date
+    const today = new Date().toISOString().split('T')[0];
+    let parsed = 0;
+    for (const rawLine of rawData.replace(/\r/g, "").split("\n")) {
+
+
+      const line = rawLine.trim();
+      if (!line || !line.includes(';')) continue;
       const parts = line.split(';');
-      if (parts.length < 6) continue;
+      if (parts.length < 5) continue;
       const nav = parseFloat(parts[4]);
-      if (isNaN(nav)) continue;
-      // Both ISIN columns (index 1 = dividend, 2 = growth)
-      if (parts[1] && parts[1].startsWith('INF')) navMap[parts[1].trim()] = nav;
-      if (parts[2] && parts[2].startsWith('INF')) navMap[parts[2].trim()] = nav;
+      if (isNaN(nav) || nav <= 0) continue;
+      const date = parts[5] ? parts[5].trim() : today;
+      const isin1 = (parts[1] || '').trim();
+      const isin2 = (parts[2] || '').trim();
+      if (isin1.startsWith('INF') || isin1.startsWith('IN9')) {
+        navMap[isin1] = { nav, navDate: date };
+        parsed++;
+      }
+      if (isin2.startsWith('INF') || isin2.startsWith('IN9')) {
+        navMap[isin2] = { nav, navDate: date };
+        parsed++;
+      }
     }
-    console.log(JSON.stringify({ event: 'AMFI_NAV_FETCHED', total: Object.keys(navMap).length }));
+    console.log(JSON.stringify({ event: 'AMFI_PARSED', isinCount: parsed, navMapSize: Object.keys(navMap).length }));
   } catch (e) {
-    return res.status(502).json({ error: 'Failed to fetch NAV data from AMFI: ' + e.message });
+    amfiError = e.message;
+    console.error(JSON.stringify({ event: 'AMFI_FETCH_ERROR', error: e.message }));
   }
 
-  // 3. Update each holding
-  let updated = 0, notFound = 0;
-  const navDate = new Date().toISOString().split('T')[0];
+  // 3. If AMFI failed or returned 0, try mfapi.in for each fund individually
+  if (Object.keys(navMap).length === 0) {
+    console.log(JSON.stringify({ event: 'FALLBACK_TO_MFAPI', amfiError }));
+    // mfapi.in: GET /mf/search?q=<fund_name> → [{ schemeCode }]
+    // then GET /mf/<schemeCode>/latest → { data: [{ nav, date }] }
+    for (const h of holdings) {
+      if (!h.fund_name) continue;
+      try {
+        const searchName = encodeURIComponent(h.fund_name.slice(0, 30));
+        const searchData = await new Promise((resolve, reject) => {
+          const r = require('https').get(`https://api.mfapi.in/mf/search?q=${searchName}`, res => {
+            let d = '';
+            res.on('data', c => d += c);
+            res.on('end', () => resolve(JSON.parse(d)));
+          });
+          r.on('error', reject);
+          r.setTimeout(8000, () => { r.destroy(); reject(new Error('timeout')); });
+        });
+        if (!searchData || !searchData[0]) continue;
+        const schemeCode = searchData[0].schemeCode;
+        const navData = await new Promise((resolve, reject) => {
+          const r = require('https').get(`https://api.mfapi.in/mf/${schemeCode}/latest`, res => {
+            let d = '';
+            res.on('data', c => d += c);
+            res.on('end', () => resolve(JSON.parse(d)));
+          });
+          r.on('error', reject);
+          r.setTimeout(8000, () => { r.destroy(); reject(new Error('timeout')); });
+        });
+        if (navData?.data?.[0]?.nav && h.isin) {
+          navMap[h.isin] = { nav: parseFloat(navData.data[0].nav), navDate: navData.data[0].date };
+        }
+      } catch(e) { /* skip */ }
+    }
+    console.log(JSON.stringify({ event: 'MFAPI_FALLBACK_DONE', resolved: Object.keys(navMap).length }));
+  }
+
+  // 4. Update each holding
+  let updated = 0, notFound = 0, errors = 0;
 
   for (const h of holdings) {
-    const nav = navMap[h.isin];
-    if (!nav) { notFound++; continue; }
+    const key  = h.isin && navMap[h.isin] ? h.isin : null;
+    const entry = key ? navMap[key] : null;
 
-    const currentValue = parseFloat(h.units) * nav;
+    if (!entry) { notFound++; continue; }
+
+    const newNav = entry.nav;
+    const newCurrentValue = parseFloat(h.units) * newNav;
+
     const { error: updateErr } = await supabase
       .from('mf_holdings')
       .update({
-        nav,
-        current_value: currentValue,
-        updated_at: new Date().toISOString(),
+        nav:           newNav,
+        current_value: parseFloat(newCurrentValue.toFixed(2)),
+        gain_loss:     h.invested_value ? parseFloat((newCurrentValue - h.invested_value).toFixed(2)) : null,
+        updated_at:    new Date().toISOString(),
       })
       .eq('id', h.id)
       .eq('user_id', userId);
 
-    if (!updateErr) updated++;
+    if (updateErr) { console.error(JSON.stringify({ event: 'MF_UPDATE_ERR', fund: h.fund_name, error: updateErr.message })); errors++; }
+    else updated++;
   }
 
+  const navDate = Object.values(navMap)[0]?.navDate || new Date().toISOString().split('T')[0];
   return res.json({
     updated,
     notFound,
-    total: holdings.length,
+    errors,
+    total:   holdings.length,
     navDate,
-    message: `Updated NAV for ${updated} of ${holdings.length} fund${holdings.length !== 1 ? 's' : ''}${notFound > 0 ? ` (${notFound} ISIN not in AMFI data)` : ''}.`,
+    amfiError,
+    message: updated > 0
+      ? `✅ Updated NAV for ${updated} of ${holdings.length} fund${holdings.length !== 1 ? 's' : ''} (as of ${navDate})${notFound > 0 ? ` · ${notFound} ISIN not matched` : ''}`
+      : `⚠ Could not update NAV${amfiError ? ': ' + amfiError : ' — check Railway logs'}`,
   });
 });
-
 module.exports = router;
 module.exports.saveMFHolding = saveMFHolding;
