@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
-import api, { portfolioAPI, emailAPI, authAPI, incomeAPI, mfAPI, goalsAPI, familyAPI } from '../lib/api';
+import api, { portfolioAPI, emailAPI, authAPI, incomeAPI, mfAPI, goalsAPI, familyAPI, fdAPI, rdAPI } from '../lib/api';
 import AdminPanel from './AdminPanel';
 import Dividends from './Dividends';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
@@ -146,6 +146,26 @@ export default function Dashboard() {
   const [syncingNAV, setSyncingNAV]            = useState(false);
   const [navSyncResult, setNavSyncResult]      = useState(null);
   const [refreshing, setRefreshing]            = useState(false);  // global refresh pulse
+
+  // ── FD state ──────────────────────────────────────────────────────
+  const [fdList, setFdList]             = useState([]);
+  const [fdSummary, setFdSummary]       = useState({});
+  const [fdLoading, setFdLoading]       = useState(false);
+  const [showFdForm, setShowFdForm]     = useState(false);
+  const [editingFd, setEditingFd]       = useState(null);
+  const [fdSaving, setFdSaving]         = useState(false);
+  const [fdError, setFdError]           = useState('');
+  const [fdForm, setFdForm]             = useState({});
+
+  // ── RD state ──────────────────────────────────────────────────────
+  const [rdList, setRdList]             = useState([]);
+  const [rdSummary, setRdSummary]       = useState({});
+  const [rdLoading, setRdLoading]       = useState(false);
+  const [showRdForm, setShowRdForm]     = useState(false);
+  const [editingRd, setEditingRd]       = useState(null);
+  const [rdSaving, setRdSaving]         = useState(false);
+  const [rdError, setRdError]           = useState('');
+  const [rdForm, setRdForm]             = useState({});
   const [bulkLinking, setBulkLinking]          = useState(false);
   const [bulkProgress, setBulkProgress]        = useState({ current: 0, total: 0 });
   const [bulkLinkResult, setBulkLinkResult]    = useState(null);  // {linked, skipped} — bulk link all to one goal
@@ -169,6 +189,8 @@ export default function Dashboard() {
   useEffect(() => {
     loadPortfolio();
     loadGoals();
+    loadFDs();
+    loadRDs();
     console.log('[Kanalyst] Dashboard v3 loaded - goal linking active');
     emailAPI.status().then(r => setEmailStatus(r.data.connections || [])).catch(() => {});
 
@@ -532,6 +554,88 @@ export default function Dashboard() {
     } finally { setSyncingNAV(false); }
   };
 
+  // ── FD handlers ──────────────────────────────────────────────────
+  const loadFDs = async () => {
+    setFdLoading(true);
+    try {
+      const r = await fdAPI.getAll();
+      setFdList(r.data.fds || []);
+      setFdSummary(r.data.summary || {});
+    } catch(e) { console.error(e); } finally { setFdLoading(false); }
+  };
+
+  const openFdForm = (fd = null) => {
+    setEditingFd(fd);
+    setFdError('');
+    if (fd) {
+      // Parse tenor_days back to Y/M/D
+      const years = Math.floor(fd.tenor_days / 365);
+      const rem   = fd.tenor_days % 365;
+      const months = Math.floor(rem / 30);
+      const days  = rem % 30;
+      setFdForm({ ...fd, tenor_years: String(years), tenor_months_part: String(months), tenor_days_part: String(days), goal_id: fd.goal_id || '', goal_earmark_pct: String(fd.goal_earmark_pct || 100) });
+    } else {
+      setFdForm({institution_name:'',institution_type:'bank',nickname:'',branch_ref:'',principal_amount:'',interest_rate_pa:'',compounding_freq:'quarterly',payout_type:'cumulative',payout_frequency:'',start_date:'',tenor_days:'',tenor_years:'',tenor_months_part:'',tenor_days_part:'',on_maturity_action:'undecided',auto_renew_type:'',tds_applicable:true,form_15g:false,tds_rate:'10',is_tax_saving_fd:false,is_senior_rate:false,goal_id:'',goal_earmark_pct:'100',notes:''});
+    }
+    setShowFdForm(true);
+  };
+
+  const saveFd = async () => {
+    setFdSaving(true); setFdError('');
+    try {
+      // Compute tenor_days from Y/M/D parts
+      const tenor = (parseInt(fdForm.tenor_years||0)*365) + (parseInt(fdForm.tenor_months_part||0)*30) + parseInt(fdForm.tenor_days_part||0);
+      if (tenor < 7) { setFdError('Tenor must be at least 7 days'); setFdSaving(false); return; }
+      const payload = { ...fdForm, tenor_days: tenor, tds_applicable: fdForm.form_15g ? false : fdForm.tds_applicable, goal_id: fdForm.goal_id || null };
+      if (editingFd) await fdAPI.update(editingFd.fd_id, payload);
+      else           await fdAPI.create(payload);
+      setShowFdForm(false);
+      await loadFDs();
+    } catch(e) { setFdError(e.response?.data?.error || 'Save failed'); }
+    finally { setFdSaving(false); }
+  };
+
+  const deleteFd = async (id) => {
+    if (!window.confirm('Delete this Fixed Deposit?')) return;
+    await fdAPI.delete(id).catch(() => {});
+    await loadFDs();
+  };
+
+  // ── RD handlers ──────────────────────────────────────────────────
+  const loadRDs = async () => {
+    setRdLoading(true);
+    try {
+      const r = await rdAPI.getAll();
+      setRdList(r.data.rds || []);
+      setRdSummary(r.data.summary || {});
+    } catch(e) { console.error(e); } finally { setRdLoading(false); }
+  };
+
+  const openRdForm = (rd = null) => {
+    setEditingRd(rd);
+    setRdError('');
+    setRdForm(rd ? { ...rd, goal_id: rd.goal_id||'', goal_earmark_pct: String(rd.goal_earmark_pct||100) } : {institution_name:'',institution_type:'bank',nickname:'',account_reference:'',monthly_installment:'',interest_rate_pa:'',compounding_freq:'quarterly',start_date:'',tenure_months:'',missed_installments:'0',penalty_per_100:'1.50',tds_applicable:true,form_15g:false,tds_rate:'10',is_senior_rate:false,goal_id:'',goal_earmark_pct:'100',notes:''});
+    setShowRdForm(true);
+  };
+
+  const saveRd = async () => {
+    setRdSaving(true); setRdError('');
+    try {
+      const payload = { ...rdForm, tds_applicable: rdForm.form_15g ? false : rdForm.tds_applicable, goal_id: rdForm.goal_id || null };
+      if (editingRd) await rdAPI.update(editingRd.rd_id, payload);
+      else           await rdAPI.create(payload);
+      setShowRdForm(false);
+      await loadRDs();
+    } catch(e) { setRdError(e.response?.data?.error || 'Save failed'); }
+    finally { setRdSaving(false); }
+  };
+
+  const deleteRd = async (id) => {
+    if (!window.confirm('Delete this Recurring Deposit?')) return;
+    await rdAPI.delete(id).catch(() => {});
+    await loadRDs();
+  };
+
   // Smooth global refresh - reloads all data with fade animation
   const smoothRefresh = async () => {
     setRefreshing(true);
@@ -539,6 +643,8 @@ export default function Dashboard() {
       loadPortfolio(),
       mfAPI.get().then(r => setMfData(r.data)).catch(() => {}),
       loadGoals(),
+      loadFDs(),
+      loadRDs(),
     ]);
     setRefreshing(false);
   };
@@ -552,6 +658,7 @@ export default function Dashboard() {
     if (t === 'income')   { await loadIncome();   return; }
     if (t === 'expenses') { await loadExpenses(); return; }
     if (t === 'goals')    { await loadGoals();    return; }
+    if (t === 'bankdeposits') { await Promise.all([loadFDs(), loadRDs()]); return; }
     if (t === 'holdings' || t === 'mutualfunds') { if (goals.length === 0) loadGoals(); }
     if (t === 'dividends') { return; // Dividends component loads its own data
       const r = await portfolioAPI.dividends().catch(() => ({ data: { dividends: [], totalIncome: 0 } }));
@@ -888,6 +995,7 @@ export default function Dashboard() {
           <div className={`db-nav-item ${tab==='mutualfunds'?'active':''}`} onClick={()=>loadTab('mutualfunds')}><span>◉</span> Mutual Funds</div>
           <div className={`db-nav-item ${tab==='dividends'?'active':''}`} onClick={()=>loadTab('dividends')}><span>◎</span> Dividends</div>
           <div className={`db-nav-item ${tab==='transactions'?'active':''}`} onClick={()=>loadTab('transactions')}><span>⇄</span> Transactions</div>
+          <div className={`db-nav-item ${tab==='bankdeposits'?'active':''}`} onClick={()=>loadTab('bankdeposits')}><span>🏦</span> Bank Deposits</div>
 
           <div className="db-nav-label" style={{marginTop:12}}>Finance</div>
           <div className={`db-nav-item ${tab==='income'?'active':''}`} onClick={()=>loadTab('income')}><span>₹</span> Income</div>
@@ -1041,8 +1149,9 @@ export default function Dashboard() {
               {/* ── Phase 1: 5 Tiles ── */}
               {(() => {
                 const stocksVal   = s.totalMarket || 0;
+                const fdRdVal     = (fdSummary.totalCurrentValue||0) + (rdSummary.totalCurrentValue||0);
                 const mfVal       = mfData?.summary?.totalValue || 0;
-                const otherAssets = (assetBalances.ppf||0) + (assetBalances.epf||0) + (assetBalances.nps||0) + (assetBalances.fd||0) + (assetBalances.ssy||0);
+                const otherAssets = (assetBalances.ppf||0) + (assetBalances.epf||0) + (assetBalances.nps||0) + fdRdVal + (assetBalances.ssy||0);
                 const totalNetWorth = stocksVal + mfVal + otherAssets;
                 const totalCredit = (liabilities.homeLoan||0) + (liabilities.creditCard||0);
 
@@ -1052,7 +1161,7 @@ export default function Dashboard() {
                   { name: 'PPF', value: assetBalances.ppf||0, color: '#ffd700' },
                   { name: 'EPF', value: assetBalances.epf||0, color: '#00bcd4' },
                   { name: 'NPS', value: assetBalances.nps||0, color: '#b39ddb' },
-                  { name: 'FD', value: assetBalances.fd||0, color: '#ff8a65' },
+                  { name: 'Bank Deposits', value: fdRdVal, color: '#ff8a65' },
                   { name: 'SSY', value: assetBalances.ssy||0, color: '#f48fb1' },
                 ].filter(d => d.value > 0);
 
@@ -2485,6 +2594,251 @@ export default function Dashboard() {
           )}
 
           {/* TAX */}
+          {tab === 'bankdeposits' && (() => {
+            const fmt2 = (v) => v >= 10000000 ? `₹${(v/10000000).toFixed(2)}Cr` : v >= 100000 ? `₹${(v/100000).toFixed(2)}L` : `₹${Number(v||0).toLocaleString('en-IN',{maximumFractionDigits:0})}`;
+            const daysToTenor = (y,m,d) => (parseInt(y||0)*365)+(parseInt(m||0)*30)+parseInt(d||0);
+            const matDateFD = (sd, td) => { const dt=new Date(sd||new Date()); dt.setDate(dt.getDate()+parseInt(td||0)); return isNaN(dt)?'—':dt.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}); };
+            const matDateRD = (sd, tm) => { const dt=new Date(sd||new Date()); dt.setMonth(dt.getMonth()+parseInt(tm||0)); return isNaN(dt)?'—':dt.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}); };
+
+            // Live preview computations for form
+            const fdPreview = (() => {
+              if (!fdForm.principal_amount || !fdForm.interest_rate_pa || !fdForm.start_date) return null;
+              const P=parseFloat(fdForm.principal_amount), r=parseFloat(fdForm.interest_rate_pa)/100;
+              const n={monthly:12,quarterly:4,half_yearly:2,annually:1,simple:1}[fdForm.compounding_freq]||4;
+              const t=daysToTenor(fdForm.tenor_years,fdForm.tenor_months_part,fdForm.tenor_days_part)/365;
+              if(t<=0) return null;
+              const mat = fdForm.compounding_freq==='simple' ? P*(1+r*t) : P*Math.pow(1+r/n,n*t);
+              const tds = fdForm.tds_applicable&&!fdForm.form_15g ? (parseFloat(fdForm.tds_rate)||10)/100 : 0;
+              const net = P + (mat-P)*(1-tds);
+              const matDt = matDateFD(fdForm.start_date, daysToTenor(fdForm.tenor_years,fdForm.tenor_months_part,fdForm.tenor_days_part));
+              return { maturity: mat.toFixed(0), net: net.toFixed(0), interest: (mat-P).toFixed(0), matDate: matDt };
+            })();
+
+            const rdPreview = (() => {
+              if (!rdForm.monthly_installment || !rdForm.interest_rate_pa || !rdForm.tenure_months) return null;
+              const R=parseFloat(rdForm.monthly_installment), r=parseFloat(rdForm.interest_rate_pa)/100, n=4, tm=parseInt(rdForm.tenure_months||0);
+              if(tm<1) return null;
+              let mat=0;
+              for(let i=1;i<=tm;i++) mat+=R*Math.pow(1+r/n,n*(tm-i+1)/12);
+              const total=R*tm, tds=rdForm.tds_applicable&&!rdForm.form_15g?(parseFloat(rdForm.tds_rate)||10)/100:0;
+              const net = total+(mat-total)*(1-tds);
+              const matDt = matDateRD(rdForm.start_date, rdForm.tenure_months);
+              return { maturity: mat.toFixed(0), net: net.toFixed(0), interest: (mat-total).toFixed(0), totalInvest: (R*tm).toFixed(0), matDate: matDt };
+            })();
+
+            const InputField = ({label,val,onChange,type='text',placeholder='',note,required}) => (
+              <div>
+                <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4,letterSpacing:0.5}}>
+                  {label}{required&&<span style={{color:'#f43f5e',marginLeft:2}}>*</span>}
+                </label>
+                <input value={val} onChange={onChange} type={type} placeholder={placeholder}
+                  style={{width:'100%',background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,padding:'9px 12px',color:'#e2e8f0',fontSize:13,outline:'none',boxSizing:'border-box'}}/>
+                {note&&<div style={{color:'#334155',fontSize:10,marginTop:2}}>{note}</div>}
+              </div>
+            );
+            const SelectField = ({label,val,onChange,options,required}) => (
+              <div>
+                <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4,letterSpacing:0.5}}>
+                  {label}{required&&<span style={{color:'#f43f5e',marginLeft:2}}>*</span>}
+                </label>
+                <select value={val} onChange={onChange}
+                  style={{width:'100%',background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,padding:'9px 12px',color:'#e2e8f0',fontSize:13,outline:'none',boxSizing:'border-box',cursor:'pointer'}}>
+                  {options.map(([v,l])=><option key={v} value={v}>{l}</option>)}
+                </select>
+              </div>
+            );
+
+            return (
+              <div className="fade-in">
+                {/* ── Summary bar ── */}
+                <div style={{display:'flex',gap:16,flexWrap:'wrap',marginBottom:20}}>
+                  {[
+                    {label:'FD Count',       val: fdSummary.active||0,                        unit:'active',  color:'#64ffda', icon:'🏦'},
+                    {label:'FD Corpus',       val: fmt2(fdSummary.totalCurrentValue||0),       unit:'current', color:'#64ffda', icon:''},
+                    {label:'FD at Maturity',  val: fmt2(fdSummary.totalMaturityValue||0),      unit:'if held', color:'#f59e0b', icon:''},
+                    {label:'RD Count',        val: rdSummary.active||0,                        unit:'active',  color:'#818cf8', icon:'📅'},
+                    {label:'RD Monthly',      val: fmt2(rdSummary.totalMonthlyCommit||0),      unit:'/month',  color:'#818cf8', icon:''},
+                    {label:'RD Corpus',       val: fmt2(rdSummary.totalCurrentValue||0),       unit:'invested',color:'#818cf8', icon:''},
+                  ].map(s=>(
+                    <div key={s.label} style={{background:'rgba(255,255,255,0.03)',border:'1px solid rgba(255,255,255,0.06)',borderRadius:10,padding:'12px 16px',minWidth:130}}>
+                      <div style={{fontSize:10,color:'#475569',fontWeight:700,letterSpacing:0.5,marginBottom:2}}>{s.label.toUpperCase()}</div>
+                      <div style={{fontSize:20,fontWeight:700,color:s.color}}>{s.icon} {s.val}</div>
+                      <div style={{fontSize:10,color:'#334155',marginTop:1}}>{s.unit}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* ── FD Section ── */}
+                <div className="db-card" style={{marginBottom:20}}>
+                  <div className="db-card-header">
+                    <div className="db-card-title">🏦 Fixed Deposits ({fdList.length})</div>
+                    <button onClick={()=>openFdForm()} style={{background:'#6366f1',border:'none',color:'#fff',borderRadius:8,padding:'7px 16px',cursor:'pointer',fontSize:12,fontWeight:700}}>+ Add FD</button>
+                  </div>
+                  {fdLoading ? <div style={{padding:40,textAlign:'center',color:'#475569'}}>Loading…</div> : fdList.length === 0 ? (
+                    <div style={{padding:'40px 20px',textAlign:'center',color:'#475569'}}>
+                      <div style={{fontSize:36,marginBottom:8}}>🏦</div>
+                      <div style={{fontSize:13}}>No Fixed Deposits added yet. Click <b style={{color:'#6366f1'}}>+ Add FD</b> to get started.</div>
+                    </div>
+                  ) : (
+                    <div style={{overflowX:'auto'}}>
+                      <table className="db-table">
+                        <thead><tr>
+                          <th>Institution</th>
+                          <th className="right">Principal</th>
+                          <th className="right">Rate</th>
+                          <th>Tenor</th>
+                          <th>Maturity</th>
+                          <th className="right">Current Value</th>
+                          <th className="right">Maturity Amt</th>
+                          <th>Goal</th>
+                          <th>Status</th>
+                          <th></th>
+                        </tr></thead>
+                        <tbody>
+                        {fdList.map(fd => {
+                          const linked = fd.goals;
+                          const daysLeft = fd.days_to_maturity;
+                          const urgency = daysLeft > 0 && daysLeft <= 30 ? 'warn' : daysLeft <= 0 ? 'done' : 'ok';
+                          return (
+                            <tr key={fd.fd_id} className="kv-refresh-row">
+                              <td>
+                                <div style={{fontWeight:600,color:'#e2e8f0',fontSize:13}}>{fd.nickname||fd.institution_name}</div>
+                                <div style={{fontSize:10,color:'#475569'}}>{fd.institution_name} · {fd.payout_type}</div>
+                                {fd.is_tax_saving_fd && <span style={{fontSize:9,padding:'1px 5px',borderRadius:4,background:'rgba(0,212,161,0.1)',color:'#00d4a1'}}>80C</span>}
+                              </td>
+                              <td className="right mono">{fmt2(fd.principal_amount)}</td>
+                              <td className="right" style={{color:'#f59e0b',fontWeight:600}}>{fd.interest_rate_pa}%</td>
+                              <td style={{fontSize:12,color:'#64748b'}}>{Math.round(fd.tenor_days/30)}m</td>
+                              <td style={{fontSize:12,whiteSpace:'nowrap'}}>
+                                {new Date(fd.maturity_date).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}
+                                {urgency==='warn' && <div style={{fontSize:10,color:'#f59e0b'}}>⚠ {daysLeft}d left</div>}
+                                {urgency==='done' && <div style={{fontSize:10,color:'#f43f5e'}}>Matured</div>}
+                              </td>
+                              <td className="right mono" style={{color:'#00d4a1',fontWeight:600}}>{fmt2(fd.current_value)}</td>
+                              <td className="right mono" style={{color:'#64ffda',fontWeight:700}}>{fmt2(fd.maturity_amount)}</td>
+                              <td>
+                                {linked ? (
+                                  <span style={{fontSize:10,padding:'2px 7px',borderRadius:8,background:'rgba(99,102,241,0.15)',color:'#818cf8',whiteSpace:'nowrap'}}>
+                                    🎯 {linked.name?.slice(0,12)}{linked.name?.length>12?'…':''}
+                                  </span>
+                                ) : (
+                                  <span style={{fontSize:10,color:'#334155'}}>—</span>
+                                )}
+                              </td>
+                              <td>
+                                <span style={{fontSize:10,padding:'2px 7px',borderRadius:8,fontWeight:600,
+                                  background:fd.is_active?'rgba(0,212,161,0.08)':'rgba(100,116,139,0.1)',
+                                  color:fd.is_active?'#00d4a1':'#64748b'}}>
+                                  {fd.is_active?'Active':'Closed'}
+                                </span>
+                              </td>
+                              <td>
+                                <div style={{display:'flex',gap:4}}>
+                                  <button onClick={()=>openFdForm(fd)} style={{background:'#1e2d3d',border:'1px solid #334155',color:'#94a3b8',borderRadius:6,padding:'3px 8px',cursor:'pointer',fontSize:11}}>Edit</button>
+                                  <button onClick={()=>deleteFd(fd.fd_id)} style={{background:'rgba(244,63,94,0.08)',border:'1px solid rgba(244,63,94,0.2)',color:'#f43f5e',borderRadius:6,padding:'3px 8px',cursor:'pointer',fontSize:11}}>✕</button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* ── RD Section ── */}
+                <div className="db-card">
+                  <div className="db-card-header">
+                    <div className="db-card-title">📅 Recurring Deposits ({rdList.length})</div>
+                    <button onClick={()=>openRdForm()} style={{background:'#818cf8',border:'none',color:'#fff',borderRadius:8,padding:'7px 16px',cursor:'pointer',fontSize:12,fontWeight:700}}>+ Add RD</button>
+                  </div>
+                  {rdLoading ? <div style={{padding:40,textAlign:'center',color:'#475569'}}>Loading…</div> : rdList.length === 0 ? (
+                    <div style={{padding:'40px 20px',textAlign:'center',color:'#475569'}}>
+                      <div style={{fontSize:36,marginBottom:8}}>📅</div>
+                      <div style={{fontSize:13}}>No Recurring Deposits added yet. Click <b style={{color:'#818cf8'}}>+ Add RD</b> to get started.</div>
+                    </div>
+                  ) : (
+                    <div style={{overflowX:'auto'}}>
+                      <table className="db-table">
+                        <thead><tr>
+                          <th>Institution</th>
+                          <th className="right">Monthly</th>
+                          <th className="right">Rate</th>
+                          <th>Tenure</th>
+                          <th>Maturity</th>
+                          <th className="right">Invested</th>
+                          <th className="right">Maturity Amt</th>
+                          <th className="right">Progress</th>
+                          <th>Goal</th>
+                          <th></th>
+                        </tr></thead>
+                        <tbody>
+                        {rdList.map(rd => {
+                          const linked = rd.goals;
+                          const progress = rd.tenure_months > 0 ? Math.round((rd.installments_paid/rd.tenure_months)*100) : 0;
+                          return (
+                            <tr key={rd.rd_id} className="kv-refresh-row">
+                              <td>
+                                <div style={{fontWeight:600,color:'#e2e8f0',fontSize:13}}>{rd.nickname||rd.institution_name}</div>
+                                <div style={{fontSize:10,color:'#475569'}}>{rd.institution_name}</div>
+                                {rd.missed_installments > 0 && <span style={{fontSize:9,padding:'1px 5px',borderRadius:4,background:'rgba(244,63,94,0.1)',color:'#f43f5e'}}>⚠ {rd.missed_installments} missed</span>}
+                              </td>
+                              <td className="right mono" style={{color:'#818cf8',fontWeight:600}}>{fmt2(rd.monthly_installment)}/mo</td>
+                              <td className="right" style={{color:'#f59e0b',fontWeight:600}}>{rd.interest_rate_pa}%</td>
+                              <td style={{fontSize:12,color:'#64748b'}}>{rd.tenure_months}m</td>
+                              <td style={{fontSize:12,whiteSpace:'nowrap'}}>
+                                {new Date(rd.maturity_date).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}
+                                {rd.days_to_maturity <= 0 && <div style={{fontSize:10,color:'#f43f5e'}}>Matured</div>}
+                              </td>
+                              <td className="right mono">{fmt2(rd.total_invested)}</td>
+                              <td className="right mono" style={{color:'#64ffda',fontWeight:700}}>{fmt2(rd.maturity_amount)}</td>
+                              <td>
+                                <div style={{display:'flex',alignItems:'center',gap:6}}>
+                                  <div style={{flex:1,height:4,background:'#1e3a5f',borderRadius:2,minWidth:50,overflow:'hidden'}}>
+                                    <div style={{height:'100%',width:`${progress}%`,borderRadius:2,background:progress>=100?'#00d4a1':'#818cf8',transition:'width 0.6s'}}/>
+                                  </div>
+                                  <span style={{fontSize:10,color:'#64748b',flexShrink:0}}>{progress}%</span>
+                                </div>
+                                <div style={{fontSize:10,color:'#475569',marginTop:1}}>{rd.installments_paid}/{rd.tenure_months}</div>
+                              </td>
+                              <td>
+                                {linked ? (
+                                  <span style={{fontSize:10,padding:'2px 7px',borderRadius:8,background:'rgba(99,102,241,0.15)',color:'#818cf8',whiteSpace:'nowrap'}}>
+                                    🎯 {linked.name?.slice(0,12)}{linked.name?.length>12?'…':''}
+                                  </span>
+                                ) : <span style={{fontSize:10,color:'#334155'}}>—</span>}
+                              </td>
+                              <td>
+                                <div style={{display:'flex',gap:4}}>
+                                  <button onClick={()=>openRdForm(rd)} style={{background:'#1e2d3d',border:'1px solid #334155',color:'#94a3b8',borderRadius:6,padding:'3px 8px',cursor:'pointer',fontSize:11}}>Edit</button>
+                                  <button onClick={()=>deleteRd(rd.rd_id)} style={{background:'rgba(244,63,94,0.08)',border:'1px solid rgba(244,63,94,0.2)',color:'#f43f5e',borderRadius:6,padding:'3px 8px',cursor:'pointer',fontSize:11}}>✕</button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Maturity alerts ── */}
+                {fdList.filter(f=>f.is_active && f.days_to_maturity>=0 && f.days_to_maturity<=30).length > 0 && (
+                  <div style={{marginTop:16,padding:'12px 16px',borderRadius:10,background:'rgba(245,158,11,0.06)',border:'1px solid rgba(245,158,11,0.2)'}}>
+                    <div style={{color:'#f59e0b',fontWeight:700,fontSize:13,marginBottom:8}}>⏰ FDs Maturing Soon</div>
+                    {fdList.filter(f=>f.is_active && f.days_to_maturity>=0 && f.days_to_maturity<=30).map(fd=>(
+                      <div key={fd.fd_id} style={{fontSize:12,color:'#94a3b8',marginBottom:4}}>
+                        <b style={{color:'#e2e8f0'}}>{fd.nickname||fd.institution_name}</b> matures in <b style={{color:'#f59e0b'}}>{fd.days_to_maturity} days</b> — {fmt2(fd.maturity_amount)} · {fd.on_maturity_action.replace('_',' ')}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
           {tab === 'tax' && tax && (
             <div className="fade-in">
               <div className="db-stats-grid">
@@ -3151,6 +3505,319 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+      {/* ── FD FORM MODAL ── */}
+      {showFdForm && (
+        <div className="db-modal-overlay" onClick={e=>{if(e.target===e.currentTarget)setShowFdForm(false)}}>
+          <div className="db-modal fade-in" style={{maxWidth:620,maxHeight:'92vh',overflowY:'auto'}}>
+            <div className="db-modal-header">
+              <div className="db-modal-title">🏦 {editingFd?'Edit':'Add'} Fixed Deposit</div>
+              <button className="db-modal-close" onClick={()=>setShowFdForm(false)}>✕</button>
+            </div>
+            <div className="db-modal-body">
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+                <div>
+                  <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>INSTITUTION *</label>
+                  <input list="fd-banks" value={fdForm.institution_name||''} onChange={e=>setFdForm(p=>({...p,institution_name:e.target.value}))}
+                    style={{width:'100%',background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,padding:'9px 12px',color:'#e2e8f0',fontSize:13,outline:'none',boxSizing:'border-box'}} placeholder="e.g. SBI"/>
+                  <datalist id="fd-banks">
+                    {['SBI','HDFC Bank','ICICI Bank','Axis Bank','Kotak Bank','Post Office','Bajaj Finance','Tamilnad Mercantile Bank','Other'].map(b=><option key={b} value={b}/>)}
+                  </datalist>
+                </div>
+                <div>
+                  <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>TYPE *</label>
+                  <select value={fdForm.institution_type||'bank'} onChange={e=>setFdForm(p=>({...p,institution_type:e.target.value}))}
+                    style={{width:'100%',background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,padding:'9px 12px',color:'#e2e8f0',fontSize:13,outline:'none',cursor:'pointer',boxSizing:'border-box'}}>
+                    {[['bank','Bank'],['post_office','Post Office'],['nbfc','NBFC'],['cooperative','Cooperative']].map(([v,l])=><option key={v} value={v}>{l}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>NICKNAME</label>
+                  <input value={fdForm.nickname||''} onChange={e=>setFdForm(p=>({...p,nickname:e.target.value}))} placeholder="e.g. Emergency Fund FD"
+                    style={{width:'100%',background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,padding:'9px 12px',color:'#e2e8f0',fontSize:13,outline:'none',boxSizing:'border-box'}}/>
+                </div>
+                <div>
+                  <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>PRINCIPAL (₹) *</label>
+                  <input type="number" min="1000" value={fdForm.principal_amount||''} onChange={e=>setFdForm(p=>({...p,principal_amount:e.target.value}))} placeholder="e.g. 100000"
+                    style={{width:'100%',background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,padding:'9px 12px',color:'#e2e8f0',fontSize:13,outline:'none',boxSizing:'border-box'}}/>
+                </div>
+                <div>
+                  <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>INTEREST RATE (% p.a.) *</label>
+                  <input type="number" step="0.01" value={fdForm.interest_rate_pa||''} onChange={e=>setFdForm(p=>({...p,interest_rate_pa:e.target.value}))} placeholder="e.g. 7.25"
+                    style={{width:'100%',background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,padding:'9px 12px',color:'#e2e8f0',fontSize:13,outline:'none',boxSizing:'border-box'}}/>
+                </div>
+                <div>
+                  <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>COMPOUNDING</label>
+                  <select value={fdForm.compounding_freq||'quarterly'} onChange={e=>setFdForm(p=>({...p,compounding_freq:e.target.value}))}
+                    style={{width:'100%',background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,padding:'9px 12px',color:'#e2e8f0',fontSize:13,outline:'none',cursor:'pointer',boxSizing:'border-box'}}>
+                    {[['quarterly','Quarterly'],['monthly','Monthly'],['half_yearly','Half Yearly'],['annually','Annually'],['simple','Simple Interest']].map(([v,l])=><option key={v} value={v}>{l}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>PAYOUT TYPE</label>
+                  <select value={fdForm.payout_type||'cumulative'} onChange={e=>setFdForm(p=>({...p,payout_type:e.target.value}))}
+                    style={{width:'100%',background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,padding:'9px 12px',color:'#e2e8f0',fontSize:13,outline:'none',cursor:'pointer',boxSizing:'border-box'}}>
+                    {[['cumulative','Cumulative (at maturity)'],['non_cumulative','Non-Cumulative (periodic)']].map(([v,l])=><option key={v} value={v}>{l}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>START DATE *</label>
+                  <input type="date" value={fdForm.start_date||''} onChange={e=>setFdForm(p=>({...p,start_date:e.target.value}))}
+                    style={{width:'100%',background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,padding:'9px 12px',color:'#e2e8f0',fontSize:13,outline:'none',boxSizing:'border-box'}}/>
+                </div>
+              </div>
+
+              {/* Tenor Y/M/D */}
+              <div style={{marginBottom:12}}>
+                <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:6}}>TENOR *</label>
+                <div style={{display:'flex',gap:8}}>
+                  {[['tenor_years','Years'],['tenor_months_part','Months'],['tenor_days_part','Days']].map(([key,label])=>(
+                    <div key={key} style={{flex:1}}>
+                      <input type="number" min="0" value={fdForm[key]||0} onChange={e=>setFdForm(p=>({...p,[key]:e.target.value}))}
+                        style={{width:'100%',background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,padding:'9px 12px',color:'#e2e8f0',fontSize:13,outline:'none',textAlign:'center',boxSizing:'border-box'}}/>
+                      <div style={{textAlign:'center',color:'#475569',fontSize:10,marginTop:3}}>{label}</div>
+                    </div>
+                  ))}
+                </div>
+                {fdForm.start_date && (parseInt(fdForm.tenor_years||0)*365+parseInt(fdForm.tenor_months_part||0)*30+parseInt(fdForm.tenor_days_part||0))>0 && (
+                  <div style={{color:'#64748b',fontSize:11,marginTop:4}}>
+                    Maturity: <b style={{color:'#e2e8f0'}}>
+                    {(() => { const td=new Date(fdForm.start_date); td.setDate(td.getDate()+(parseInt(fdForm.tenor_years||0)*365+parseInt(fdForm.tenor_months_part||0)*30+parseInt(fdForm.tenor_days_part||0))); return td.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}); })()}
+                    </b>
+                  </div>
+                )}
+              </div>
+
+              {/* Maturity action */}
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+                <div>
+                  <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>ON MATURITY</label>
+                  <select value={fdForm.on_maturity_action||'undecided'} onChange={e=>setFdForm(p=>({...p,on_maturity_action:e.target.value}))}
+                    style={{width:'100%',background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,padding:'9px 12px',color:'#e2e8f0',fontSize:13,outline:'none',cursor:'pointer',boxSizing:'border-box'}}>
+                    {[['undecided','Undecided'],['auto_renew','Auto Renew'],['credit_to_account','Credit to Account']].map(([v,l])=><option key={v} value={v}>{l}</option>)}
+                  </select>
+                </div>
+                {fdForm.on_maturity_action==='auto_renew' && (
+                  <div>
+                    <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>RENEW WITH</label>
+                    <select value={fdForm.auto_renew_type||'principal_only'} onChange={e=>setFdForm(p=>({...p,auto_renew_type:e.target.value}))}
+                      style={{width:'100%',background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,padding:'9px 12px',color:'#e2e8f0',fontSize:13,outline:'none',cursor:'pointer',boxSizing:'border-box'}}>
+                      {[['principal_only','Principal Only'],['principal_plus_interest','Principal + Interest']].map(([v,l])=><option key={v} value={v}>{l}</option>)}
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              {/* TDS */}
+              <div style={{background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:10,padding:14,marginBottom:12}}>
+                <div style={{fontSize:12,color:'#64ffda',fontWeight:700,marginBottom:10}}>Tax (TDS)</div>
+                <div style={{display:'flex',gap:20,flexWrap:'wrap'}}>
+                  <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',fontSize:12,color:'#94a3b8'}}>
+                    <input type="checkbox" checked={!!fdForm.tds_applicable} onChange={e=>setFdForm(p=>({...p,tds_applicable:e.target.checked}))} style={{accentColor:'#6366f1'}}/>
+                    TDS Applicable
+                  </label>
+                  <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',fontSize:12,color:'#94a3b8'}}>
+                    <input type="checkbox" checked={!!fdForm.form_15g} onChange={e=>setFdForm(p=>({...p,form_15g:e.target.checked,tds_applicable:e.target.checked?false:p.tds_applicable}))} style={{accentColor:'#6366f1'}}/>
+                    Form 15G/H Submitted
+                  </label>
+                  <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',fontSize:12,color:'#94a3b8'}}>
+                    <input type="checkbox" checked={!!fdForm.is_tax_saving_fd} onChange={e=>setFdForm(p=>({...p,is_tax_saving_fd:e.target.checked,tenor_years:e.target.checked?'5':p.tenor_years,tenor_months_part:'0',tenor_days_part:'0'}))} style={{accentColor:'#6366f1'}}/>
+                    Tax-Saving 80C FD (5yr)
+                  </label>
+                  <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',fontSize:12,color:'#94a3b8'}}>
+                    <input type="checkbox" checked={!!fdForm.is_senior_rate} onChange={e=>setFdForm(p=>({...p,is_senior_rate:e.target.checked}))} style={{accentColor:'#6366f1'}}/>
+                    Senior Citizen Rate
+                  </label>
+                </div>
+                {fdForm.tds_applicable && !fdForm.form_15g && (
+                  <div style={{marginTop:10}}>
+                    <label style={{color:'#94a3b8',fontSize:11,marginBottom:4,display:'block'}}>TDS RATE (%)</label>
+                    <input type="number" value={fdForm.tds_rate||10} onChange={e=>setFdForm(p=>({...p,tds_rate:e.target.value}))} style={{width:80,background:'#0a1628',border:'1px solid #1e3a5f',borderRadius:6,padding:'6px 10px',color:'#e2e8f0',fontSize:12,outline:'none'}}/>
+                  </div>
+                )}
+              </div>
+
+              {/* Goal linkage */}
+              <div style={{display:'grid',gridTemplateColumns:'1fr auto',gap:12,alignItems:'end',marginBottom:12}}>
+                <div>
+                  <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>LINK TO GOAL</label>
+                  <select value={fdForm.goal_id||''} onChange={e=>setFdForm(p=>({...p,goal_id:e.target.value}))}
+                    style={{width:'100%',background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,padding:'9px 12px',color:'#e2e8f0',fontSize:13,outline:'none',cursor:'pointer',boxSizing:'border-box'}}>
+                    <option value="">— No goal —</option>
+                    {goals.map(g=><option key={g.id} value={g.id}>{g.name}</option>)}
+                  </select>
+                </div>
+                {fdForm.goal_id && (
+                  <div>
+                    <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>EARMARK %</label>
+                    <input type="number" min="1" max="100" value={fdForm.goal_earmark_pct||100} onChange={e=>setFdForm(p=>({...p,goal_earmark_pct:e.target.value}))}
+                      style={{width:70,background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,padding:'9px 12px',color:'#e2e8f0',fontSize:13,outline:'none'}}/>
+                  </div>
+                )}
+              </div>
+
+              {/* Live preview */}
+              {fdPreview && (
+                <div style={{background:'rgba(99,102,241,0.06)',border:'1px solid rgba(99,102,241,0.2)',borderRadius:10,padding:14,marginBottom:14}}>
+                  <div style={{fontSize:11,color:'#6366f1',fontWeight:700,marginBottom:8,letterSpacing:0.5}}>LIVE PREVIEW</div>
+                  <div style={{display:'flex',gap:20,flexWrap:'wrap'}}>
+                    {[
+                      {label:'Maturity Amount', val:`₹${Number(fdPreview.maturity).toLocaleString('en-IN')}`, color:'#64ffda'},
+                      {label:'Interest Earned',  val:`₹${Number(fdPreview.interest).toLocaleString('en-IN')}`, color:'#f59e0b'},
+                      {label:'Net After TDS',    val:`₹${Number(fdPreview.net).toLocaleString('en-IN')}`, color:'#00d4a1'},
+                      {label:'Maturity Date',    val:fdPreview.matDate, color:'#818cf8'},
+                    ].map(p=>(
+                      <div key={p.label}>
+                        <div style={{fontSize:10,color:'#475569'}}>{p.label}</div>
+                        <div style={{fontSize:15,fontWeight:700,color:p.color}}>{p.val}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {fdError && <div style={{color:'#f43f5e',fontSize:12,marginBottom:10,padding:'7px 10px',background:'rgba(244,63,94,0.08)',borderRadius:6}}>⚠ {fdError}</div>}
+              <button onClick={saveFd} disabled={fdSaving} style={{width:'100%',background:'#6366f1',border:'none',color:'#fff',borderRadius:8,padding:'12px',fontWeight:700,fontSize:14,cursor:'pointer'}}>
+                {fdSaving?'⟳ Saving…':(editingFd?'Update FD':'Add Fixed Deposit')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── RD FORM MODAL ── */}
+      {showRdForm && (
+        <div className="db-modal-overlay" onClick={e=>{if(e.target===e.currentTarget)setShowRdForm(false)}}>
+          <div className="db-modal fade-in" style={{maxWidth:600,maxHeight:'92vh',overflowY:'auto'}}>
+            <div className="db-modal-header">
+              <div className="db-modal-title">📅 {editingRd?'Edit':'Add'} Recurring Deposit</div>
+              <button className="db-modal-close" onClick={()=>setShowRdForm(false)}>✕</button>
+            </div>
+            <div className="db-modal-body">
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+                <div>
+                  <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>INSTITUTION *</label>
+                  <input list="rd-banks" value={rdForm.institution_name||''} onChange={e=>setRdForm(p=>({...p,institution_name:e.target.value}))} placeholder="e.g. HDFC Bank"
+                    style={{width:'100%',background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,padding:'9px 12px',color:'#e2e8f0',fontSize:13,outline:'none',boxSizing:'border-box'}}/>
+                  <datalist id="rd-banks">
+                    {['SBI','HDFC Bank','ICICI Bank','Axis Bank','Kotak Bank','Post Office','Tamilnad Mercantile Bank','Other'].map(b=><option key={b} value={b}/>)}
+                  </datalist>
+                </div>
+                <div>
+                  <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>TYPE *</label>
+                  <select value={rdForm.institution_type||'bank'} onChange={e=>setRdForm(p=>({...p,institution_type:e.target.value}))}
+                    style={{width:'100%',background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,padding:'9px 12px',color:'#e2e8f0',fontSize:13,outline:'none',cursor:'pointer',boxSizing:'border-box'}}>
+                    {[['bank','Bank'],['post_office','Post Office'],['nbfc','NBFC'],['cooperative','Cooperative']].map(([v,l])=><option key={v} value={v}>{l}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>NICKNAME</label>
+                  <input value={rdForm.nickname||''} onChange={e=>setRdForm(p=>({...p,nickname:e.target.value}))} placeholder="e.g. Home Down Payment RD"
+                    style={{width:'100%',background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,padding:'9px 12px',color:'#e2e8f0',fontSize:13,outline:'none',boxSizing:'border-box'}}/>
+                </div>
+                <div>
+                  <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>MONTHLY INSTALLMENT (₹) *</label>
+                  <input type="number" min="100" value={rdForm.monthly_installment||''} onChange={e=>setRdForm(p=>({...p,monthly_installment:e.target.value}))} placeholder="e.g. 5000"
+                    style={{width:'100%',background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,padding:'9px 12px',color:'#e2e8f0',fontSize:13,outline:'none',boxSizing:'border-box'}}/>
+                </div>
+                <div>
+                  <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>INTEREST RATE (% p.a.) *</label>
+                  <input type="number" step="0.01" value={rdForm.interest_rate_pa||''} onChange={e=>setRdForm(p=>({...p,interest_rate_pa:e.target.value}))} placeholder="e.g. 6.5"
+                    style={{width:'100%',background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,padding:'9px 12px',color:'#e2e8f0',fontSize:13,outline:'none',boxSizing:'border-box'}}/>
+                </div>
+                <div>
+                  <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>TENURE (months) *</label>
+                  <input type="number" min="6" max="120" value={rdForm.tenure_months||''} onChange={e=>setRdForm(p=>({...p,tenure_months:e.target.value}))} placeholder="e.g. 36"
+                    style={{width:'100%',background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,padding:'9px 12px',color:'#e2e8f0',fontSize:13,outline:'none',boxSizing:'border-box'}}/>
+                </div>
+                <div>
+                  <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>START DATE *</label>
+                  <input type="date" value={rdForm.start_date||''} onChange={e=>setRdForm(p=>({...p,start_date:e.target.value}))}
+                    style={{width:'100%',background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,padding:'9px 12px',color:'#e2e8f0',fontSize:13,outline:'none',boxSizing:'border-box'}}/>
+                </div>
+                <div>
+                  <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>MISSED INSTALLMENTS</label>
+                  <input type="number" min="0" value={rdForm.missed_installments||0} onChange={e=>setRdForm(p=>({...p,missed_installments:e.target.value}))}
+                    style={{width:'100%',background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,padding:'9px 12px',color:'#e2e8f0',fontSize:13,outline:'none',boxSizing:'border-box'}}/>
+                </div>
+              </div>
+
+              {/* Maturity date preview */}
+              {rdForm.start_date && rdForm.tenure_months && (
+                <div style={{fontSize:11,color:'#64748b',marginBottom:12}}>
+                  Maturity: <b style={{color:'#e2e8f0'}}>
+                  {(() => { const dt=new Date(rdForm.start_date); dt.setMonth(dt.getMonth()+parseInt(rdForm.tenure_months||0)); return dt.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}); })()}
+                  </b>
+                </div>
+              )}
+
+              {/* TDS */}
+              <div style={{background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:10,padding:14,marginBottom:12}}>
+                <div style={{fontSize:12,color:'#64ffda',fontWeight:700,marginBottom:10}}>Tax (TDS)</div>
+                <div style={{display:'flex',gap:20,flexWrap:'wrap'}}>
+                  <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',fontSize:12,color:'#94a3b8'}}>
+                    <input type="checkbox" checked={!!rdForm.tds_applicable} onChange={e=>setRdForm(p=>({...p,tds_applicable:e.target.checked}))} style={{accentColor:'#818cf8'}}/>
+                    TDS Applicable
+                  </label>
+                  <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',fontSize:12,color:'#94a3b8'}}>
+                    <input type="checkbox" checked={!!rdForm.form_15g} onChange={e=>setRdForm(p=>({...p,form_15g:e.target.checked,tds_applicable:e.target.checked?false:p.tds_applicable}))} style={{accentColor:'#818cf8'}}/>
+                    Form 15G/H Submitted
+                  </label>
+                  <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',fontSize:12,color:'#94a3b8'}}>
+                    <input type="checkbox" checked={!!rdForm.is_senior_rate} onChange={e=>setRdForm(p=>({...p,is_senior_rate:e.target.checked}))} style={{accentColor:'#818cf8'}}/>
+                    Senior Citizen Rate
+                  </label>
+                </div>
+              </div>
+
+              {/* Goal linkage */}
+              <div style={{display:'grid',gridTemplateColumns:'1fr auto',gap:12,alignItems:'end',marginBottom:12}}>
+                <div>
+                  <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>LINK TO GOAL</label>
+                  <select value={rdForm.goal_id||''} onChange={e=>setRdForm(p=>({...p,goal_id:e.target.value}))}
+                    style={{width:'100%',background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,padding:'9px 12px',color:'#e2e8f0',fontSize:13,outline:'none',cursor:'pointer',boxSizing:'border-box'}}>
+                    <option value="">— No goal —</option>
+                    {goals.map(g=><option key={g.id} value={g.id}>{g.name}</option>)}
+                  </select>
+                </div>
+                {rdForm.goal_id && (
+                  <div>
+                    <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>EARMARK %</label>
+                    <input type="number" min="1" max="100" value={rdForm.goal_earmark_pct||100} onChange={e=>setRdForm(p=>({...p,goal_earmark_pct:e.target.value}))}
+                      style={{width:70,background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,padding:'9px 12px',color:'#e2e8f0',fontSize:13,outline:'none'}}/>
+                  </div>
+                )}
+              </div>
+
+              {/* Live preview */}
+              {rdPreview && (
+                <div style={{background:'rgba(129,140,248,0.06)',border:'1px solid rgba(129,140,248,0.2)',borderRadius:10,padding:14,marginBottom:14}}>
+                  <div style={{fontSize:11,color:'#818cf8',fontWeight:700,marginBottom:8,letterSpacing:0.5}}>LIVE PREVIEW</div>
+                  <div style={{display:'flex',gap:20,flexWrap:'wrap'}}>
+                    {[
+                      {label:'Total Investment',  val:`₹${Number(rdPreview.totalInvest).toLocaleString('en-IN')}`, color:'#94a3b8'},
+                      {label:'Maturity Amount',   val:`₹${Number(rdPreview.maturity).toLocaleString('en-IN')}`,    color:'#64ffda'},
+                      {label:'Interest Earned',   val:`₹${Number(rdPreview.interest).toLocaleString('en-IN')}`,    color:'#f59e0b'},
+                      {label:'Net After TDS',     val:`₹${Number(rdPreview.net).toLocaleString('en-IN')}`,         color:'#00d4a1'},
+                      {label:'Maturity Date',     val:rdPreview.matDate,                                           color:'#818cf8'},
+                    ].map(p=>(
+                      <div key={p.label}>
+                        <div style={{fontSize:10,color:'#475569'}}>{p.label}</div>
+                        <div style={{fontSize:14,fontWeight:700,color:p.color}}>{p.val}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {rdError && <div style={{color:'#f43f5e',fontSize:12,marginBottom:10,padding:'7px 10px',background:'rgba(244,63,94,0.08)',borderRadius:6}}>⚠ {rdError}</div>}
+              <button onClick={saveRd} disabled={rdSaving} style={{width:'100%',background:'#818cf8',border:'none',color:'#fff',borderRadius:8,padding:'12px',fontWeight:700,fontSize:14,cursor:'pointer'}}>
+                {rdSaving?'⟳ Saving…':(editingRd?'Update RD':'Add Recurring Deposit')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── SETTINGS MODAL ── */}
       {showSettings && (
         <div className="db-modal-overlay" onClick={e=>{if(e.target===e.currentTarget){setShowSettings(false);setShowRuleForm(false);}}}>
