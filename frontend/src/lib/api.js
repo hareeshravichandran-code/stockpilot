@@ -62,6 +62,7 @@ export const mfAPI = {
   get:             ()     => api.get('/api/mf'),
   requestCAS:      ()     => api.post('/api/mf/request-cas'),
   syncStatements:  ()     => api.post('/api/mf/sync-statements', {}, { timeout: 120000 }),
+  syncNAV:         ()     => api.post('/api/mf/sync-nav', {}, { timeout: 60000 }),
   delete:          (id)   => api.delete(`/api/mf/${id}`),
 };
 
