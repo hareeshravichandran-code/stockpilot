@@ -162,6 +162,7 @@ export default function Dashboard() {
   useEffect(() => {
     loadPortfolio();
     loadGoals();
+    console.log('[Kanalyst] Dashboard v3 loaded - goal linking active');
     emailAPI.status().then(r => setEmailStatus(r.data.connections || [])).catch(() => {});
 
     // Load dividend total for dashboard tile — from dividend_income table
@@ -1407,7 +1408,7 @@ export default function Dashboard() {
                                       </span>
                                     ):(
                                       <button onClick={()=>setLinkingAsset({type:'stock',ref:_r,name:h.company||h.symbol,value:(h.quantity||0)*(h.last_price||0)})}
-                                        style={{flexShrink:0,background:'rgba(99,102,241,0.07)',border:'1px solid rgba(99,102,241,0.2)',borderRadius:7,fontSize:10,color:'#6366f1',padding:'2px 8px',cursor:'pointer',whiteSpace:'nowrap',fontWeight:600}}>
+                                        style={{flexShrink:0,background:'#6366f1',border:'none',borderRadius:7,fontSize:10,color:'#fff',padding:'3px 9px',cursor:'pointer',whiteSpace:'nowrap',fontWeight:700}}>
                                         🎯 Goal
                                       </button>
                                     );
@@ -1705,7 +1706,7 @@ export default function Dashboard() {
                                           </span>
                                         ):(
                                           <button onClick={()=>setLinkingAsset({type:'mf',ref:_r,name:h.fund_name||h.scheme_name||_r,value:h.current_value||0})}
-                                            style={{flexShrink:0,background:'rgba(99,102,241,0.07)',border:'1px solid rgba(99,102,241,0.2)',borderRadius:7,fontSize:10,color:'#6366f1',padding:'2px 8px',cursor:'pointer',whiteSpace:'nowrap',fontWeight:600,marginTop:2}}>
+                                            style={{flexShrink:0,background:'#6366f1',border:'none',borderRadius:7,fontSize:10,color:'#fff',padding:'3px 9px',cursor:'pointer',whiteSpace:'nowrap',fontWeight:700,marginTop:2}}>
                                             🎯 Goal
                                           </button>
                                         );
@@ -2833,8 +2834,6 @@ export default function Dashboard() {
                   {goalCycles.length === 0 ? (
                     <div style={{color:'#334155',fontSize:12,textAlign:'center',padding:'12px 0'}}>No cycles yet</div>
                   ) : goalCycles.slice(0,5).map(cy=>(
-                    <div key={cy.id} style={{display:'flex',justifyContent:'space-between',padding:'8px 12div>
-                  {goalCycles.slice(0,5).map(cy=>(
                     <div key={cy.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 12px',background:'#060e1a',borderRadius:8,marginBottom:4,border:'1px solid #1e3a5f',fontSize:12}}>
                       <span style={{color:'#94a3b8'}}>Cycle {cy.cycle_number} · {cy.cycle_start}</span>
                       <div style={{display:'flex',gap:10,alignItems:'center'}}>
