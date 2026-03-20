@@ -142,6 +142,9 @@ export default function Dashboard() {
   });
   const [linkingGoalId, setLinkingGoalId]     = useState(null);  // goal we're linking assets to
   const [linkingAsset, setLinkingAsset]       = useState(null);  // {type,ref,name,value} being linked
+  const [bulkLinkMode, setBulkLinkMode]        = useState(null);  // null | 'stock' | 'mf'
+  const [bulkLinking, setBulkLinking]          = useState(false);
+  const [bulkLinkResult, setBulkLinkResult]    = useState(null);  // {linked, skipped} — bulk link all to one goal
   const [picUploading, setPicUploading]       = useState(false);
   const [liabilities, setLiabilities] = useState({ homeLoan: 0, creditCard: 0 });
   const [monthlyIncome, setMonthlyIncome] = useState(0);
@@ -469,6 +472,27 @@ export default function Dashboard() {
         console.error(e);
       }
     }
+  };
+
+  // Bulk-link ALL holdings of a type to one goal
+  const bulkLinkToGoal = async (goalId) => {
+    if (!bulkLinkMode || !goalId) return;
+    setBulkLinking(true);
+    setBulkLinkResult(null);
+    const items = bulkLinkMode === 'stock'
+      ? holdings.map(h => ({ type:'stock', ref: h.isin||h.symbol, name: h.company||h.symbol }))
+      : mfHoldings.map(h => ({ type:'mf', ref: h.isin||h.folio_number, name: h.fund_name||h.scheme_name||h.isin }));
+    let linked = 0, skipped = 0;
+    for (const item of items) {
+      try {
+        await goalsAPI.linkAsset(goalId, { asset_type: item.type, asset_ref: item.ref, asset_name: item.name });
+        linked++;
+      } catch(e) { skipped++; }
+    }
+    setBulkLinking(false);
+    setBulkLinkResult({ linked, skipped });
+    await loadGoals();
+    goalsAPI.recompute(goalId).catch(()=>{});
   };
 
   const unlinkAsset = async (goalId, assetId) => {
@@ -1358,6 +1382,14 @@ export default function Dashboard() {
                       <div style={{ fontSize:11, color:'#475569' }}>
                         {s.casDate ? `CAS as of ${new Date(s.casDate).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' })}` : 'From CAS email'}
                       </div>
+                      {holdings.length > 0 && (
+                        <button onClick={() => { setBulkLinkMode('stock'); setBulkLinkResult(null); }}
+                          style={{ background:'rgba(99,102,241,0.1)', border:'1px solid rgba(99,102,241,0.3)',
+                            color:'#818cf8', borderRadius:8, padding:'6px 14px', cursor:'pointer',
+                            fontSize:12, fontWeight:700 }}>
+                          🎯 Link All to Goal
+                        </button>
+                      )}
                       <button onClick={() => { setShowAddStock(true); setStockError(''); setStockSaved(false); }}
                         style={{ background:'rgba(100,255,218,0.1)', border:'1px solid rgba(100,255,218,0.3)',
                           color:'#64ffda', borderRadius:8, padding:'6px 14px', cursor:'pointer',
@@ -1516,6 +1548,14 @@ export default function Dashboard() {
                     </div>
                   </div>
                   {/* DEMAT MFs — sync from Gmail (CDSL/NSDL CAS) */}
+                  {holdings.length > 0 && (
+                    <button onClick={() => { setBulkLinkMode('mf'); setBulkLinkResult(null); }}
+                      style={{ padding:'8px 14px', background:'rgba(99,102,241,0.1)',
+                        border:'1px solid rgba(99,102,241,0.3)', color:'#818cf8',
+                        borderRadius:8, fontSize:12, fontWeight:700, cursor:'pointer' }}>
+                      🎯 Link All to Goal
+                    </button>
+                  )}
                   <button onClick={syncEmails} disabled={syncing}
                     style={{ padding:'8px 16px', background:'rgba(100,255,218,0.08)',
                       border:'1px solid rgba(100,255,218,0.2)', color:'#64ffda',
@@ -2855,6 +2895,81 @@ export default function Dashboard() {
                 </button>
                 <button onClick={()=>deleteGoal(goalDetail.id)} style={{background:'rgba(244,63,94,0.08)',border:'1px solid rgba(244,63,94,0.2)',color:'#f43f5e',borderRadius:8,padding:'10px 14px',cursor:'pointer',fontSize:13}}>🗑</button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── BULK LINK MODAL ── */}
+      {bulkLinkMode && (
+        <div className="db-modal-overlay" onClick={e=>{if(e.target===e.currentTarget)setBulkLinkMode(null);}}>
+          <div className="db-modal fade-in" style={{maxWidth:520}}>
+            <div className="db-modal-header">
+              <div style={{fontSize:16,fontWeight:700,color:'#e2e8f0'}}>
+                🎯 Link All {bulkLinkMode==='stock'?'Stocks':'Mutual Funds'} to a Goal
+                <div style={{fontSize:12,color:'#64748b',fontWeight:400,marginTop:4}}>
+                  {bulkLinkMode==='stock'
+                    ? `All ${holdings.length} stock${holdings.length!==1?'s':''} will be linked. You can change individual ones after.`
+                    : `All ${mfHoldings.length} fund${mfHoldings.length!==1?'s':''} will be linked. You can change individual ones after.`}
+                </div>
+              </div>
+              <button className="db-modal-close" onClick={()=>setBulkLinkMode(null)}>✕</button>
+            </div>
+            <div className="db-modal-body">
+              {goals.length === 0 ? (
+                <div style={{textAlign:'center',padding:'30px 0',color:'#475569'}}>
+                  <div style={{fontSize:32,marginBottom:8}}>🎯</div>
+                  <div>No goals yet. Create a goal first from the Goals tab.</div>
+                </div>
+              ) : (
+                <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                  <div style={{color:'#64748b',fontSize:12,marginBottom:4}}>Select a goal — all holdings will be assigned to it:</div>
+                  {goals.map(goal => {
+                    const prog = Math.min(100, goal.progress || 0);
+                    return (
+                      <div key={goal.id}
+                        onClick={()=>bulkLinkToGoal(goal.id)}
+                        style={{
+                          display:'flex',justifyContent:'space-between',alignItems:'center',
+                          padding:'12px 16px',borderRadius:10,cursor:'pointer',
+                          border:'1px solid #1e3a5f',background:'#060e1a',transition:'all 0.15s',
+                        }}
+                        onMouseOver={e=>{e.currentTarget.style.borderColor='#6366f1';e.currentTarget.style.background='rgba(99,102,241,0.05)';}}
+                        onMouseOut={e=>{e.currentTarget.style.borderColor='#1e3a5f';e.currentTarget.style.background='#060e1a';}}>
+                        <div style={{flex:1}}>
+                          <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
+                            <span style={{color:'#e2e8f0',fontWeight:700,fontSize:14}}>{goal.name}</span>
+                            <span style={{fontSize:10,padding:'1px 7px',borderRadius:8,
+                              background:goal.status==='completed'?'rgba(0,212,161,0.1)':goal.status==='inprogress'?'rgba(245,158,11,0.1)':'rgba(100,116,139,0.1)',
+                              color:goal.status==='completed'?'#00d4a1':goal.status==='inprogress'?'#f59e0b':'#64748b'}}>
+                              {goal.status==='inprogress'?'In Progress':goal.status==='completed'?'Completed':'New'}
+                            </span>
+                          </div>
+                          <div style={{display:'flex',alignItems:'center',gap:10}}>
+                            <div style={{flex:1,height:5,background:'#1e3a5f',borderRadius:3,overflow:'hidden'}}>
+                              <div style={{height:'100%',width:`${prog}%`,borderRadius:3,
+                                background:prog>=100?'#00d4a1':prog>50?'#6366f1':'#f59e0b'}}/>
+                            </div>
+                            <span style={{color:'#475569',fontSize:11,flexShrink:0}}>{prog.toFixed(0)}% of {fmtFull(goal.target_value)}</span>
+                          </div>
+                        </div>
+                        <span style={{fontSize:13,color:'#6366f1',fontWeight:700,marginLeft:16}}>{bulkLinking?'Linking…':'Link All →'}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {bulkLinkResult && (
+                <div style={{margin:'14px 0 0',padding:'12px 16px',borderRadius:10,background:'rgba(0,212,161,0.06)',border:'1px solid rgba(0,212,161,0.2)'}}>
+                  <div style={{color:'#00d4a1',fontWeight:700,fontSize:13,marginBottom:4}}>
+                    ✅ {bulkLinkResult.linked} holding{bulkLinkResult.linked!==1?'s':''} linked to goal!
+                  </div>
+                  {bulkLinkResult.skipped > 0 && <div style={{color:'#475569',fontSize:11}}>{bulkLinkResult.skipped} already linked — skipped.</div>}
+                  <div style={{color:'#64748b',fontSize:11,marginTop:4}}>Use the 🎯 button on any row to reassign individual holdings.</div>
+                  <button onClick={()=>{setBulkLinkMode(null);setBulkLinkResult(null);}}
+                    style={{marginTop:10,background:'#00d4a1',border:'none',color:'#000',borderRadius:8,padding:'7px 18px',fontWeight:700,fontSize:12,cursor:'pointer'}}>Done</button>
+                </div>
+              )}
             </div>
           </div>
         </div>
