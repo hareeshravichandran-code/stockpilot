@@ -145,7 +145,9 @@ export default function Dashboard() {
   const [bulkLinkMode, setBulkLinkMode]        = useState(null);  // null | 'stock' | 'mf'
   const [syncingNAV, setSyncingNAV]            = useState(false);
   const [navSyncResult, setNavSyncResult]      = useState(null);
+  const [refreshing, setRefreshing]            = useState(false);  // global refresh pulse
   const [bulkLinking, setBulkLinking]          = useState(false);
+  const [bulkProgress, setBulkProgress]        = useState({ current: 0, total: 0 });
   const [bulkLinkResult, setBulkLinkResult]    = useState(null);  // {linked, skipped} — bulk link all to one goal
   const [picUploading, setPicUploading]       = useState(false);
   const [liabilities, setLiabilities] = useState({ homeLoan: 0, creditCard: 0 });
@@ -464,8 +466,7 @@ export default function Dashboard() {
         asset_name: linkingAsset.name,
       });
       setLinkingAsset(null);
-      await loadGoals();
-      // Trigger goal progress recompute
+      await smoothRefresh();
       goalsAPI.recompute(goalId).catch(() => {});
     } catch(e) {
       if (e.response?.data?.error?.includes('already linked')) {
@@ -484,17 +485,33 @@ export default function Dashboard() {
     const items = bulkLinkMode === 'stock'
       ? holdings.map(h => ({ type:'stock', ref: h.isin||h.symbol, name: h.company||h.symbol }))
       : mfHoldings.map(h => ({ type:'mf', ref: h.isin||h.folio_number, name: h.fund_name||h.scheme_name||h.isin }));
+    const total = items.length;
+    setBulkProgress({ current: 0, total });
     let linked = 0, skipped = 0;
-    for (const item of items) {
+    for (let i = 0; i < items.length; i++) {
+      setBulkProgress({ current: i + 1, total });
       try {
-        await goalsAPI.linkAsset(goalId, { asset_type: item.type, asset_ref: item.ref, asset_name: item.name });
+        await goalsAPI.linkAsset(goalId, { asset_type: items[i].type, asset_ref: items[i].ref, asset_name: items[i].name });
         linked++;
       } catch(e) { skipped++; }
     }
     setBulkLinking(false);
+    setBulkProgress({ current: 0, total: 0 });
     setBulkLinkResult({ linked, skipped });
-    await loadGoals();
+    await smoothRefresh();
     goalsAPI.recompute(goalId).catch(()=>{});
+  };
+
+  // Unlink a holding directly from the row (without opening goal detail)
+  const unlinkFromRow = async (goal, assetRef) => {
+    const asset = goal.assets?.find(a => a.asset_ref === assetRef);
+    if (!asset) return;
+    if (!window.confirm(`Remove link to "${goal.name}"?`)) return;
+    try {
+      await goalsAPI.unlinkAsset(goal.id, asset.id);
+      goalsAPI.recompute(goal.id).catch(() => {});
+      await smoothRefresh();
+    } catch(e) { console.error('unlinkFromRow', e); }
   };
 
   const unlinkAsset = async (goalId, assetId) => {
@@ -509,10 +526,21 @@ export default function Dashboard() {
     try {
       const r = await mfAPI.syncNAV();
       setNavSyncResult({ success: true, message: r.data.message, updated: r.data.updated, total: r.data.total });
-      mfAPI.get().then(r => setMfData(r.data)).catch(() => {});
+      await smoothRefresh();
     } catch(e) {
       setNavSyncResult({ success: false, message: e.response?.data?.error || 'NAV sync failed' });
     } finally { setSyncingNAV(false); }
+  };
+
+  // Smooth global refresh - reloads all data with fade animation
+  const smoothRefresh = async () => {
+    setRefreshing(true);
+    await Promise.all([
+      loadPortfolio(),
+      mfAPI.get().then(r => setMfData(r.data)).catch(() => {}),
+      loadGoals(),
+    ]);
+    setRefreshing(false);
   };
 
   const loadTab = async (t) => {
@@ -580,9 +608,8 @@ export default function Dashboard() {
       setSyncResult({ success: false, message: msg });
     } finally {
       setSyncing(false);
-      // Always reload — holdings may have been saved even if sync returned an error
-      await loadPortfolio();
-      if (tab === 'holdings') await loadTab('holdings');
+      await smoothRefresh();
+      if (tab === 'holdings') setTab('holdings');
     }
   };
 
@@ -591,7 +618,7 @@ export default function Dashboard() {
     try {
       const r = await portfolioAPI.syncPrices();
       setSyncResult({ success: true, message: r.data.message });
-      await loadPortfolio();
+      await smoothRefresh();
     } catch (e) {
       setSyncResult({ success: false, message: e.response?.data?.error || 'Price sync failed' });
     } finally { setSyncingPrices(false); }
@@ -836,6 +863,17 @@ export default function Dashboard() {
 
   return (
     <div className="db-layout">
+      <style>{`
+        @keyframes kanalyst-fadein { from { opacity:0.3; transform:translateY(-3px); } to { opacity:1; transform:translateY(0); } }
+        @keyframes kanalyst-pulse  { 0%,100%{ opacity:1; } 50%{ opacity:0.45; } }
+        .kv-refresh { animation: kanalyst-fadein 0.35s ease; }
+        .kv-loading { animation: kanalyst-pulse 1.2s ease infinite; pointer-events:none; }
+        @keyframes kanalyst-valueup { 0%{color:inherit;} 40%{color:#00d4a1;transform:scale(1.04);} 100%{color:inherit;transform:scale(1);} }
+        @keyframes kanalyst-shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+        .kv-value-up   { animation: kanalyst-valueup 0.6s ease; }
+        .kv-refresh-row{ animation: kanalyst-fadein 0.4s ease; }
+        .kv-shimmer    { background:linear-gradient(90deg,#1e3a5f 25%,#2a4a6f 50%,#1e3a5f 75%); background-size:200% 100%; animation:kanalyst-shimmer 1.5s infinite; border-radius:6px; }
+      `}</style>
       {/* SIDEBAR */}
       <aside className="db-sidebar">
         <div className="db-logo">
@@ -902,6 +940,13 @@ export default function Dashboard() {
           </div>
           <div className="db-topbar-right">
             {/* Privacy toggle - eye button */}
+            {/* Refresh indicator */}
+            {refreshing && (
+              <div style={{display:'flex',alignItems:'center',gap:5,fontSize:11,color:'#475569'}}>
+                <div style={{width:12,height:12,borderRadius:'50%',border:'2px solid #1e3a5f',borderTopColor:'#6366f1',animation:'kanalyst-pulse 0.6s linear infinite'}}/>
+                <span>Refreshing…</span>
+              </div>
+            )}
             {/* Family mode toggle - only shown if user is in a family */}
             {familyStatus.inFamily && (
               <button
@@ -1032,7 +1077,7 @@ export default function Dashboard() {
                           <span style={{color:'#818cf8',fontWeight:700,fontSize:13}}>Family Portfolio</span>
                         </div>
                         {[
-                          {label:'Combined Value',  val:fmtFull(fTotal),    color:'#64ffda'},
+                          {label:'Combined Value',  val:fmtFull(fTotal),    color:'#64ffda', cls:'kv-refresh'},
                           {label:'Total Invested',  val:fmtFull(fInvested), color:'#94a3b8'},
                           {label:'Total P&L',       val:fmtFull(fPnl),      color:fPnl>=0?'#00d4a1':'#f43f5e'},
                           {label:'Holdings',        val:holdings.length+' stocks', color:'#818cf8'},
@@ -1055,7 +1100,9 @@ export default function Dashboard() {
                       { label:'Monthly Income', val: hideValues ? '₹ ••••' : fmt(monthlyIncome), sub: hideValues ? '—' : 'Salary this month', color:'#00bcd4', icon:'💼' },
                       { label:'This Month Expenses', val: hideValues ? '₹ ••••' : fmt(monthlyExpenses), sub: hideValues ? '—' : 'From transactions', color: monthlyExpenses > monthlyIncome*0.8 ? '#ff8a65':'#b39ddb', icon:'🧾' },
                     ].map(t => (
-                      <div key={t.label} style={{ background:'rgba(255,255,255,0.04)', borderRadius:12, padding:'16px 14px', border:'1px solid rgba(255,255,255,0.08)', cursor:'default' }}>
+                      <div key={t.label}
+                        className={refreshing ? 'kv-loading' : 'kv-refresh'}
+                        style={{ background:'rgba(255,255,255,0.04)', borderRadius:12, padding:'16px 14px', border:'1px solid rgba(255,255,255,0.08)', cursor:'default', transition:'opacity 0.3s' }}>
                         <div style={{ fontSize:20, marginBottom:6 }}>{t.icon}</div>
                         <div style={{ fontSize:11, color:'#888', marginBottom:4 }}>{t.label}</div>
                         <div style={{ fontSize:20, fontWeight:700, color:t.color }}>{t.val}</div>
@@ -1271,7 +1318,7 @@ export default function Dashboard() {
                 <div style={{display:'flex',alignItems:'center',gap:24,padding:'12px 18px',background:'rgba(255,255,255,0.03)',borderRadius:10,border:'1px solid rgba(255,255,255,0.06)',marginBottom:16,flexWrap:'wrap'}}>
                   <div>
                     <div style={{color:'#475569',fontSize:10,fontWeight:700,letterSpacing:1,marginBottom:2}}>TOTAL VALUE</div>
-                    <div style={{color:'#64ffda',fontWeight:700,fontSize:22}}>{fmtFull(totalValue)}</div>
+                    <div className="kv-refresh" style={{color:'#64ffda',fontWeight:700,fontSize:22}}>{fmtFull(totalValue)}</div>
                   </div>
                   {(() => {
                     const invested = holdings.reduce((s,h)=>s+((h.quantity||0)*(h.avg_cost||0)),0);
@@ -1448,9 +1495,17 @@ export default function Dashboard() {
                                     const _r=h.isin||h.symbol;
                                     const _g=goals.find(g=>g.assets&&g.assets.some(a=>a.asset_ref===_r));
                                     return _g?(
-                                      <span onClick={()=>setLinkingAsset({type:'stock',ref:_r,name:h.company||h.symbol,value:(h.quantity||0)*(h.last_price||0)})}
-                                        title={'Goal: '+_g.name} style={{fontSize:10,padding:'2px 7px',borderRadius:8,background:'rgba(99,102,241,0.15)',color:'#818cf8',cursor:'pointer',whiteSpace:'nowrap',flexShrink:0,fontWeight:600}}>
-                                        🎯 {_g.name.slice(0,10)}{_g.name.length>10?'…':''}
+                                      <span style={{display:'flex',alignItems:'center',gap:2,flexShrink:0,borderRadius:8,background:'rgba(99,102,241,0.12)',border:'1px solid rgba(99,102,241,0.25)',overflow:'hidden'}}>
+                                        <span onClick={()=>setLinkingAsset({type:'stock',ref:_r,name:h.company||h.symbol,value:(h.quantity||0)*(h.last_price||0)})}
+                                          title={'Linked to: '+_g.name+' — click to change'}
+                                          style={{fontSize:10,padding:'3px 6px',color:'#818cf8',cursor:'pointer',fontWeight:600,whiteSpace:'nowrap'}}>
+                                          🎯 {_g.name.slice(0,10)}{_g.name.length>10?'…':''}
+                                        </span>
+                                        <span onClick={e=>{e.stopPropagation();unlinkFromRow(_g,_r);}}
+                                          title='Remove goal link'
+                                          style={{fontSize:10,padding:'3px 5px',color:'#6366f1',cursor:'pointer',borderLeft:'1px solid rgba(99,102,241,0.25)',lineHeight:1}}>
+                                          ✕
+                                        </span>
                                       </span>
                                     ):(
                                       <button onClick={()=>setLinkingAsset({type:'stock',ref:_r,name:h.company||h.symbol,value:(h.quantity||0)*(h.last_price||0)})}
@@ -1603,7 +1658,7 @@ export default function Dashboard() {
                   <div style={{display:'flex',alignItems:'center',gap:24,padding:'12px 18px',background:'rgba(255,255,255,0.03)',borderRadius:10,border:'1px solid rgba(255,255,255,0.06)',marginBottom:16,flexWrap:'wrap'}}>
                     <div>
                       <div style={{color:'#475569',fontSize:10,fontWeight:700,letterSpacing:1,marginBottom:2}}>TOTAL MF VALUE</div>
-                      <div style={{color:'#0ea5e9',fontWeight:700,fontSize:22}}>{fmt(summary.totalValue||0)}</div>
+                      <div className="kv-refresh" style={{color:'#0ea5e9',fontWeight:700,fontSize:22}}>{fmt(summary.totalValue||0)}</div>
                     </div>
                     {(() => {
                       const totalCost = holdings.reduce((s,h)=>s+parseFloat(h.total_cost||0),0);
@@ -1774,9 +1829,17 @@ export default function Dashboard() {
                                         const _r=h.isin||h.folio_number;
                                         const _g=goals.find(g=>g.assets&&g.assets.some(a=>a.asset_ref===_r));
                                         return _g?(
-                                          <span onClick={()=>setLinkingAsset({type:'mf',ref:_r,name:h.fund_name||h.scheme_name||_r,value:h.current_value||0})}
-                                            title={'Goal: '+_g.name} style={{fontSize:10,padding:'2px 7px',borderRadius:8,background:'rgba(99,102,241,0.15)',color:'#818cf8',cursor:'pointer',whiteSpace:'nowrap',flexShrink:0,fontWeight:600,marginTop:2}}>
-                                            🎯 {_g.name.slice(0,10)}{_g.name.length>10?'…':''}
+                                          <span style={{display:'flex',alignItems:'center',gap:2,flexShrink:0,borderRadius:8,background:'rgba(99,102,241,0.12)',border:'1px solid rgba(99,102,241,0.25)',overflow:'hidden',marginTop:2}}>
+                                            <span onClick={()=>setLinkingAsset({type:'mf',ref:_r,name:h.fund_name||h.scheme_name||_r,value:h.current_value||0})}
+                                              title={'Linked to: '+_g.name+' — click to change'}
+                                              style={{fontSize:10,padding:'3px 6px',color:'#818cf8',cursor:'pointer',fontWeight:600,whiteSpace:'nowrap'}}>
+                                              🎯 {_g.name.slice(0,10)}{_g.name.length>10?'…':''}
+                                            </span>
+                                            <span onClick={e=>{e.stopPropagation();unlinkFromRow(_g,_r);}}
+                                              title='Remove goal link'
+                                              style={{fontSize:10,padding:'3px 5px',color:'#6366f1',cursor:'pointer',borderLeft:'1px solid rgba(99,102,241,0.25)',lineHeight:1}}>
+                                              ✕
+                                            </span>
                                           </span>
                                         ):(
                                           <button onClick={()=>setLinkingAsset({type:'mf',ref:_r,name:h.fund_name||h.scheme_name||_r,value:h.current_value||0})}
@@ -2987,7 +3050,24 @@ export default function Dashboard() {
                             <span style={{color:'#475569',fontSize:11,flexShrink:0}}>{prog.toFixed(0)}% of {fmtFull(goal.target_value)}</span>
                           </div>
                         </div>
-                        <span style={{fontSize:13,color:'#6366f1',fontWeight:700,marginLeft:16}}>{bulkLinking?'Linking…':'Link All →'}</span>
+                        <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:4,marginLeft:16,flexShrink:0}}>
+                          {bulkLinking && bulkProgress.total > 0 ? (
+                            <>
+                              <span style={{fontSize:12,color:'#f59e0b',fontWeight:700,whiteSpace:'nowrap'}}>
+                                {bulkProgress.current} / {bulkProgress.total}
+                              </span>
+                              <div style={{width:60,height:3,background:'rgba(245,158,11,0.15)',borderRadius:2}}>
+                                <div style={{height:'100%',borderRadius:2,background:'#f59e0b',
+                                  width:`${Math.round((bulkProgress.current/bulkProgress.total)*100)}%`,
+                                  transition:'width 0.15s ease'}}/>
+                              </div>
+                            </>
+                          ) : (
+                            <span style={{fontSize:13,color:'#6366f1',fontWeight:700,whiteSpace:'nowrap'}}>
+                              {bulkLinking ? 'Starting…' : 'Link All →'}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     );
                   })}
