@@ -141,6 +141,7 @@ export default function Dashboard() {
     recurrence_day:'1', recurrence_month:'',
   });
   const [linkingGoalId, setLinkingGoalId]     = useState(null);  // goal we're linking assets to
+  const [linkingAsset, setLinkingAsset]       = useState(null);  // {type,ref,name,value} being linked
   const [picUploading, setPicUploading]       = useState(false);
   const [liabilities, setLiabilities] = useState({ homeLoan: 0, creditCard: 0 });
   const [monthlyIncome, setMonthlyIncome] = useState(0);
@@ -160,6 +161,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     loadPortfolio();
+    loadGoals();
     emailAPI.status().then(r => setEmailStatus(r.data.connections || [])).catch(() => {});
 
     // Load dividend total for dashboard tile — from dividend_income table
@@ -417,7 +419,16 @@ export default function Dashboard() {
   };
 
   const openGoalDetail = async (goal) => {
-    setGoalDetail(goal);
+    // Fetch fresh goal data (includes latest assets)
+    try {
+      const fresh = await goalsAPI.getAll();
+      const freshGoal = (fresh.data.goals || []).find(g => g.id === goal.id) || goal;
+      setGoalDetail(freshGoal);
+      setGoals(fresh.data.goals || []);
+      setGoalsSummary(fresh.data.summary || {});
+    } catch(e) {
+      setGoalDetail(goal);
+    }
     const r = await goalsAPI.getCycles(goal.id).catch(() => ({ data: [] }));
     setGoalCycles(r.data || []);
   };
@@ -437,6 +448,28 @@ export default function Dashboard() {
     setLinkingGoalId(null);
   };
 
+  // Link a specific holding to a chosen goal (from the holdings table)
+  const linkHoldingToGoal = async (goalId) => {
+    if (!linkingAsset || !goalId) return;
+    try {
+      await goalsAPI.linkAsset(goalId, {
+        asset_type: linkingAsset.type,
+        asset_ref:  linkingAsset.ref,
+        asset_name: linkingAsset.name,
+      });
+      setLinkingAsset(null);
+      await loadGoals();
+      // Trigger goal progress recompute
+      goalsAPI.recompute(goalId).catch(() => {});
+    } catch(e) {
+      if (e.response?.data?.error?.includes('already linked')) {
+        alert('This holding is already linked to that goal.');
+      } else {
+        console.error(e);
+      }
+    }
+  };
+
   const unlinkAsset = async (goalId, assetId) => {
     await goalsAPI.unlinkAsset(goalId, assetId).catch(() => {});
     if (goalDetail?.id === goalId) openGoalDetail({ ...goalDetail });
@@ -452,6 +485,7 @@ export default function Dashboard() {
     if (t === 'income')   { await loadIncome();   return; }
     if (t === 'expenses') { await loadExpenses(); return; }
     if (t === 'goals')    { await loadGoals();    return; }
+    if (t === 'holdings' || t === 'mutualfunds') { if (goals.length === 0) loadGoals(); }
     if (t === 'dividends') { return; // Dividends component loads its own data
       const r = await portfolioAPI.dividends().catch(() => ({ data: { dividends: [], totalIncome: 0 } }));
       setDividends(r.data);
@@ -1143,9 +1177,22 @@ export default function Dashboard() {
                         <td className="right mono">{fmt(h.marketValue)}</td>
                         <td className={`right mono ${h.pnl >= 0 ? 'pos' : 'neg'}`}>{pct(h.pnlPct)}</td>
                         <td style={{textAlign:'center'}}>
-                          <button title="Link to Goal" onClick={()=>setLinkingGoalId(goals.length>0?goals[0].id:'prompt')}
-                            style={{background:'none',border:'none',fontSize:14,cursor:'pointer',opacity:0.5,transition:'opacity 0.15s'}}
-                            onMouseOver={e=>e.target.style.opacity=1} onMouseOut={e=>e.target.style.opacity=0.5}>🎯</button>
+                          {(() => {
+                            const linkedGoal = goals.find(g => g.assets?.some(a => a.asset_ref === (h.isin||h.symbol)));
+                            return linkedGoal ? (
+                              <span title={linkedGoal.name} style={{fontSize:11,padding:'2px 7px',borderRadius:10,background:'rgba(99,102,241,0.15)',color:'#818cf8',cursor:'pointer',whiteSpace:'nowrap'}}
+                                onClick={()=>setLinkingAsset({type:'stock',ref:h.isin||h.symbol,name:h.company||h.symbol,value:(h.quantity||0)*(h.last_price||0)})}>
+                                🎯 {linkedGoal.name.slice(0,12)}{linkedGoal.name.length>12?'…':''}
+                              </span>
+                            ) : (
+                              <button title="Link to Goal" onClick={()=>setLinkingAsset({type:'stock',ref:h.isin||h.symbol,name:h.company||h.symbol,value:(h.quantity||0)*(h.last_price||0)})}
+                                style={{background:'none',border:'1px dashed #334155',borderRadius:6,fontSize:11,cursor:'pointer',color:'#475569',padding:'2px 8px',transition:'all 0.15s'}}
+                                onMouseOver={e=>{e.target.style.borderColor='#6366f1';e.target.style.color='#818cf8';}}
+                                onMouseOut={e=>{e.target.style.borderColor='#334155';e.target.style.color='#475569';}}>
+                                🎯 Link
+                              </button>
+                            );
+                          })()}
                         </td>
                       </tr>
                     ))}
@@ -1613,6 +1660,7 @@ export default function Dashboard() {
                               <th>Folio / ISIN</th>
                               <th>Holding Date</th>
                               <th>Source</th>
+                              <th style={{width:80}}>Goal</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1685,6 +1733,23 @@ export default function Dashboard() {
                                              h.source === 'CAMS'      ? '#fb923c' : '#a78bfa' }}>
                                       {h.source || 'CDSL'}
                                     </span>
+                                  </td>
+                                  <td style={{textAlign:'center',paddingRight:8}}>
+                                    {(()=>{
+                                      const ref=h.isin||h.folio_number;
+                                      const lGoal=goals.find(g=>g.assets&&g.assets.some(a=>a.asset_ref===ref));
+                                      return lGoal ? (
+                                        <span title={lGoal.name} onClick={()=>setLinkingAsset({type:'mf',ref,name:h.fund_name||h.scheme_name||ref,value:h.current_value||0})}
+                                          style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:'rgba(99,102,241,0.15)',color:'#818cf8',cursor:'pointer',whiteSpace:'nowrap'}}>
+                                          🎯 {lGoal.name.slice(0,12)}{lGoal.name.length>12?'...':''}
+                                        </span>
+                                      ) : (
+                                        <button onClick={()=>setLinkingAsset({type:'mf',ref,name:h.fund_name||h.scheme_name||ref,value:h.current_value||0})} title='Link to Goal'
+                                          style={{background:'none',border:'1px dashed #334155',borderRadius:6,fontSize:10,cursor:'pointer',color:'#475569',padding:'2px 8px',transition:'all 0.15s'}}
+                                          onMouseOver={e=>{e.currentTarget.style.borderColor='#6366f1';e.currentTarget.style.color='#818cf8';}}
+                                          onMouseOut={e=>{e.currentTarget.style.borderColor='#334155';e.currentTarget.style.color='#475569';}}>Link Goal</button>
+                                      );
+                                    })()}
                                   </td>
                                 </tr>
                               );
@@ -1836,6 +1901,7 @@ export default function Dashboard() {
                                 <div style={{display:'flex',gap:14,fontSize:11,color:'#475569',flexWrap:'wrap'}}>
                                   {goal.target_date && <span>📅 Target: {new Date(goal.target_date+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}</span>}
                                   <span>🔗 {goal.asset_count} asset{goal.asset_count!==1?'s':''} linked</span>
+                                  {goal.current_value > 0 && <span style={{color:'#6366f1'}}>· {fmtFull(goal.current_value)} tracked</span>}
                                   <span>📅 Started {new Date(goal.started_on+'T00:00:00').toLocaleDateString('en-IN',{month:'short',year:'numeric'})}</span>
                                 </div>
                               </div>
@@ -2701,7 +2767,16 @@ export default function Dashboard() {
               <div style={{marginBottom:16}}>
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
                   <div style={{color:'#e2e8f0',fontWeight:700,fontSize:13}}>Linked Assets</div>
-                  <button onClick={()=>{setLinkingGoalId(goalDetail.id);setGoalDetail(null);}} style={{background:'rgba(99,102,241,0.1)',border:'1px solid rgba(99,102,241,0.3)',color:'#818cf8',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:11}}>+ Link Asset</button>
+                  <div style={{display:'flex',gap:6}}>
+                    <button onClick={()=>{setGoalDetail(null);loadTab('holdings');}}
+                      style={{background:'rgba(99,102,241,0.1)',border:'1px solid rgba(99,102,241,0.3)',color:'#818cf8',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:11}}>
+                      + Stock
+                    </button>
+                    <button onClick={()=>{setGoalDetail(null);loadTab('mutualfunds');}}
+                      style={{background:'rgba(14,165,233,0.1)',border:'1px solid rgba(14,165,233,0.3)',color:'#38bdf8',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:11}}>
+                      + Mutual Fund
+                    </button>
+                  </div>
                 </div>
                 {goalDetail.assets?.length===0 ? (
                   <div style={{textAlign:'center',padding:'20px',color:'#334155',fontSize:13,border:'1px dashed #1e3a5f',borderRadius:8}}>
@@ -2719,11 +2794,29 @@ export default function Dashboard() {
               </div>
 
               {/* Cycles (if recurring) */}
-              {goalDetail.is_recurring && goalCycles.length > 0 && (
+              {goalDetail.is_recurring && (
                 <div style={{marginBottom:16}}>
-                  <div style={{color:'#e2e8f0',fontWeight:700,fontSize:13,marginBottom:10}}>Cycles</div>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+                    <div style={{color:'#e2e8f0',fontWeight:700,fontSize:13}}>Cycles
+                      {goalDetail.recurrence && <span style={{fontSize:10,color:'#475569',fontWeight:400,marginLeft:6}}>({goalDetail.recurrence})</span>}
+                    </div>
+                    {goalCycles.some(cy=>cy.status==='inprogress') && (
+                      <button onClick={async()=>{
+                        const val = prompt('Amount achieved this cycle (₹):');
+                        if(val===null) return;
+                        await goalsAPI.closeCycle(goalDetail.id, {action:'close', achieved_value: parseFloat(val)||0});
+                        await openGoalDetail(goalDetail);
+                      }} style={{background:'rgba(0,212,161,0.1)',border:'1px solid rgba(0,212,161,0.3)',color:'#00d4a1',borderRadius:6,padding:'4px 12px',cursor:'pointer',fontSize:11,fontWeight:600}}>
+                        ✓ Close Current Cycle
+                      </button>
+                    )}
+                  </div>
+                  {goalCycles.length === 0 ? (
+                    <div style={{color:'#334155',fontSize:12,textAlign:'center',padding:'12px 0'}}>No cycles yet</div>
+                  ) : goalCycles.slice(0,5).map(cy=>(
+                    <div key={cy.id} style={{display:'flex',justifyContent:'space-between',padding:'8px 12div>
                   {goalCycles.slice(0,5).map(cy=>(
-                    <div key={cy.id} style={{display:'flex',justifyContent:'space-between',padding:'8px 12px',background:'#060e1a',borderRadius:8,marginBottom:4,border:'1px solid #1e3a5f',fontSize:12}}>
+                    <div key={cy.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 12px',background:'#060e1a',borderRadius:8,marginBottom:4,border:'1px solid #1e3a5f',fontSize:12}}>
                       <span style={{color:'#94a3b8'}}>Cycle {cy.cycle_number} · {cy.cycle_start}</span>
                       <div style={{display:'flex',gap:10,alignItems:'center'}}>
                         {cy.achieved_value>0 && <span style={{color:'#e2e8f0'}}>{fmtFull(cy.achieved_value)}</span>}
@@ -2750,56 +2843,67 @@ export default function Dashboard() {
       )}
 
       {/* ── LINK ASSET MODAL ── */}
-      {linkingGoalId && (
-        <div className="db-modal-overlay" onClick={e=>{if(e.target===e.currentTarget)setLinkingGoalId(null);}}>
-          <div className="db-modal fade-in" style={{maxWidth:520}}>
+      {linkingAsset && (
+        <div className="db-modal-overlay" onClick={e=>{if(e.target===e.currentTarget)setLinkingAsset(null);}}>
+          <div className="db-modal fade-in" style={{maxWidth:500}}>
             <div className="db-modal-header">
-              <div className="db-modal-title" style={{fontSize:16,fontWeight:700,color:'#e2e8f0'}}>🔗 Link Asset to Goal</div>
-              <button className="db-modal-close" onClick={()=>setLinkingGoalId(null)}>✕</button>
+              <div style={{fontSize:16,fontWeight:700,color:'#e2e8f0'}}>
+                🎯 Link to Goal
+                <div style={{fontSize:12,color:'#64748b',fontWeight:400,marginTop:4}}>{linkingAsset.name}</div>
+              </div>
+              <button className="db-modal-close" onClick={()=>setLinkingAsset(null)}>x</button>
             </div>
             <div className="db-modal-body">
-              <div style={{color:'#64748b',fontSize:13,marginBottom:16}}>Select a stock or mutual fund holding to link to this goal</div>
-
-              {/* Stocks */}
-              {holdings.length > 0 && (
-                <div style={{marginBottom:16}}>
-                  <div style={{color:'#94a3b8',fontSize:11,fontWeight:700,letterSpacing:1,marginBottom:8}}>STOCKS</div>
-                  <div style={{maxHeight:160,overflowY:'auto',display:'flex',flexDirection:'column',gap:4}}>
-                    {holdings.slice(0,20).map(h=>(
-                      <div key={h.symbol} onClick={()=>linkAssetToGoal(linkingGoalId,'stock',h.isin||h.symbol,h.company||h.symbol)}
-                        style={{display:'flex',justifyContent:'space-between',padding:'8px 12px',background:'#060e1a',borderRadius:8,cursor:'pointer',border:'1px solid #1e3a5f',transition:'border-color 0.15s'}}
-                        onMouseOver={e=>e.currentTarget.style.borderColor='#6366f1'}
-                        onMouseOut={e=>e.currentTarget.style.borderColor='#1e3a5f'}>
-                        <span style={{color:'#e2e8f0',fontSize:12,fontWeight:600}}>{h.company||h.symbol}</span>
-                        <span style={{color:'#6366f1',fontSize:11}}>{fmtFull((h.quantity||0)*(h.last_price||0))}</span>
-                      </div>
-                    ))}
-                  </div>
+              {goals.length === 0 ? (
+                <div style={{textAlign:'center',padding:'30px 0',color:'#475569'}}>
+                  <div style={{fontSize:32,marginBottom:8}}>🎯</div>
+                  <div>No goals yet. Create a goal first from the Goals tab.</div>
                 </div>
-              )}
-
-              {/* Mutual Funds */}
-              {mfHoldings.length > 0 && (
-                <div>
-                  <div style={{color:'#94a3b8',fontSize:11,fontWeight:700,letterSpacing:1,marginBottom:8}}>MUTUAL FUNDS</div>
-                  <div style={{maxHeight:160,overflowY:'auto',display:'flex',flexDirection:'column',gap:4}}>
-                    {mfHoldings.slice(0,20).map(h=>(
-                      <div key={h.isin||h.folio_number} onClick={()=>linkAssetToGoal(linkingGoalId,'mf',h.isin||h.folio_number,h.scheme_name||h.fund_name||h.isin)}
-                        style={{display:'flex',justifyContent:'space-between',padding:'8px 12px',background:'#060e1a',borderRadius:8,cursor:'pointer',border:'1px solid #1e3a5f',transition:'border-color 0.15s'}}
-                        onMouseOver={e=>e.currentTarget.style.borderColor='#6366f1'}
-                        onMouseOut={e=>e.currentTarget.style.borderColor='#1e3a5f'}>
-                        <span style={{color:'#e2e8f0',fontSize:12,fontWeight:600,flex:1,marginRight:8}}>{(h.scheme_name||h.fund_name||h.isin||'').slice(0,45)}</span>
-                        <span style={{color:'#6366f1',fontSize:11,flexShrink:0}}>{fmtFull(h.current_value||0)}</span>
+              ) : (
+                <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                  <div style={{color:'#64748b',fontSize:12,marginBottom:8}}>Select a goal to link <b style={{color:'#e2e8f0'}}>{linkingAsset.name}</b> to:</div>
+                  {goals.map(goal => {
+                    const alreadyLinked = goal.assets && goal.assets.some(a => a.asset_ref === linkingAsset.ref);
+                    const prog = Math.min(100, goal.progress || 0);
+                    return (
+                      <div key={goal.id}
+                        onClick={()=>!alreadyLinked && linkHoldingToGoal(goal.id)}
+                        style={{
+                          display:'flex',justifyContent:'space-between',alignItems:'center',
+                          padding:'12px 16px',borderRadius:10,cursor:alreadyLinked?'default':'pointer',
+                          border:`1px solid ${alreadyLinked?'rgba(0,212,161,0.3)':'#1e3a5f'}`,
+                          background:alreadyLinked?'rgba(0,212,161,0.06)':'#060e1a',
+                          transition:'border-color 0.15s',
+                        }}
+                        onMouseOver={e=>{ if(!alreadyLinked) e.currentTarget.style.borderColor='#6366f1'; }}
+                        onMouseOut={e=>{ if(!alreadyLinked) e.currentTarget.style.borderColor='#1e3a5f'; }}>
+                        <div style={{flex:1}}>
+                          <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
+                            <span style={{color:'#e2e8f0',fontWeight:600,fontSize:13}}>{goal.name}</span>
+                            <span style={{fontSize:10,padding:'1px 6px',borderRadius:8,
+                              background:goal.status==='completed'?'rgba(0,212,161,0.1)':goal.status==='inprogress'?'rgba(245,158,11,0.1)':'rgba(100,116,139,0.1)',
+                              color:goal.status==='completed'?'#00d4a1':goal.status==='inprogress'?'#f59e0b':'#64748b'}}>
+                              {goal.status==='inprogress'?'In Progress':goal.status}
+                            </span>
+                            {alreadyLinked && <span style={{fontSize:10,padding:'1px 6px',borderRadius:8,background:'rgba(0,212,161,0.1)',color:'#00d4a1'}}>Already linked</span>}
+                          </div>
+                          <div style={{height:4,background:'#1e3a5f',borderRadius:2,overflow:'hidden',maxWidth:200}}>
+                            <div style={{height:'100%',width:`${prog}%`,borderRadius:2,background:prog>=100?'#00d4a1':prog>50?'#6366f1':'#f59e0b'}}/>
+                          </div>
+                          <div style={{color:'#475569',fontSize:10,marginTop:3}}>{prog.toFixed(0)}% of {fmtFull(goal.target_value)}</div>
+                        </div>
+                        {!alreadyLinked && (
+                          <span style={{fontSize:12,color:'#6366f1',fontWeight:600,marginLeft:12}}>Link →</span>
+                        )}
                       </div>
-                    ))}
-                  </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
           </div>
         </div>
       )}
-
       {/* ── SETTINGS MODAL ── */}
       {showSettings && (
         <div className="db-modal-overlay" onClick={e=>{if(e.target===e.currentTarget){setShowSettings(false);setShowRuleForm(false);}}}>
