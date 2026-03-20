@@ -15,6 +15,8 @@ const incomeRoutes   = require('./routes/income');
 const expenseRoutes  = require('./routes/expense');
 const goalsRoutes    = require('./routes/goals');
 const familyRoutes   = require('./routes/family');
+const fdRoutes       = require('./routes/fd');
+const rdRoutes       = require('./routes/rd');
 
 const app = express();
 
@@ -62,6 +64,8 @@ app.use('/api/expense', require('./routes/expenseBudgets'));
 app.use('/api/expense', require('./routes/expenseSync'));
 app.use('/api/goals',    goalsRoutes);
 app.use('/api/family',   familyRoutes);
+app.use('/api/fd',       fdRoutes);
+app.use('/api/rd',       rdRoutes);
 
 // ── Health check ──
 // Debug endpoint - check PDF tools
