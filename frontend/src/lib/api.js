@@ -129,6 +129,14 @@ export const portfolioHistoryAPI = {
   backfill:   (fromDate,toDate)=> api.post('/api/portfolio/history/backfill', { fromDate, toDate }),
 };
 
+export const npsAPI = {
+  get:    ()         => api.get('/api/nps'),
+  sync:   (fromDate) => api.post('/api/nps/sync', { fromDate }),
+  manual: (data)     => api.post('/api/nps/manual', data),
+  update: (id, data) => api.put(`/api/nps/${id}`, data),
+  delete: (id)       => api.delete(`/api/nps/${id}`),
+};
+
 export const fdAPI = {
   getAll:  ()         => api.get('/api/fd'),
   create:  (data)     => api.post('/api/fd', data),
