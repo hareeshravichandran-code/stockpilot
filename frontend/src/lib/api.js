@@ -122,6 +122,13 @@ export const familyAPI = {
   combinedGoals:    ()         => api.get('/api/family/combined/goals'),
 };
 
+export const portfolioHistoryAPI = {
+  get:        (years)          => api.get('/api/portfolio/history', { params: { years } }),
+  detail:     (date)           => api.get(`/api/portfolio/history/detail/${date}`),
+  snapshot:   ()               => api.post('/api/portfolio/history/snapshot'),
+  backfill:   (fromDate,toDate)=> api.post('/api/portfolio/history/backfill', { fromDate, toDate }),
+};
+
 export const fdAPI = {
   getAll:  ()         => api.get('/api/fd'),
   create:  (data)     => api.post('/api/fd', data),
