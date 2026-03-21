@@ -8,6 +8,7 @@ const requireAuth = require('../middleware/requireAuth');
 const supabase    = require('../services/supabase');
 const { getAuthUrl, exchangeCode, fetchEmails } = require('../services/gmail');
 const { parseCAS, detectCASType }               = require('../services/casParser');
+const { saveSnapshot }                       = require('./portfolioHistory');
 const SyncLogger                                = require('../services/logger');
 
 // ── Gmail OAuth URL ───────────────────────────────────────────────────
@@ -284,6 +285,13 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
       // Save immediately — use statement date from PDF, not email date
       const casDate = summary?.statementDate || null;
       const saved = await saveCASHoldings(req.user.id, holdings, mfHoldings, casDate);
+
+      // Save portfolio snapshot for this statement date (builds history chart)
+      saveSnapshot(req.user.id, {
+        source:       'auto_sync',
+        casType:      casType || 'UNKNOWN',
+        snapshotDate: casDate,
+      }).catch(e => console.error(JSON.stringify({ event: 'SNAPSHOT_HOOK_ERROR', error: e.message })));
 
       // ── MF DIAGNOSTIC: log save results ──────────────────────
       console.log(JSON.stringify({
