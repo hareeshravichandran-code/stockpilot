@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
-import api, { portfolioAPI, emailAPI, authAPI, incomeAPI, mfAPI, goalsAPI, familyAPI, fdAPI, rdAPI } from '../lib/api';
+import api, { portfolioAPI, emailAPI, authAPI, incomeAPI, mfAPI, goalsAPI, familyAPI, fdAPI, rdAPI, portfolioHistoryAPI } from '../lib/api';
 import AdminPanel from './AdminPanel';
 import Dividends from './Dividends';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
@@ -147,6 +147,18 @@ export default function Dashboard() {
   const [navSyncResult, setNavSyncResult]      = useState(null);
   const [refreshing, setRefreshing]            = useState(false);  // global refresh pulse
 
+  // ── Portfolio History state ──────────────────────────────────────
+  const [historyData, setHistoryData]         = useState([]);
+  const [historySummary, setHistorySummary]   = useState({});
+  const [historyLoading, setHistoryLoading]   = useState(false);
+  const [historyYears, setHistoryYears]       = useState(5);
+  const [backfillFromDate, setBackfillFromDate] = useState('');
+  const [backfillToDate, setBackfillToDate]   = useState('');
+  const [backfilling, setBackfilling]         = useState(false);
+  const [backfillResult, setBackfillResult]   = useState(null);
+  const [historyDetailDate, setHistoryDetailDate] = useState(null);
+  const [historyDetail, setHistoryDetail]     = useState(null);
+
   // ── FD state ──────────────────────────────────────────────────────
   const [fdList, setFdList]             = useState([]);
   const [fdSummary, setFdSummary]       = useState({});
@@ -191,6 +203,7 @@ export default function Dashboard() {
     loadGoals();
     loadFDs();
     loadRDs();
+    loadHistory(5);
     console.log('[Kanalyst] Dashboard v3 loaded - goal linking active');
     emailAPI.status().then(r => setEmailStatus(r.data.connections || [])).catch(() => {});
 
@@ -645,8 +658,40 @@ export default function Dashboard() {
       loadGoals(),
       loadFDs(),
       loadRDs(),
+      loadHistory(historyYears),
     ]);
     setRefreshing(false);
+  };
+
+  // ── Portfolio History handlers ──────────────────────────────────
+  const loadHistory = async (years = historyYears) => {
+    setHistoryLoading(true);
+    try {
+      const r = await portfolioHistoryAPI.get(years);
+      setHistoryData(r.data.snapshots || []);
+      setHistorySummary(r.data.summary || {});
+    } catch(e) { console.error(e); }
+    finally { setHistoryLoading(false); }
+  };
+
+  const loadHistoryDetail = async (date) => {
+    setHistoryDetailDate(date);
+    try {
+      const r = await portfolioHistoryAPI.detail(date);
+      setHistoryDetail(r.data);
+    } catch(e) { setHistoryDetail(null); }
+  };
+
+  const startBackfill = async () => {
+    setBackfilling(true); setBackfillResult(null);
+    try {
+      const r = await portfolioHistoryAPI.backfill(backfillFromDate || null, backfillToDate || null);
+      setBackfillResult({ success: true, message: r.data.message });
+      // Poll for completion - reload history after 30s
+      setTimeout(() => loadHistory(historyYears), 30000);
+    } catch(e) {
+      setBackfillResult({ success: false, message: e.response?.data?.error || 'Backfill failed' });
+    } finally { setBackfilling(false); }
   };
 
   const loadTab = async (t) => {
@@ -659,7 +704,7 @@ export default function Dashboard() {
     if (t === 'expenses') { await loadExpenses(); return; }
     if (t === 'goals')    { await loadGoals();    return; }
     if (t === 'bankdeposits') { await Promise.all([loadFDs(), loadRDs()]); return; }
-    if (t === 'holdings' || t === 'mutualfunds') { if (goals.length === 0) loadGoals(); }
+    if (t === 'holdings' || t === 'mutualfunds') { if (goals.length === 0) loadGoals(); if (t === 'holdings' && historyData.length === 0) loadHistory(historyYears); }
     if (t === 'dividends') { return; // Dividends component loads its own data
       const r = await portfolioAPI.dividends().catch(() => ({ data: { dividends: [], totalIncome: 0 } }));
       setDividends(r.data);
@@ -948,18 +993,20 @@ export default function Dashboard() {
     }, {})
   ).map(([name, value]) => ({ name, value: Math.round(value) }));
 
-  // Mock growth data (replace with real historical data later)
-  const growthData = [
-    { month: 'Apr', cost: 1100000, market: 1100000 },
-    { month: 'May', cost: 1150000, market: 1160000 },
-    { month: 'Jun', cost: 1180000, market: 1210000 },
-    { month: 'Jul', cost: 1190000, market: 1270000 },
-    { month: 'Aug', cost: 1194517, market: 1330000 },
-    { month: 'Sep', cost: 1194517, market: 1360000 },
-    { month: 'Oct', cost: 1194517, market: 1390000 },
-    { month: 'Nov', cost: 1194517, market: 1400000 },
-    { month: 'Dec', cost: 1194517, market: s.totalMarket || 1409134 },
-  ];
+  // Real portfolio history from snapshots (live data)
+  const growthData = historyData.length > 0
+    ? historyData.map(snap => {
+        const dt = new Date(snap.snapshot_date + 'T00:00:00');
+        return {
+          month:    dt.toLocaleDateString('en-IN', { month: 'short', year: '2-digit' }),
+          fullDate: snap.snapshot_date,
+          cost:     parseFloat(snap.total_invested   || 0),
+          market:   parseFloat(snap.total_value      || 0),
+          equity:   parseFloat(snap.total_equity_value || 0),
+          mf:       parseFloat(snap.total_mf_value   || 0),
+        };
+      })
+    : [{ month: 'Now', fullDate: null, cost: s.totalCost || 0, market: s.totalMarket || 0, equity: 0, mf: 0 }];
 
   if (loading) return (
     <div className="db-loading">
@@ -1301,26 +1348,64 @@ export default function Dashboard() {
 
               {/* Charts */}
               <div className="db-grid-3">
-                <div className="db-card">
+                <div className="db-card" style={{gridColumn:'span 2'}}>
                   <div className="db-card-header">
-                    <div className="db-card-title">Portfolio Growth</div>
-                    <div className="db-card-sub">Cost vs Market value</div>
+                    <div>
+                      <div className="db-card-title">📈 Portfolio History</div>
+                      <div className="db-card-sub">{historyData.length > 0 ? `${historyData.length} snapshots · ${historySummary.dateRange?.from||''} – ${historySummary.dateRange?.to||''}` : 'Sync CAS emails to build history'}</div>
+                    </div>
+                    <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                      {[1,3,5].map(y=>(
+                        <button key={y} onClick={()=>{setHistoryYears(y);loadHistory(y);}}
+                          style={{background:historyYears===y?'rgba(0,212,161,0.12)':'none',border:`1px solid ${historyYears===y?'rgba(0,212,161,0.4)':'#1e3a5f'}`,color:historyYears===y?'#00d4a1':'#475569',borderRadius:6,padding:'3px 9px',cursor:'pointer',fontSize:11,fontWeight:600}}>
+                          {y}Y
+                        </button>
+                      ))}
+                      {historySummary.growthPct && <span style={{fontSize:12,fontWeight:700,color:parseFloat(historySummary.growthPct)>=0?'#00d4a1':'#f43f5e'}}>{parseFloat(historySummary.growthPct)>=0?'+':''}{historySummary.growthPct}%</span>}
+                    </div>
                   </div>
-                  <ResponsiveContainer width="100%" height={200}>
-                    <AreaChart data={growthData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
-                      <defs>
-                        <linearGradient id="mktGrad" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#00d4a1" stopOpacity={0.3}/>
-                          <stop offset="95%" stopColor="#00d4a1" stopOpacity={0}/>
-                        </linearGradient>
-                      </defs>
-                      <XAxis dataKey="month" stroke="#4a5a7a" tick={{ fontSize: 11 }} />
-                      <YAxis stroke="#4a5a7a" tick={{ fontSize: 11 }} tickFormatter={v => `₹${(v/100000).toFixed(1)}L`} />
-                      <Tooltip formatter={v => fmtFull(v)} contentStyle={{ background:'#141b2d', border:'1px solid #1a2235', borderRadius:8 }} />
-                      <Area type="monotone" dataKey="cost" stroke="#4a5a7a" strokeWidth={1.5} strokeDasharray="4 3" fill="transparent" />
-                      <Area type="monotone" dataKey="market" stroke="#00d4a1" strokeWidth={2.5} fill="url(#mktGrad)" />
-                    </AreaChart>
-                  </ResponsiveContainer>
+                  {historyLoading ? (
+                    <div style={{height:220,display:'flex',alignItems:'center',justifyContent:'center',color:'#334155',fontSize:13}}>Loading history…</div>
+                  ) : growthData.length <= 1 ? (
+                    <div style={{height:220,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:8,color:'#475569'}}>
+                      <div style={{fontSize:32}}>📊</div>
+                      <div style={{fontSize:13}}>No history yet — sync CAS emails or run Historical Sync from Settings</div>
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height={220}>
+                      <AreaChart data={growthData} margin={{ top:10, right:20, left:0, bottom:0 }}
+                        onClick={e=>{if(e?.activePayload?.[0]?.payload?.fullDate) loadHistoryDetail(e.activePayload[0].payload.fullDate);}}>
+                        <defs>
+                          <linearGradient id="mktGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#00d4a1" stopOpacity={0.25}/>
+                            <stop offset="95%" stopColor="#00d4a1" stopOpacity={0}/>
+                          </linearGradient>
+                          <linearGradient id="costGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#6366f1" stopOpacity={0.12}/>
+                            <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
+                          </linearGradient>
+                        </defs>
+                        <XAxis dataKey="month" stroke="#4a5a7a" tick={{ fontSize:10, fill:'#64748b' }} interval="preserveStartEnd"/>
+                        <YAxis stroke="#4a5a7a" tick={{ fontSize:10, fill:'#64748b' }} tickFormatter={v=>v>=10000000?`₹${(v/10000000).toFixed(1)}Cr`:v>=100000?`₹${(v/100000).toFixed(1)}L`:`₹${(v/1000).toFixed(0)}K`} width={60}/>
+                        <Tooltip contentStyle={{ background:'#0d1526', border:'1px solid #1e3a5f', borderRadius:8, fontSize:11 }} formatter={(v,name)=>[fmtFull(v),name==='market'?'Portfolio Value':name==='cost'?'Invested':name]} labelStyle={{color:'#94a3b8',marginBottom:4}} cursor={{stroke:'#6366f1',strokeWidth:1,strokeDasharray:'4 4'}}/>
+                        <Area type="monotone" dataKey="cost"   stroke="#6366f1" strokeWidth={1.5} strokeDasharray="4 3" fill="url(#costGrad)" dot={false} name="Invested"/>
+                        <Area type="monotone" dataKey="market" stroke="#00d4a1" strokeWidth={2.5} fill="url(#mktGrad)" dot={{r:3,fill:'#00d4a1',strokeWidth:0}} activeDot={{r:5}} name="Portfolio Value"/>
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  )}
+                  {historyDetail && historyDetailDate && (
+                    <div style={{borderTop:'1px solid #1e3a5f',padding:'12px 0 4px',marginTop:8}}>
+                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                        <div style={{fontSize:12,color:'#818cf8',fontWeight:600}}>📅 Snapshot: {new Date(historyDetailDate+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})} <span style={{color:'#64748b',fontWeight:400,marginLeft:8}}>{historyDetail.holding_count} stocks · {historyDetail.mf_count} funds</span></div>
+                        <button onClick={()=>{setHistoryDetail(null);setHistoryDetailDate(null);}} style={{background:'none',border:'none',color:'#475569',cursor:'pointer',fontSize:13}}>✕</button>
+                      </div>
+                      <div style={{display:'flex',gap:20,flexWrap:'wrap'}}>
+                        {[{label:'Total',val:fmtFull(historyDetail.total_value||0),color:'#64ffda'},{label:'Equities',val:fmtFull(historyDetail.total_equity_value||0),color:'#00d4a1'},{label:'MF',val:fmtFull(historyDetail.total_mf_value||0),color:'#818cf8'},{label:'Invested',val:fmtFull(historyDetail.total_invested||0),color:'#94a3b8'},{label:'Gain/Loss',val:fmtFull(historyDetail.total_gain_loss||0),color:parseFloat(historyDetail.total_gain_loss||0)>=0?'#00d4a1':'#f43f5e'}].map(s=>(
+                          <div key={s.label}><div style={{fontSize:10,color:'#475569'}}>{s.label}</div><div style={{fontSize:14,fontWeight:700,color:s.color}}>{s.val}</div></div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="db-card">
@@ -3826,7 +3911,7 @@ export default function Dashboard() {
               {/* Left nav */}
               <div style={{width:190,borderRight:'1px solid #1e3a5f',padding:'20px 0',flexShrink:0}}>
                 <div style={{color:'#475569',fontSize:10,fontWeight:700,letterSpacing:2,padding:'0 16px 12px',textTransform:'uppercase'}}>Settings</div>
-                {[{id:'family',icon:'👨‍👩‍👧‍👦',label:'Family'},{id:'privacy',icon:'👁',label:'Privacy'},{id:'income',icon:'₹',label:'Income Tracking'},{id:'expense',icon:'💸',label:'Expense Tracking'},{id:'expensesettings',icon:'⚙',label:'Expense Rules'}].map(s=>(
+                {[{id:'family',icon:'👨‍👩‍👧‍👦',label:'Family'},{id:'history',icon:'📊',label:'Historical Sync'},{id:'privacy',icon:'👁',label:'Privacy'},{id:'income',icon:'₹',label:'Income Tracking'},{id:'expense',icon:'💸',label:'Expense Tracking'},{id:'expensesettings',icon:'⚙',label:'Expense Rules'}].map(s=>(
                   <div key={s.id} onClick={()=>setSettingsSection(s.id)}
                     style={{padding:'11px 16px',cursor:'pointer',display:'flex',alignItems:'center',gap:10,fontSize:13,
                       background:settingsSection===s.id?'rgba(100,255,218,0.08)':'transparent',
@@ -3992,6 +4077,80 @@ export default function Dashboard() {
                         {inviteResult.success?'✅':'⚠'} {inviteResult.message}
                       </div>
                     )}
+                  </div>
+                </div>
+              )}
+
+              {settingsSection==='history' && (
+                <div>
+                  <div style={{color:'#e2e8f0',fontSize:14,fontWeight:700,marginBottom:4}}>📊 Historical Sync</div>
+                  <div style={{color:'#475569',fontSize:12,marginBottom:16}}>
+                    Scan all your old NSDL &amp; CDSL CAS emails to build a complete portfolio history. Each CAS email becomes a monthly snapshot used for the growth chart.
+                  </div>
+
+                  {/* History stats */}
+                  {historyData.length > 0 && (
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:16}}>
+                      {[
+                        {label:'Snapshots',    val:historyData.length,                                  color:'#64ffda'},
+                        {label:'Date Range',   val:historySummary.dateRange?`${historySummary.dateRange.from} to ${historySummary.dateRange.to}`:'—', color:'#94a3b8'},
+                        {label:'Growth',       val:historySummary.growthPct?`${historySummary.growthPct>=0?'+':''}${historySummary.growthPct}%`:'—', color:parseFloat(historySummary.growthPct||0)>=0?'#00d4a1':'#f43f5e'},
+                      ].map(s=>(
+                        <div key={s.label} style={{background:'#060e1a',borderRadius:8,padding:'10px 14px',border:'1px solid #1e3a5f',textAlign:'center'}}>
+                          <div style={{color:s.color,fontWeight:700,fontSize:16}}>{s.val}</div>
+                          <div style={{color:'#475569',fontSize:11,marginTop:2}}>{s.label}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Date range selector */}
+                  <div style={{background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:10,padding:16,marginBottom:14}}>
+                    <div style={{color:'#e2e8f0',fontSize:13,fontWeight:600,marginBottom:4}}>Backfill Date Range</div>
+                    <div style={{color:'#475569',fontSize:11,marginBottom:12}}>
+                      Leave blank to scan ALL available CAS emails. Specify a range to limit the scan (e.g. last 5 years).
+                    </div>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
+                      <div>
+                        <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>FROM DATE</label>
+                        <input type="date" value={backfillFromDate} onChange={e=>setBackfillFromDate(e.target.value)}
+                          style={{width:'100%',background:'#0a1628',border:'1px solid #1e3a5f',borderRadius:8,padding:'9px 12px',color:'#e2e8f0',fontSize:13,outline:'none',boxSizing:'border-box'}}/>
+                        <div style={{fontSize:10,color:'#334155',marginTop:2}}>e.g. 2020-01-01 for 5 years</div>
+                      </div>
+                      <div>
+                        <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>TO DATE</label>
+                        <input type="date" value={backfillToDate} onChange={e=>setBackfillToDate(e.target.value)}
+                          style={{width:'100%',background:'#0a1628',border:'1px solid #1e3a5f',borderRadius:8,padding:'9px 12px',color:'#e2e8f0',fontSize:13,outline:'none',boxSizing:'border-box'}}/>
+                        <div style={{fontSize:10,color:'#334155',marginTop:2}}>Leave blank for today</div>
+                      </div>
+                    </div>
+                    <button onClick={startBackfill} disabled={backfilling}
+                      style={{width:'100%',background:backfilling?'#1e2d3d':'#6366f1',border:'none',color:backfilling?'#475569':'#fff',borderRadius:8,padding:'11px',fontWeight:700,fontSize:13,cursor:backfilling?'not-allowed':'pointer'}}>
+                      {backfilling ? '⟳ Scanning CAS emails — this may take a few minutes…' : '⟳ Start Historical Sync'}
+                    </button>
+                    {backfillResult && (
+                      <div style={{marginTop:10,padding:'8px 12px',borderRadius:8,fontSize:12,
+                        background:backfillResult.success?'rgba(0,212,161,0.06)':'rgba(244,63,94,0.06)',
+                        border:`1px solid ${backfillResult.success?'rgba(0,212,161,0.2)':'rgba(244,63,94,0.2)'}`,
+                        color:backfillResult.success?'#00d4a1':'#f43f5e'}}>
+                        {backfillResult.success ? '✅' : '⚠'} {backfillResult.message}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Manual snapshot */}
+                  <div style={{background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:10,padding:16}}>
+                    <div style={{color:'#e2e8f0',fontSize:13,fontWeight:600,marginBottom:4}}>Save Current Snapshot</div>
+                    <div style={{color:'#475569',fontSize:11,marginBottom:10}}>
+                      Save today's portfolio values as a snapshot manually. Useful if auto-sync hasn't run yet.
+                    </div>
+                    <button onClick={async()=>{
+                        try { await portfolioHistoryAPI.snapshot(); await loadHistory(historyYears); }
+                        catch(e) { alert('Snapshot failed: '+e.message); }
+                      }}
+                      style={{background:'rgba(0,212,161,0.1)',border:'1px solid rgba(0,212,161,0.3)',color:'#00d4a1',borderRadius:8,padding:'9px 18px',fontWeight:700,fontSize:12,cursor:'pointer'}}>
+                      📸 Save Snapshot Now
+                    </button>
                   </div>
                 </div>
               )}
