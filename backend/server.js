@@ -16,6 +16,7 @@ const expenseRoutes  = require('./routes/expense');
 const goalsRoutes    = require('./routes/goals');
 const familyRoutes   = require('./routes/family');
 const portfolioHistoryRoutes = require('./routes/portfolioHistory');
+const npsRoutes      = require('./routes/nps');
 const fdRoutes       = require('./routes/fd');
 const rdRoutes       = require('./routes/rd');
 
@@ -66,6 +67,7 @@ app.use('/api/expense', require('./routes/expenseSync'));
 app.use('/api/goals',    goalsRoutes);
 app.use('/api/family',   familyRoutes);
 app.use('/api/portfolio/history', portfolioHistoryRoutes);
+app.use('/api/nps',      npsRoutes);
 app.use('/api/fd',       fdRoutes);
 app.use('/api/rd',       rdRoutes);
 
