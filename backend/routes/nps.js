@@ -1,18 +1,15 @@
 /**
  * Kanalyst — NPS Routes
- * GET  /api/nps            — latest + history
- * GET  /api/nps/history    — all snapshots for chart
- * POST /api/nps/sync       — scan Gmail for NPS statements (all historical)
- * POST /api/nps/manual     — manual entry
- * PUT  /api/nps/:id        — update (goal link, manual edits)
- * DELETE /api/nps/:id      — delete single record
+ * Fixed: BUG-2 (use email.body not email.attachments/pdfBuffer)
+ * Fixed: BUG-3 (pass NPS passwords to fetchEmails via npsPasswords field)
+ * Fixed: BUG-6 (handle image-based PDFs via OCR text in email.body)
  */
-const router      = require('express').Router();
-const requireAuth = require('../middleware/requireAuth');
-const supabase    = require('../services/supabase');
-const { generateNPSPasswords, parseNPSPDF } = require('../services/npsParser');
+const router                      = require('express').Router();
+const requireAuth                 = require('../middleware/requireAuth');
+const supabase                    = require('../services/supabase');
+const { parseNPSText, generateNPSPasswords } = require('../services/npsParser');
 
-// ── GET / — latest holding + summary ─────────────────────────────
+// ── GET / — latest holding + history ─────────────────────────────
 router.get('/', requireAuth, async (req, res) => {
   const { data, error } = await supabase
     .from('nps_holdings')
@@ -25,183 +22,245 @@ router.get('/', requireAuth, async (req, res) => {
   const rows   = data || [];
   const latest = rows[0] || null;
 
-  // History for chart: monthly points
   const history = rows.map(r => ({
-    date:          r.statement_to,
-    total_value:   parseFloat(r.total_value || 0),
-    scheme_e:      parseFloat(r.scheme_e_value || 0),
-    scheme_c:      parseFloat(r.scheme_c_value || 0),
-    scheme_g:      parseFloat(r.scheme_g_value || 0),
-    xirr:          r.xirr,
-  })).reverse(); // oldest first for chart
+    date:        r.statement_to,
+    total_value: parseFloat(r.total_value || 0),
+    scheme_e:    parseFloat(r.scheme_e_value || 0),
+    scheme_c:    parseFloat(r.scheme_c_value || 0),
+    scheme_g:    parseFloat(r.scheme_g_value || 0),
+    xirr:        r.xirr,
+  })).reverse();
 
   const growthPct = history.length > 1 && history[0].total_value > 0
-    ? (((history[history.length-1].total_value - history[0].total_value) / history[0].total_value) * 100).toFixed(2)
+    ? (((history[history.length - 1].total_value - history[0].total_value) / history[0].total_value) * 100).toFixed(2)
     : null;
 
   res.json({ latest, history, count: rows.length, growthPct });
 });
 
-// ── POST /sync — scan Gmail for all NPS emails ───────────────────
+// ── POST /sync — scan ALL Gmail NPS emails ────────────────────────
 router.post('/sync', requireAuth, async (req, res) => {
   const userId = req.user.id;
-  const { fromDate } = req.body; // optional date limit
+  const { fromDate } = req.body;
 
   const { data: conn } = await supabase
     .from('email_connections').select('*')
     .eq('user_id', userId).eq('provider', 'gmail').single();
-
   if (!conn) return res.status(400).json({ error: 'No Gmail account connected' });
 
   const { data: userProfile } = await supabase
     .from('users').select('pan, dob, name').eq('id', userId).single();
 
-  const passwords = generateNPSPasswords(userProfile?.name, userProfile?.dob);
-  if (passwords.length === 0) {
-    return res.status(400).json({ error: 'Set your name and date of birth in Profile settings to unlock NPS PDFs' });
+  // Generate NPS-specific passwords: first4(name).lower() + DDMM from DOB
+  const npsPasswords = generateNPSPasswords(userProfile?.name, userProfile?.dob);
+  console.log(JSON.stringify({
+    event: 'NPS_PASSWORDS_GENERATED',
+    count: npsPasswords.length,
+    sample: npsPasswords[0] || 'none',
+    name: userProfile?.name?.slice(0, 5),
+    dob: userProfile?.dob,
+  }));
+
+  if (npsPasswords.length === 0) {
+    return res.status(400).json({
+      error: 'Cannot generate NPS PDF password. Please set your Name and Date of Birth in Settings → Profile & PAN.'
+    });
   }
 
-  // Build query — NPS statements from Protean (formerly NSDL e-Gov)
-  const queryParts = [
-    'from:(protean-tinpan.com OR npsstatement.com OR cra@nsdl.co.in OR nps@nsdlpension.com)',
-    'subject:(NPS OR "Pension" OR "Transaction Statement")',
-    'has:attachment',
-  ];
+  // Build search queries — most specific first
+  const queryParts = ['has:attachment'];
   if (fromDate) queryParts.push(`after:${fromDate.replace(/-/g, '/')}`);
 
-  // Fallback queries
   const searchAttempts = [
-    queryParts.join(' '),
-    'subject:"NPS Transaction Statement" has:attachment',
-    'subject:"National Pension System" has:attachment',
-    'from:(protean) subject:(NPS OR statement) has:attachment',
+    // Protean CRA (formerly NSDL e-Gov) — main NPS statement sender
+    `from:(protean-tinpan.com OR nps.protean-tinpan.com) ${queryParts.join(' ')}`,
+    // Subject-based fallbacks
+    `subject:"NPS Transaction Statement" ${queryParts.join(' ')}`,
+    `subject:"National Pension System" has:attachment`,
+    // Broad fallback — any email with NPS + PDF
+    `(nps OR "pension fund") subject:(statement OR transaction) has:attachment`,
   ];
 
-  // Respond immediately — process async
   res.json({
-    success:  true,
-    message:  'NPS sync started — scanning Gmail for NPS statements. Results will appear shortly.',
-    passwords: passwords.length,
+    success:   true,
+    message:   `NPS sync started — scanning Gmail with ${npsPasswords.length} password(s). Check back in ~30 seconds.`,
+    passwords: npsPasswords.length,
+    queries:   searchAttempts.length,
   });
 
-  // ── Async processing ─────────────────────────────────────────
+  // ── Async background processing ──────────────────────────────────
   (async () => {
     const { fetchEmails } = require('../services/gmail');
-    let saved = 0, errors = 0;
+    let saved = 0, parsed = 0, errors = 0, emailsFound = 0;
 
     for (const query of searchAttempts) {
       try {
-        console.log(JSON.stringify({ event: 'NPS_GMAIL_SEARCH', query }));
+        console.log(JSON.stringify({ event: 'NPS_SEARCH', query }));
+
+        // Pass NPS passwords via npsPasswords field on userProfile
+        // gmail.js will prepend them to the password list for PDF extraction
+        const profileWithNPS = {
+          ...(userProfile || {}),
+          npsPasswords,
+        };
+
         const emails = await fetchEmails(
-          conn.access_token, conn.refresh_token,
-          query, userProfile || {},
-          { maxResults: 60 }
+          conn.access_token,
+          conn.refresh_token,
+          query,
+          profileWithNPS,
+          { maxResults: 60 }   // BUG-1 FIX: now actually used
         );
 
+        emailsFound += emails.length;
         console.log(JSON.stringify({ event: 'NPS_EMAILS_FOUND', count: emails.length, query }));
+
         if (emails.length === 0) continue;
 
         for (const email of emails) {
           try {
-            // Try each PDF attachment
-            const attachments = email.attachments || [];
-            // Also try inline PDF if exists
-            if (email.pdfBuffer) attachments.push({ buffer: email.pdfBuffer, name: 'nps.pdf' });
+            // BUG-2 FIX: email.body already contains extracted PDF text
+            // gmail.js extracts PDF → text and puts it all in email.body
+            const textToParse = email.body || '';
 
-            for (const att of attachments) {
-              const buf = att.buffer || att.data;
-              if (!buf) continue;
-
-              const parsed = await parseNPSPDF(Buffer.from(buf), passwords);
-              if (!parsed || !parsed.total_value) continue;
-              if (!parsed.statement_to) {
-                // Use email date as fallback
-                const d = new Date(email.date);
-                parsed.statement_to = new Date(d.getFullYear(), d.getMonth() + 1, 0)
-                  .toISOString().split('T')[0]; // last day of email's month
-              }
-
-              const { error } = await supabase.from('nps_holdings').upsert({
-                user_id:             userId,
-                pran:                parsed.pran,
-                subscriber_name:     parsed.subscriber_name,
-                registration_date:   parsed.registration_date,
-                statement_from:      parsed.statement_from,
-                statement_to:        parsed.statement_to,
-                cbo_name:            parsed.cbo_name,
-                tier:                parsed.tier || 'I',
-                total_value:         parsed.total_value,
-                total_contributions: parsed.total_contributions,
-                total_withdrawals:   parsed.total_withdrawals || 0,
-                notional_gain:       parsed.notional_gain,
-                xirr:                parsed.xirr,
-                num_contributions:   parsed.num_contributions,
-                scheme_e_value:      parsed.scheme_e_value,
-                scheme_e_units:      parsed.scheme_e_units,
-                scheme_e_nav:        parsed.scheme_e_nav,
-                scheme_e_pct:        parsed.scheme_e_pct,
-                scheme_c_value:      parsed.scheme_c_value,
-                scheme_c_units:      parsed.scheme_c_units,
-                scheme_c_nav:        parsed.scheme_c_nav,
-                scheme_c_pct:        parsed.scheme_c_pct,
-                scheme_g_value:      parsed.scheme_g_value,
-                scheme_g_units:      parsed.scheme_g_units,
-                scheme_g_nav:        parsed.scheme_g_nav,
-                scheme_g_pct:        parsed.scheme_g_pct,
-                source:              'email',
-                raw_text_snippet:    parsed.raw_text_snippet,
-                updated_at:          new Date().toISOString(),
-              }, { onConflict: 'user_id,statement_to' });
-
-              if (error) {
-                console.error(JSON.stringify({ event: 'NPS_SAVE_ERROR', error: error.message }));
-                errors++;
-              } else {
-                saved++;
-                console.log(JSON.stringify({ event: 'NPS_SAVED', date: parsed.statement_to, value: parsed.total_value }));
-              }
-              break; // one PDF per email is enough
+            if (!textToParse || textToParse.length < 100) {
+              console.log(JSON.stringify({ event: 'NPS_SKIP_EMPTY', subject: email.subject }));
+              continue;
             }
-          } catch(e) {
-            console.error(JSON.stringify({ event: 'NPS_EMAIL_ERROR', error: e.message }));
+
+            // Check if this looks like an NPS statement
+            const isNPS = /NPS|National Pension|PRAN|Protean|Pension Fund/i.test(textToParse);
+            if (!isNPS) {
+              console.log(JSON.stringify({ event: 'NPS_SKIP_NOT_NPS', subject: email.subject, bodyStart: textToParse.slice(0, 100) }));
+              continue;
+            }
+
+            console.log(JSON.stringify({
+              event: 'NPS_PARSING',
+              subject: email.subject,
+              hasPdf: email.hasPdf,
+              pdfFailed: email.pdfFailed,
+              bodyLength: textToParse.length,
+              bodyStart: textToParse.slice(0, 200),
+            }));
+
+            // BUG-4 FIX: Use parseNPSText() on already-extracted text, not parseNPSPDF()
+            const parsed_data = parseNPSText(textToParse);
+
+            if (!parsed_data || !parsed_data.total_value) {
+              console.log(JSON.stringify({
+                event: 'NPS_PARSE_FAILED',
+                subject: email.subject,
+                reason: 'parseNPSText returned null or no total_value',
+                textSnippet: textToParse.slice(0, 300),
+              }));
+              errors++;
+              continue;
+            }
+
+            // Use email date as fallback for statement_to
+            if (!parsed_data.statement_to) {
+              try {
+                const d = new Date(email.date);
+                // Use last day of that month
+                parsed_data.statement_to = new Date(d.getFullYear(), d.getMonth() + 1, 0)
+                  .toISOString().split('T')[0];
+              } catch(e) {
+                parsed_data.statement_to = new Date().toISOString().split('T')[0];
+              }
+            }
+
+            console.log(JSON.stringify({
+              event: 'NPS_PARSED_OK',
+              date: parsed_data.statement_to,
+              totalValue: parsed_data.total_value,
+              schemeE: parsed_data.scheme_e_value,
+              xirr: parsed_data.xirr,
+              pran: parsed_data.pran,
+            }));
+
+            const { error: dbErr } = await supabase.from('nps_holdings').upsert({
+              user_id:             userId,
+              pran:                parsed_data.pran,
+              subscriber_name:     parsed_data.subscriber_name,
+              registration_date:   parsed_data.registration_date,
+              statement_from:      parsed_data.statement_from,
+              statement_to:        parsed_data.statement_to,
+              cbo_name:            parsed_data.cbo_name,
+              tier:                parsed_data.tier || 'I',
+              total_value:         parsed_data.total_value,
+              total_contributions: parsed_data.total_contributions,
+              total_withdrawals:   parsed_data.total_withdrawals || 0,
+              notional_gain:       parsed_data.notional_gain,
+              xirr:                parsed_data.xirr,
+              num_contributions:   parsed_data.num_contributions,
+              scheme_e_value:      parsed_data.scheme_e_value,
+              scheme_e_units:      parsed_data.scheme_e_units,
+              scheme_e_nav:        parsed_data.scheme_e_nav,
+              scheme_e_pct:        parsed_data.scheme_e_pct,
+              scheme_c_value:      parsed_data.scheme_c_value,
+              scheme_c_units:      parsed_data.scheme_c_units,
+              scheme_c_nav:        parsed_data.scheme_c_nav,
+              scheme_c_pct:        parsed_data.scheme_c_pct,
+              scheme_g_value:      parsed_data.scheme_g_value,
+              scheme_g_units:      parsed_data.scheme_g_units,
+              scheme_g_nav:        parsed_data.scheme_g_nav,
+              scheme_g_pct:        parsed_data.scheme_g_pct,
+              source:              email.pdfFailed ? 'email_text' : 'email',
+              raw_text_snippet:    textToParse.slice(0, 500),
+              updated_at:          new Date().toISOString(),
+            }, { onConflict: 'user_id,statement_to' });
+
+            if (dbErr) {
+              console.error(JSON.stringify({ event: 'NPS_DB_ERROR', error: dbErr.message }));
+              errors++;
+            } else {
+              saved++;
+              console.log(JSON.stringify({ event: 'NPS_SAVED', date: parsed_data.statement_to, value: parsed_data.total_value }));
+            }
+            parsed++;
+          } catch (e) {
+            console.error(JSON.stringify({ event: 'NPS_EMAIL_ERROR', error: e.message, stack: e.stack?.slice(0, 200) }));
             errors++;
           }
         }
 
-        if (saved > 0) break; // found results, stop trying other queries
-      } catch(e) {
-        console.error(JSON.stringify({ event: 'NPS_SEARCH_ERROR', error: e.message }));
+        if (saved > 0) {
+          console.log(JSON.stringify({ event: 'NPS_SYNC_DONE_EARLY', reason: 'found results', saved }));
+          break;
+        }
+      } catch (e) {
+        console.error(JSON.stringify({ event: 'NPS_SEARCH_ERROR', query, error: e.message }));
       }
     }
 
-    console.log(JSON.stringify({ event: 'NPS_SYNC_DONE', saved, errors }));
+    console.log(JSON.stringify({ event: 'NPS_SYNC_COMPLETE', emailsFound, parsed, saved, errors }));
   })();
 });
 
-// ── POST /manual — add NPS data manually ─────────────────────────
+// ── POST /manual ──────────────────────────────────────────────────
 router.post('/manual', requireAuth, async (req, res) => {
   const b = req.body;
   if (!b.statement_to || !b.total_value) {
     return res.status(400).json({ error: 'statement_to and total_value are required' });
   }
-
   const { data, error } = await supabase.from('nps_holdings').upsert({
     user_id:             req.user.id,
     pran:                b.pran || null,
     statement_to:        b.statement_to,
     statement_from:      b.statement_from || null,
-    total_value:         b.total_value,
-    total_contributions: b.total_contributions || null,
-    notional_gain:       b.notional_gain || null,
-    xirr:                b.xirr || null,
-    scheme_e_value:      b.scheme_e_value || null,
-    scheme_e_pct:        b.scheme_e_pct || 75,
-    scheme_c_value:      b.scheme_c_value || null,
-    scheme_c_pct:        b.scheme_c_pct || 15,
-    scheme_g_value:      b.scheme_g_value || null,
-    scheme_g_pct:        b.scheme_g_pct || 10,
+    total_value:         parseFloat(b.total_value),
+    total_contributions: b.total_contributions ? parseFloat(b.total_contributions) : null,
+    notional_gain:       b.notional_gain ? parseFloat(b.notional_gain) : null,
+    xirr:                b.xirr ? parseFloat(b.xirr) : null,
+    scheme_e_value:      b.scheme_e_value ? parseFloat(b.scheme_e_value) : null,
+    scheme_e_pct:        parseFloat(b.scheme_e_pct || 75),
+    scheme_c_value:      b.scheme_c_value ? parseFloat(b.scheme_c_value) : null,
+    scheme_c_pct:        parseFloat(b.scheme_c_pct || 15),
+    scheme_g_value:      b.scheme_g_value ? parseFloat(b.scheme_g_value) : null,
+    scheme_g_pct:        parseFloat(b.scheme_g_pct || 10),
     goal_id:             b.goal_id || null,
-    goal_earmark_pct:    b.goal_earmark_pct || 100,
+    goal_earmark_pct:    parseFloat(b.goal_earmark_pct || 100),
     source:              'manual',
     updated_at:          new Date().toISOString(),
   }, { onConflict: 'user_id,statement_to' }).select().single();
@@ -210,19 +269,17 @@ router.post('/manual', requireAuth, async (req, res) => {
   res.status(201).json({ nps: data });
 });
 
-// ── PUT /:id — update (goal link etc) ────────────────────────────
+// ── PUT /:id ──────────────────────────────────────────────────────
 router.put('/:id', requireAuth, async (req, res) => {
   const allowed = ['goal_id','goal_earmark_pct','pran','total_value',
     'scheme_e_value','scheme_c_value','scheme_g_value',
     'total_contributions','notional_gain','xirr'];
   const update = Object.fromEntries(Object.entries(req.body).filter(([k]) => allowed.includes(k)));
   update.updated_at = new Date().toISOString();
-
   const { data, error } = await supabase
     .from('nps_holdings').update(update)
     .eq('id', req.params.id).eq('user_id', req.user.id)
     .select().single();
-
   if (error) return res.status(500).json({ error: error.message });
   res.json({ nps: data });
 });
