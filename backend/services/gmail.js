@@ -216,7 +216,7 @@ async function extractEmailContent(gmail, messageId, payload, pdfPasswords = [],
   return { body: combinedText, hasPdf: pdfCount > 0, pdfFailed };
 }
 
-async function fetchEmails(accessToken, refreshToken, query = '', userProfile = {}) {
+async function fetchEmails(accessToken, refreshToken, query = '', userProfile = {}, options = {}) {
   const oauth2Client = getOAuthClient();
   oauth2Client.setCredentials({
     access_token: accessToken,
@@ -226,7 +226,13 @@ async function fetchEmails(accessToken, refreshToken, query = '', userProfile = 
   const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
   // Generate PDF passwords from user's PAN + DOB
+  // CAS passwords (NSDL/CDSL format)
   const pdfPasswords = generatePdfPasswords(userProfile.pan, userProfile.dob);
+  
+  // NPS passwords (first4name + DDMM) - prepend so they're tried first for NPS PDFs
+  if (userProfile.npsPasswords && Array.isArray(userProfile.npsPasswords)) {
+    pdfPasswords.unshift(...userProfile.npsPasswords);
+  }
   if (pdfPasswords.length > 0) {
     console.log(JSON.stringify({ event: 'PDF_PASSWORDS_READY', count: pdfPasswords.length, panSet: !!userProfile.pan, dobSet: !!userProfile.dob }));
   } else {
@@ -240,7 +246,7 @@ async function fetchEmails(accessToken, refreshToken, query = '', userProfile = 
   const listRes = await gmail.users.messages.list({
     userId: 'me',
     q: searchQuery,
-    maxResults: 5  // CAS: only need latest 1-2 per depository; 5 is safe ceiling
+    maxResults: options.maxResults || 5
   });
 
   const messages = listRes.data.messages || [];
@@ -248,7 +254,7 @@ async function fetchEmails(accessToken, refreshToken, query = '', userProfile = 
 
   console.log(JSON.stringify({ event: 'GMAIL_MESSAGES_FOUND', count: messages.length }));
 
-  for (const msg of messages.slice(0, 5)) {
+  for (const msg of messages.slice(0, options.maxResults || 5)) {
     try {
       // Fetch full message with hard 15s per-email timeout (prevents Railway timeout)
       const detail = await Promise.race([
