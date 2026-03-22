@@ -1,266 +1,153 @@
-/**
- * Kanalyst — NPS Statement Parser
- * Extracts holdings data from Protean NPS Transaction Statement PDFs
- * Password: first4(firstName).toLowerCase() + first4(DOB digits e.g. DDMM)
- */
-
 'use strict';
 
-/**
- * Generate NPS PDF passwords from PAN + DOB
- * NPS password = first4(firstName) + first4(DOB digits)
- * DOB format stored as DD/MM/YYYY → extract DDMM
- */
 function generateNPSPasswords(name, dob) {
-  const passwords = [];
-  if (!name || !dob) return passwords;
+  if (!name || !dob) return [];
+  var passwords = [];
+  var firstName = name.trim().split(/\s+/)[0].toLowerCase().replace(/[^a-z]/g, '');
+  var first4 = firstName.slice(0, 4);
+  if (!first4) return [];
 
-  // Extract first name (first word before space)
-  const firstName = name.trim().split(/\s+/)[0].toLowerCase().replace(/[^a-z]/g, '');
-  const first4Name = firstName.slice(0, 4).padEnd(4, firstName[firstName.length - 1] || 'x');
+  var ddmm = '';
+  var digits = dob.replace(/\D/g, '');
 
-  // Extract digits from DOB — handle DD/MM/YYYY, DD-MM-YYYY, YYYY-MM-DD
-  const dobDigits = dob.replace(/\D/g, '');
-  let ddmm = '';
-  if (dob.includes('-') && dobDigits.length === 8) {
-    // YYYY-MM-DD → take last 4 as MMDD, but NPS uses DDMM
-    const parts = dob.split('-');
+  if (dob.indexOf('-') >= 0) {
+    var parts = dob.split('-');
     if (parts[0].length === 4) {
-      // YYYY-MM-DD
-      ddmm = parts[2] + parts[1]; // DDMM
+      ddmm = (parts[2] || '').padStart(2,'0') + (parts[1] || '').padStart(2,'0');
     } else {
-      // DD-MM-YYYY
-      ddmm = parts[0] + parts[1]; // DDMM
+      ddmm = (parts[0] || '').padStart(2,'0') + (parts[1] || '').padStart(2,'0');
     }
-  } else if (dob.includes('/')) {
-    const parts = dob.split('/');
-    ddmm = parts[0].padStart(2,'0') + parts[1].padStart(2,'0');
-  } else if (dobDigits.length >= 8) {
-    ddmm = dobDigits.slice(0, 4); // take first 4 digits
+  } else if (dob.indexOf('/') >= 0) {
+    var parts2 = dob.split('/');
+    if (parts2[0].length === 4) {
+      ddmm = (parts2[2] || '').padStart(2,'0') + (parts2[1] || '').padStart(2,'0');
+    } else {
+      ddmm = (parts2[0] || '').padStart(2,'0') + (parts2[1] || '').padStart(2,'0');
+    }
+  } else if (digits.length >= 8) {
+    ddmm = digits.slice(0, 4);
   }
 
-  const first4DOB = ddmm.slice(0, 4);
-
-  // Primary password
-  if (first4Name && first4DOB) {
-    passwords.push(first4Name + first4DOB);
-    passwords.push(first4Name.toUpperCase() + first4DOB);
-    // Also try YYYY (year) variant
-    const year = dobDigits.length >= 8 ? dobDigits.slice(-4) : '';
-    if (year) {
-      passwords.push(first4Name + year.slice(0, 4));
-    }
+  if (ddmm.length >= 4) {
+    passwords.push(first4 + ddmm.slice(0, 4));
+    passwords.push(first4.toUpperCase() + ddmm.slice(0, 4));
+    var mmdd = ddmm.slice(2, 4) + ddmm.slice(0, 2);
+    if (mmdd !== ddmm.slice(0,4)) passwords.push(first4 + mmdd);
   }
+  var year = digits.length >= 8 ? digits.slice(digits.length - 4) : '';
+  if (year) passwords.push(first4 + year);
 
   return [...new Set(passwords)];
 }
 
-/**
- * Clean OCR number: remove commas/spaces, handle Indian formatting
- * "4,39,215.01" → 439215.01
- * "49021501" (OCR glitch) → need smart parsing
- */
-function parseINRNumber(raw) {
-  if (!raw) return null;
-  // Remove currency symbols, commas, spaces
-  const clean = String(raw).replace(/[₹Rs,\s]/g, '').trim();
-  const num = parseFloat(clean);
-  return isNaN(num) ? null : num;
-}
-
-/**
- * Parse NPS text into structured data
- * Handles OCR noise from image-based PDFs
- */
 function parseNPSText(text) {
   if (!text || text.length < 50) return null;
+  if (!/NPS|National Pension|PRAN|Protean/i.test(text)) return null;
 
-  const result = {
-    pran:              null,
-    subscriber_name:   null,
-    registration_date: null,
-    statement_from:    null,
-    statement_to:      null,
-    cbo_name:          null,
-    tier:              'I',
-
-    total_value:       null,
-    total_contributions: null,
-    total_withdrawals: 0,
-    notional_gain:     null,
-    xirr:              null,
-    num_contributions: null,
-
-    scheme_e_value:    null,  scheme_e_units: null,  scheme_e_nav: null,  scheme_e_pct: 75,
-    scheme_c_value:    null,  scheme_c_units: null,  scheme_c_nav: null,  scheme_c_pct: 15,
-    scheme_g_value:    null,  scheme_g_units: null,  scheme_g_nav: null,  scheme_g_pct: 10,
+  var result = {
+    pran: null, subscriber_name: null, registration_date: null,
+    statement_from: null, statement_to: null, cbo_name: null, tier: 'I',
+    total_value: null, total_contributions: null, total_withdrawals: 0,
+    notional_gain: null, xirr: null, num_contributions: null,
+    scheme_e_value: null, scheme_e_units: null, scheme_e_nav: null, scheme_e_pct: 75,
+    scheme_c_value: null, scheme_c_units: null, scheme_c_nav: null, scheme_c_pct: 15,
+    scheme_g_value: null, scheme_g_units: null, scheme_g_nav: null, scheme_g_pct: 10,
   };
 
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  function parseNum(s) {
+    return s ? parseFloat(String(s).replace(/,/g, '')) : null;
+  }
 
-  // ── PRAN ────────────────────────────────────────────────────────
-  const pranMatch = text.match(/PRAN[\s:]+(\d{12})/i);
-  if (pranMatch) result.pran = pranMatch[1];
+  // End-of-line number: find label, then number at end of that line
+  function endOfLine(label) {
+    var re = new RegExp(label + '[^\\n]*\\s+([\\d][\\d,]*\\.?\\d*)\\s*$', 'im');
+    var m = text.match(re);
+    return m ? parseNum(m[1]) : null;
+  }
 
-  // ── Subscriber Name ─────────────────────────────────────────────
-  const nameMatch = text.match(/Subscriber\s+Nam[eo][\s:]+([A-Z][A-Z\s]{3,40})/i);
-  if (nameMatch) result.subscriber_name = nameMatch[1].trim();
+  // PRAN
+  var pranM = text.match(/PRAN\s+(\d{12})/i);
+  if (pranM) result.pran = pranM[1];
 
-  // ── Registration Date ────────────────────────────────────────────
-  const regMatch = text.match(/Registration\s+Date[\s:]+(\d{1,2}[-\/]\w+[-\/]\d{2,4}|\d{2}[A-Za-z]{3}[-]\d{2,4})/i);
-  if (regMatch) {
+  // Subscriber name
+  var nameM = text.match(/Subscriber\s+Nam[eo]\s+([A-Z][A-Z ]{3,35})(?:\s{2,}|\t|Tier)/i);
+  if (nameM) result.subscriber_name = nameM[1].trim();
+
+  // Statement dates: "Feb 01, 2026 To Feb 28, 2026"
+  var periodM = text.match(/(\w{3})\s+(\d{1,2}),?\s*(\d{4})\s+[Tt]o\s+(\w{3})\s+(\d{1,2}),?\s*(\d{4})/);
+  if (periodM) {
     try {
-      result.registration_date = new Date(regMatch[1]).toISOString().split('T')[0];
+      result.statement_from = new Date(periodM[1]+' '+periodM[2]+' '+periodM[3]).toISOString().split('T')[0];
+      result.statement_to   = new Date(periodM[4]+' '+periodM[5]+' '+periodM[6]).toISOString().split('T')[0];
     } catch(e) {}
   }
 
-  // ── Statement Period ─────────────────────────────────────────────
-  const periodMatch = text.match(/(\w+\s+\d{1,2},?\s*\d{4})\s+[Tt]o\s+(\w+\s+\d{1,2},?\s*\d{4})/);
-  if (periodMatch) {
-    try {
-      result.statement_from = new Date(periodMatch[1]).toISOString().split('T')[0];
-      result.statement_to   = new Date(periodMatch[2]).toISOString().split('T')[0];
-    } catch(e) {}
-  }
-  // Fallback: "Feb 01, 2026 To Feb 28, 2026"
-  if (!result.statement_to) {
-    const alt = text.match(/(\w{3})\s+(\d{1,2}),?\s*(\d{4})\s+[Tt]o\s+(\w{3})\s+(\d{1,2}),?\s*(\d{4})/);
-    if (alt) {
-      try {
-        result.statement_from = new Date(`${alt[1]} ${alt[2]} ${alt[3]}`).toISOString().split('T')[0];
-        result.statement_to   = new Date(`${alt[4]} ${alt[5]} ${alt[6]}`).toISOString().split('T')[0];
-      } catch(e) {}
-    }
-  }
+  // CBO name
+  var cboM = text.match(/CBO\s+Name\s+([A-Za-z][A-Za-z\s.,\-]{5,60}?)(?:\n|CBO Address|CHO)/i);
+  if (cboM) result.cbo_name = cboM[1].trim();
 
-  // ── CBO Name (employer) ──────────────────────────────────────────
-  const cboMatch = text.match(/CBO\s+Name[\s:]+([A-Za-z][A-Za-z\s\.,\-]{5,60})/i);
-  if (cboMatch) result.cbo_name = cboMatch[1].trim();
+  // Investment summary — end-of-line matching handles dates in lines
+  result.total_value         = endOfLine('Value of your Holdings');
+  result.total_contributions = endOfLine('Total Contribution');
+  result.total_withdrawals   = endOfLine('Total Withdrawal') || 0;
+  result.notional_gain       = endOfLine('Notional Gain');
 
-  // ── Investment Summary ───────────────────────────────────────────
-  // "Value of your Holdings ... Feb 28, 2026 ... 4,39,215.01" 
-  // Pattern: look for the summary table row
-  const holdingsMatch = text.match(/Value of your Holdings[^0-9]*([0-9][0-9,]+\.?\d{0,2})/i);
-  if (holdingsMatch) result.total_value = parseINRNumber(holdingsMatch[1]);
-
-  // Total Contributions
-  const contribMatch = text.match(/Total\s+Contribution[^0-9]*([0-9][0-9,]+\.?\d{0,2})/i);
-  if (contribMatch) result.total_contributions = parseINRNumber(contribMatch[1]);
-
-  // No of Contributions
-  const numContribMatch = text.match(/No\s+of\s+Contributions[\s:]*(\d+)/i);
-  if (numContribMatch) result.num_contributions = parseInt(numContribMatch[1]);
-
-  // Total Withdrawal
-  const withMatch = text.match(/Total\s+Withdrawal[^0-9]*([0-9][0-9,]+\.?\d{0,2})/i);
-  if (withMatch) result.total_withdrawals = parseINRNumber(withMatch[1]) || 0;
-
-  // Notional Gain/Loss — look for D=(A-B)+C pattern or the value after "Gain/Loss"
-  const gainMatch = text.match(/Notional\s+Gain[\/\s]+Loss[^0-9\-]*(-?[0-9][0-9,]+\.?\d{0,2})/i);
-  if (gainMatch) result.notional_gain = parseINRNumber(gainMatch[1]);
+  // No of contributions
+  var ncM = text.match(/No\s+of\s+Contributions\s+(\d+)/i);
+  if (ncM) result.num_contributions = parseInt(ncM[1]);
 
   // XIRR
-  const xirrMatch = text.match(/XIRR[\s:)]+([0-9]+\.?\d{0,2})\s*%/i)
-                 || text.match(/([0-9]+\.\d{2})\s*%/);
-  if (xirrMatch) result.xirr = parseFloat(xirrMatch[1]);
+  var xirrM = text.match(/\(?XIRR\)?\s+(\d+\.?\d*)\s*%/i)
+           || text.match(/Return on Investment[^%]*?(\d+\.\d+)\s*%/i);
+  if (xirrM) result.xirr = parseFloat(xirrM[1]);
 
-  // ── Scheme-wise ──────────────────────────────────────────────────
-  // NPS has Scheme E (Equity), C (Corporate), G (Govt)
-  // Pattern: "SCHEME E" or "SCHEME C" or "SCHEME G" followed by value, units, NAV
+  // Schemes: find section, extract first 6-digit.2dec value, then units and NAV
+  function extractScheme(letter) {
+    // Pattern: "SCHEME E" or "SCHEME E -" until next "SCHEME X" or end
+    var schPat = 'SCHEME\\s+' + letter + '(?:\\s*[-\u2013])?[\\s\\S]*?(?=SCHEME\\s+[A-Z](?:\\s*[-\u2013])|$)';
+    var schRe  = new RegExp(schPat, 'i');
+    var schM   = text.match(schRe);
+    var chunk  = schM ? schM[0] : '';
+    if (!chunk) return null;
 
-  // Helper: extract scheme data
-  function extractScheme(schemeLabel) {
-    // Match scheme section and grab value, units, nav
-    const pattern = new RegExp(
-      `SCHEME\\s*${schemeLabel}[^]*?([0-9][0-9,]+\\.\\d{2})[^]*?([0-9,]+\\.\\d{4})[^]*?([0-9]+\\.\\d{4})`,
-      'i'
-    );
-    const m = text.match(pattern);
-    if (m) {
-      return {
-        value: parseINRNumber(m[1]),
-        units: parseFloat(m[2].replace(/,/g, '')),
-        nav:   parseFloat(m[3].replace(/,/g, '')),
-      };
-    }
-    return null;
+    // Find all numbers with exactly 2 decimal places (values like 327121.64)
+    var valMatch = chunk.match(/(\d{4,}(?:,\d{3})*\.\d{2})(?!\d)/);
+    // Units: number with 4 decimal places after "Total Units"
+    var unitsM  = chunk.match(/Total\s+Units[^\n]*?([\d,]+\.\d{4})/i);
+    // NAV: number with 4 decimal places after "NAV"
+    var navM    = chunk.match(/NAV[^\n]*?([\d,]+\.\d{4})/i);
+
+    if (!valMatch) return null;
+    return {
+      value: parseNum(valMatch[1]),
+      units: unitsM ? parseNum(unitsM[1]) : null,
+      nav:   navM   ? parseNum(navM[1])   : null,
+    };
   }
 
-  const schemeE = extractScheme('E');
-  if (schemeE) {
-    result.scheme_e_value = schemeE.value;
-    result.scheme_e_units = schemeE.units;
-    result.scheme_e_nav   = schemeE.nav;
+  var schE = extractScheme('E');
+  if (schE) { result.scheme_e_value = schE.value; result.scheme_e_units = schE.units; result.scheme_e_nav = schE.nav; }
+
+  var schC = extractScheme('C');
+  if (schC) { result.scheme_c_value = schC.value; result.scheme_c_units = schC.units; result.scheme_c_nav = schC.nav; }
+
+  var schG = extractScheme('G');
+  if (schG) { result.scheme_g_value = schG.value; result.scheme_g_units = schG.units; result.scheme_g_nav = schG.nav; }
+
+  // Fallback total from schemes
+  if (!result.total_value && (result.scheme_e_value || result.scheme_c_value || result.scheme_g_value)) {
+    result.total_value = (result.scheme_e_value||0) + (result.scheme_c_value||0) + (result.scheme_g_value||0);
   }
 
-  const schemeC = extractScheme('C');
-  if (schemeC) {
-    result.scheme_c_value = schemeC.value;
-    result.scheme_c_units = schemeC.units;
-    result.scheme_c_nav   = schemeC.nav;
-  }
-
-  const schemeG = extractScheme('G');
-  if (schemeG) {
-    result.scheme_g_value = schemeG.value;
-    result.scheme_g_units = schemeG.units;
-    result.scheme_g_nav   = schemeG.nav;
-  }
-
-  // Compute total_value from schemes if top-level not found
-  if (!result.total_value && result.scheme_e_value !== null) {
-    result.total_value = (result.scheme_e_value || 0)
-                       + (result.scheme_c_value || 0)
-                       + (result.scheme_g_value || 0);
-  }
-
-  // Compute allocation %
+  // Allocation percentages
   if (result.total_value > 0) {
-    result.scheme_e_pct = result.scheme_e_value ? parseFloat(((result.scheme_e_value / result.total_value) * 100).toFixed(2)) : 0;
-    result.scheme_c_pct = result.scheme_c_value ? parseFloat(((result.scheme_c_value / result.total_value) * 100).toFixed(2)) : 0;
-    result.scheme_g_pct = result.scheme_g_value ? parseFloat(((result.scheme_g_value / result.total_value) * 100).toFixed(2)) : 0;
+    result.scheme_e_pct = result.scheme_e_value ? parseFloat(((result.scheme_e_value/result.total_value)*100).toFixed(2)) : 0;
+    result.scheme_c_pct = result.scheme_c_value ? parseFloat(((result.scheme_c_value/result.total_value)*100).toFixed(2)) : 0;
+    result.scheme_g_pct = result.scheme_g_value ? parseFloat(((result.scheme_g_value/result.total_value)*100).toFixed(2)) : 0;
   }
 
-  // Quality check
-  if (!result.total_value && !result.scheme_e_value) return null;
-
+  if (!result.total_value) return null;
   return result;
 }
 
-/**
- * Unlock and parse NPS PDF buffer
- */
-async function parseNPSPDF(pdfBuffer, passwords = []) {
-  const pdfjs = require('pdfjs-dist/legacy/build/pdf.js');
-
-  for (const password of passwords) {
-    try {
-      const loadingTask = pdfjs.getDocument({
-        data:     new Uint8Array(pdfBuffer),
-        password: password,
-      });
-      const pdf  = await loadingTask.promise;
-      let fullText = '';
-
-      for (let p = 1; p <= pdf.numPages; p++) {
-        const page    = await pdf.getPage(p);
-        const content = await page.getTextContent();
-        const pageText = content.items.map(i => i.str).join(' ');
-        fullText += pageText + '\n';
-      }
-
-      if (fullText.trim().length > 100) {
-        const parsed = parseNPSText(fullText);
-        if (parsed) return { ...parsed, raw_text_snippet: fullText.slice(0, 500) };
-      }
-    } catch (e) {
-      if (!e.message?.includes('password')) {
-        console.error('NPS PDF parse error:', e.message);
-      }
-    }
-  }
-
-  return null;
-}
-
-module.exports = { parseNPSText, parseNPSPDF, generateNPSPasswords };
+module.exports = { parseNPSText, generateNPSPasswords };
