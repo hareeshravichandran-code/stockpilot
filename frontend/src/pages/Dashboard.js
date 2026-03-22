@@ -745,6 +745,7 @@ export default function Dashboard() {
     if (t === 'expenses') { await loadExpenses(); return; }
     if (t === 'goals')    { await loadGoals();    return; }
     if (t === 'bankdeposits') { await Promise.all([loadFDs(), loadRDs(), loadNPS()]); return; }
+    if (t === 'nps') { await loadNPS(); return; }
     if (t === 'holdings' || t === 'mutualfunds') { if (goals.length === 0) loadGoals(); if (t === 'holdings' && historyData.length === 0) loadHistory(historyYears); }
     if (t === 'dividends') { return; // Dividends component loads its own data
       const r = await portfolioAPI.dividends().catch(() => ({ data: { dividends: [], totalIncome: 0 } }));
@@ -1084,6 +1085,7 @@ export default function Dashboard() {
           <div className={`db-nav-item ${tab==='dividends'?'active':''}`} onClick={()=>loadTab('dividends')}><span>◎</span> Dividends</div>
           <div className={`db-nav-item ${tab==='transactions'?'active':''}`} onClick={()=>loadTab('transactions')}><span>⇄</span> Transactions</div>
           <div className={`db-nav-item ${tab==='bankdeposits'?'active':''}`} onClick={()=>loadTab('bankdeposits')}><span>🏦</span> Bank Deposits</div>
+          <div className={`db-nav-item ${tab==='nps'?'active':''}`} onClick={()=>loadTab('nps')}><span>🏛</span> NPS</div>
 
           <div className="db-nav-label" style={{marginTop:12}}>Finance</div>
           <div className={`db-nav-item ${tab==='income'?'active':''}`} onClick={()=>loadTab('income')}><span>₹</span> Income</div>
@@ -2951,139 +2953,6 @@ export default function Dashboard() {
                   )}
                 </div>
 
-                {/* ── NPS Section ── */}
-                <div className="db-card" style={{marginBottom:20}}>
-                  <div className="db-card-header">
-                    <div>
-                      <div className="db-card-title">🏛 National Pension System (NPS)</div>
-                      {npsData.latest && <div className="db-card-sub">PRAN: {npsData.latest.pran || '—'} · {npsData.count} statement{npsData.count!==1?'s':''} loaded</div>}
-                    </div>
-                    <div style={{display:'flex',gap:8}}>
-                      <button onClick={()=>{setNpsForm({statement_to:'',total_value:'',total_contributions:'',notional_gain:'',xirr:'',scheme_e_value:'',scheme_e_pct:'75',scheme_c_value:'',scheme_c_pct:'15',scheme_g_value:'',scheme_g_pct:'10',goal_id:'',goal_earmark_pct:'100'});setShowNpsForm(true);}}
-                        style={{background:'rgba(179,157,219,0.1)',border:'1px solid rgba(179,157,219,0.3)',color:'#b39ddb',borderRadius:8,padding:'6px 12px',cursor:'pointer',fontSize:12,fontWeight:700}}>
-                        + Manual Entry
-                      </button>
-                      <button onClick={syncNPS} disabled={npsSyncing}
-                        style={{background:'#6366f1',border:'none',color:'#fff',borderRadius:8,padding:'6px 14px',cursor:'pointer',fontSize:12,fontWeight:700}}>
-                        {npsSyncing?'⟳ Scanning…':'⟳ Sync from Gmail'}
-                      </button>
-                    </div>
-                  </div>
-
-                  {npsSyncResult && (
-                    <div style={{margin:'0 0 12px',padding:'8px 14px',borderRadius:8,fontSize:12,
-                      background:npsSyncResult.success?'rgba(99,102,241,0.06)':'rgba(244,63,94,0.06)',
-                      border:`1px solid ${npsSyncResult.success?'rgba(99,102,241,0.2)':'rgba(244,63,94,0.2)'}`,
-                      color:npsSyncResult.success?'#818cf8':'#f43f5e'}}>
-                      {npsSyncResult.success?'✅':'⚠'} {npsSyncResult.message}
-                    </div>
-                  )}
-
-                  {npsData.latest ? (
-                    <div>
-                      {/* Latest summary tiles */}
-                      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:16}}>
-                        {[
-                          {label:'Total Corpus',    val:fmt2(npsData.latest.total_value||0),          color:'#b39ddb', icon:'🏛'},
-                          {label:'Total Invested',  val:fmt2(npsData.latest.total_contributions||0),  color:'#94a3b8', icon:''},
-                          {label:'Notional Gain',   val:fmt2(npsData.latest.notional_gain||0),        color:parseFloat(npsData.latest.notional_gain||0)>=0?'#00d4a1':'#f43f5e', icon:''},
-                          {label:'XIRR',            val:npsData.latest.xirr?npsData.latest.xirr+'%':'—', color:'#f59e0b', icon:''},
-                        ].map(s=>(
-                          <div key={s.label} style={{background:'rgba(255,255,255,0.03)',border:'1px solid rgba(255,255,255,0.06)',borderRadius:10,padding:'12px 14px'}}>
-                            <div style={{fontSize:10,color:'#475569',fontWeight:700,letterSpacing:0.5,marginBottom:2}}>{s.label}</div>
-                            <div style={{fontSize:18,fontWeight:700,color:s.color}}>{s.icon} {s.val}</div>
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* Scheme allocation bar */}
-                      {(npsData.latest.scheme_e_value||npsData.latest.scheme_c_value||npsData.latest.scheme_g_value) && (
-                        <div style={{marginBottom:16}}>
-                          <div style={{fontSize:11,color:'#64748b',fontWeight:700,letterSpacing:0.5,marginBottom:8}}>SCHEME ALLOCATION</div>
-                          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10}}>
-                            {[
-                              {label:'Scheme E (Equity)',     val:npsData.latest.scheme_e_value, pct:npsData.latest.scheme_e_pct, nav:npsData.latest.scheme_e_nav, units:npsData.latest.scheme_e_units, color:'#00d4a1'},
-                              {label:'Scheme C (Corp Bonds)', val:npsData.latest.scheme_c_value, pct:npsData.latest.scheme_c_pct, nav:npsData.latest.scheme_c_nav, units:npsData.latest.scheme_c_units, color:'#0ea5e9'},
-                              {label:'Scheme G (Govt Sec)',   val:npsData.latest.scheme_g_value, pct:npsData.latest.scheme_g_pct, nav:npsData.latest.scheme_g_nav, units:npsData.latest.scheme_g_units, color:'#f59e0b'},
-                            ].map(s=>(
-                              <div key={s.label} style={{background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:10,padding:'12px 14px'}}>
-                                <div style={{fontSize:10,color:'#475569',marginBottom:6}}>{s.label}</div>
-                                <div style={{fontSize:17,fontWeight:700,color:s.color,marginBottom:4}}>{fmt2(s.val||0)}</div>
-                                <div style={{height:3,background:'#1e3a5f',borderRadius:2,overflow:'hidden',marginBottom:4}}>
-                                  <div style={{height:'100%',width:`${s.pct||0}%`,background:s.color,borderRadius:2}}/>
-                                </div>
-                                <div style={{fontSize:10,color:'#475569'}}>{s.pct||0}% · NAV: ₹{s.nav||'—'} · {Number(s.units||0).toFixed(4)} units</div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Growth chart */}
-                      {npsData.history.length > 1 && (
-                        <div style={{marginBottom:16}}>
-                          <div style={{fontSize:11,color:'#64748b',fontWeight:700,letterSpacing:0.5,marginBottom:8}}>
-                            CORPUS GROWTH · {npsData.count} data points
-                            {npsData.growthPct && <span style={{color:parseFloat(npsData.growthPct)>=0?'#00d4a1':'#f43f5e',marginLeft:8,fontWeight:700}}>{parseFloat(npsData.growthPct)>=0?'+':''}{npsData.growthPct}%</span>}
-                          </div>
-                          <ResponsiveContainer width="100%" height={180}>
-                            <AreaChart data={npsData.history.map(h=>({
-                              month: new Date(h.date+'T00:00:00').toLocaleDateString('en-IN',{month:'short',year:'2-digit'}),
-                              total: parseFloat(h.total_value||0),
-                              equity: parseFloat(h.scheme_e||0),
-                              corp:   parseFloat(h.scheme_c||0),
-                              govt:   parseFloat(h.scheme_g||0),
-                            }))}>
-                              <defs>
-                                <linearGradient id="npsGrad" x1="0" y1="0" x2="0" y2="1">
-                                  <stop offset="5%"  stopColor="#b39ddb" stopOpacity={0.25}/>
-                                  <stop offset="95%" stopColor="#b39ddb" stopOpacity={0}/>
-                                </linearGradient>
-                              </defs>
-                              <XAxis dataKey="month" stroke="#4a5a7a" tick={{fontSize:10,fill:'#64748b'}} interval="preserveStartEnd"/>
-                              <YAxis stroke="#4a5a7a" tick={{fontSize:10,fill:'#64748b'}} tickFormatter={v=>v>=100000?`₹${(v/100000).toFixed(1)}L`:`₹${(v/1000).toFixed(0)}K`} width={60}/>
-                              <Tooltip contentStyle={{background:'#0d1526',border:'1px solid #1e3a5f',borderRadius:8,fontSize:11}} formatter={(v,name)=>[fmt2(v),name==='total'?'Total Corpus':name==='equity'?'Scheme E':name==='corp'?'Scheme C':'Scheme G']}/>
-                              <Area type="monotone" dataKey="total" stroke="#b39ddb" strokeWidth={2.5} fill="url(#npsGrad)" dot={{r:3,fill:'#b39ddb',strokeWidth:0}} activeDot={{r:5}} name="total"/>
-                            </AreaChart>
-                          </ResponsiveContainer>
-                        </div>
-                      )}
-
-                      {/* Goal linkage */}
-                      <div style={{display:'flex',alignItems:'center',gap:12,padding:'10px 14px',background:'#060e1a',borderRadius:8,border:'1px solid #1e3a5f'}}>
-                        <div style={{fontSize:12,color:'#64748b'}}>🎯 Linked goal:</div>
-                        {npsData.latest.goals ? (
-                          <span style={{fontSize:12,padding:'2px 8px',borderRadius:8,background:'rgba(99,102,241,0.15)',color:'#818cf8'}}>
-                            {npsData.latest.goals.name}
-                          </span>
-                        ) : <span style={{fontSize:12,color:'#334155'}}>None</span>}
-                        <select value={npsData.latest.goal_id||''} onChange={async e=>{
-                            await npsAPI.update(npsData.latest.id,{goal_id:e.target.value||null});
-                            await loadNPS();
-                          }}
-                          style={{marginLeft:'auto',background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,padding:'6px 10px',color:'#e2e8f0',fontSize:12,outline:'none',cursor:'pointer'}}>
-                          <option value="">— No goal —</option>
-                          {goals.map(g=><option key={g.id} value={g.id}>{g.name}</option>)}
-                        </select>
-                      </div>
-
-                      {/* Statement date + employer */}
-                      <div style={{marginTop:10,fontSize:11,color:'#334155',display:'flex',gap:16}}>
-                        <span>📅 As of: {new Date(npsData.latest.statement_to+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}</span>
-                        {npsData.latest.cbo_name && <span>🏢 {npsData.latest.cbo_name}</span>}
-                        {npsData.latest.num_contributions && <span>Contributions: {npsData.latest.num_contributions}</span>}
-                      </div>
-                    </div>
-                  ) : (
-                    <div style={{padding:'40px 20px',textAlign:'center',color:'#475569'}}>
-                      <div style={{fontSize:36,marginBottom:8}}>🏛</div>
-                      <div style={{fontSize:13,marginBottom:4}}>No NPS data yet</div>
-                      <div style={{fontSize:11,color:'#334155',marginBottom:16}}>Click <b style={{color:'#6366f1'}}>⟳ Sync from Gmail</b> to load your NPS statements,<br/>or add a manual entry.</div>
-                      <div style={{fontSize:10,color:'#1e3a5f'}}>NPS emails are searched from nps@protean-tinpan.com and similar senders.</div>
-                    </div>
-                  )}
-                </div>
-
                 {/* ── Maturity alerts ── */}
                 {fdList.filter(f=>f.is_active && f.days_to_maturity>=0 && f.days_to_maturity<=30).length > 0 && (
                   <div style={{marginTop:16,padding:'12px 16px',borderRadius:10,background:'rgba(245,158,11,0.06)',border:'1px solid rgba(245,158,11,0.2)'}}>
@@ -3093,6 +2962,225 @@ export default function Dashboard() {
                         <b style={{color:'#e2e8f0'}}>{fd.nickname||fd.institution_name}</b> matures in <b style={{color:'#f59e0b'}}>{fd.days_to_maturity} days</b> — {fmt2(fd.maturity_amount)} · {fd.on_maturity_action.replace('_',' ')}
                       </div>
                     ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {tab === 'nps' && (() => {
+            const nl  = npsData.latest;
+            const fmt2 = (v) => v >= 10000000 ? `₹${(v/10000000).toFixed(2)}Cr` : v >= 100000 ? `₹${(v/100000).toFixed(2)}L` : `₹${Number(v||0).toLocaleString('en-IN',{maximumFractionDigits:0})}`;
+            return (
+              <div className="fade-in">
+
+                {/* ── Header ──────────────────────────────────────── */}
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
+                  <div>
+                    <div style={{fontSize:20,fontWeight:700,color:'#e2e8f0'}}>🏛 National Pension System</div>
+                    <div style={{fontSize:12,color:'#475569',marginTop:2}}>
+                      {nl ? `PRAN: ${nl.pran||'—'} · ${npsData.count} statement${npsData.count!==1?'s':''} loaded` : 'Connect Gmail and sync to load NPS data'}
+                    </div>
+                  </div>
+                  <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                    {nl && <div style={{fontSize:11,color:'#475569',background:'rgba(255,255,255,0.04)',padding:'4px 10px',borderRadius:6}}>
+                      As of {new Date(nl.statement_to+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}
+                    </div>}
+                    <button onClick={()=>{setNpsForm({statement_to:'',total_value:'',total_contributions:'',notional_gain:'',xirr:'',scheme_e_value:'',scheme_e_pct:'75',scheme_c_value:'',scheme_c_pct:'15',scheme_g_value:'',scheme_g_pct:'10',goal_id:'',goal_earmark_pct:'100'});setShowNpsForm(true);}}
+                      style={{background:'rgba(179,157,219,0.12)',border:'1px solid rgba(179,157,219,0.3)',color:'#b39ddb',borderRadius:8,padding:'7px 14px',cursor:'pointer',fontSize:12,fontWeight:700}}>
+                      + Manual Entry
+                    </button>
+                    <button onClick={syncNPS} disabled={npsSyncing}
+                      style={{background:'#6366f1',border:'none',color:'#fff',borderRadius:8,padding:'7px 14px',cursor:'pointer',fontSize:12,fontWeight:700,opacity:npsSyncing?0.7:1}}>
+                      {npsSyncing?'⟳ Scanning Gmail…':'⟳ Sync from Gmail'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Sync result banner */}
+                {npsSyncResult && (
+                  <div style={{marginBottom:16,padding:'10px 14px',borderRadius:8,fontSize:12,display:'flex',justifyContent:'space-between',alignItems:'center',
+                    background:npsSyncResult.success?'rgba(99,102,241,0.06)':'rgba(244,63,94,0.06)',
+                    border:`1px solid ${npsSyncResult.success?'rgba(99,102,241,0.2)':'rgba(244,63,94,0.2)'}`,
+                    color:npsSyncResult.success?'#818cf8':'#f43f5e'}}>
+                    <span>{npsSyncResult.success?'✅':'⚠'} {npsSyncResult.message}</span>
+                    <button onClick={()=>setNpsSyncResult(null)} style={{background:'none',border:'none',color:'inherit',cursor:'pointer',fontSize:14}}>✕</button>
+                  </div>
+                )}
+
+                {nl ? (
+                  <div>
+                    {/* ── Summary tiles ── */}
+                    <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:20}}>
+                      {[
+                        {label:'Total Corpus',   val:fmt2(nl.total_value||0),         color:'#b39ddb', sub:'Current value'},
+                        {label:'Total Invested', val:fmt2(nl.total_contributions||0),  color:'#94a3b8', sub:`${nl.num_contributions||0} contributions`},
+                        {label:'Notional Gain',  val:fmt2(nl.notional_gain||0),        color:parseFloat(nl.notional_gain||0)>=0?'#00d4a1':'#f43f5e', sub:'Total gain/loss'},
+                        {label:'XIRR',           val:nl.xirr!=null?nl.xirr+'%':'—',   color:'#f59e0b', sub:'Annualised return'},
+                      ].map(s=>(
+                        <div key={s.label} style={{background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.07)',borderRadius:12,padding:'16px 14px'}}>
+                          <div style={{fontSize:10,color:'#475569',fontWeight:700,letterSpacing:0.5,marginBottom:4}}>{s.label}</div>
+                          <div style={{fontSize:22,fontWeight:700,color:s.color,marginBottom:2}}>{s.val}</div>
+                          <div style={{fontSize:10,color:'#334155'}}>{s.sub}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* ── Scheme allocation ── */}
+                    {(nl.scheme_e_value||nl.scheme_c_value||nl.scheme_g_value) ? (
+                      <div className="db-card" style={{marginBottom:16}}>
+                        <div className="db-card-header">
+                          <div className="db-card-title">Scheme Allocation</div>
+                          {nl.cbo_name && <div className="db-card-sub">Employer: {nl.cbo_name}</div>}
+                        </div>
+                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
+                          {[
+                            {label:'Scheme E — Equity',           val:nl.scheme_e_value, pct:nl.scheme_e_pct, nav:nl.scheme_e_nav, units:nl.scheme_e_units, color:'#00d4a1'},
+                            {label:'Scheme C — Corporate Bonds',  val:nl.scheme_c_value, pct:nl.scheme_c_pct, nav:nl.scheme_c_nav, units:nl.scheme_c_units, color:'#0ea5e9'},
+                            {label:'Scheme G — Govt Securities',  val:nl.scheme_g_value, pct:nl.scheme_g_pct, nav:nl.scheme_g_nav, units:nl.scheme_g_units, color:'#f59e0b'},
+                          ].map(s=>(
+                            <div key={s.label} style={{background:'rgba(255,255,255,0.03)',border:'1px solid rgba(255,255,255,0.06)',borderRadius:10,padding:'14px 16px'}}>
+                              <div style={{fontSize:10,color:'#475569',marginBottom:8,fontWeight:600}}>{s.label}</div>
+                              <div style={{fontSize:20,fontWeight:700,color:s.color,marginBottom:8}}>{fmt2(s.val||0)}</div>
+                              <div style={{height:4,background:'#1e3a5f',borderRadius:2,overflow:'hidden',marginBottom:6}}>
+                                <div style={{height:'100%',width:`${Math.min(100,s.pct||0)}%`,background:s.color,borderRadius:2,transition:'width 0.8s ease'}}/>
+                              </div>
+                              <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'#475569'}}>
+                                <span>{(s.pct||0).toFixed(1)}% of corpus</span>
+                                <span>{Number(s.units||0).toFixed(4)} units</span>
+                              </div>
+                              <div style={{fontSize:10,color:'#334155',marginTop:2}}>NAV: ₹{s.nav||'—'}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {/* ── Growth chart ── */}
+                    {npsData.history && npsData.history.length > 1 ? (
+                      <div className="db-card" style={{marginBottom:16}}>
+                        <div className="db-card-header">
+                          <div>
+                            <div className="db-card-title">📈 Corpus Growth</div>
+                            <div className="db-card-sub">{npsData.history.length} data points · Since {npsData.history[0]?.date||''}</div>
+                          </div>
+                          {npsData.growthPct && (
+                            <div style={{fontSize:16,fontWeight:700,color:parseFloat(npsData.growthPct)>=0?'#00d4a1':'#f43f5e'}}>
+                              {parseFloat(npsData.growthPct)>=0?'+':''}{npsData.growthPct}%
+                            </div>
+                          )}
+                        </div>
+                        <ResponsiveContainer width="100%" height={200}>
+                          <AreaChart data={(npsData.history||[]).map(h=>({
+                            month: new Date(h.date+'T00:00:00').toLocaleDateString('en-IN',{month:'short',year:'2-digit'}),
+                            total:  parseFloat(h.total_value||0),
+                            equity: parseFloat(h.scheme_e||0),
+                            corp:   parseFloat(h.scheme_c||0),
+                            govt:   parseFloat(h.scheme_g||0),
+                          }))}>
+                            <defs>
+                              <linearGradient id="npsGradTab" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%"  stopColor="#b39ddb" stopOpacity={0.3}/>
+                                <stop offset="95%" stopColor="#b39ddb" stopOpacity={0}/>
+                              </linearGradient>
+                            </defs>
+                            <XAxis dataKey="month" stroke="#4a5a7a" tick={{fontSize:10,fill:'#64748b'}} interval="preserveStartEnd"/>
+                            <YAxis stroke="#4a5a7a" tick={{fontSize:10,fill:'#64748b'}} tickFormatter={v=>v>=100000?`₹${(v/100000).toFixed(1)}L`:`₹${(v/1000).toFixed(0)}K`} width={60}/>
+                            <Tooltip contentStyle={{background:'#0d1526',border:'1px solid #1e3a5f',borderRadius:8,fontSize:11}} formatter={(v,name)=>[fmt2(v),name==='total'?'Corpus':name==='equity'?'Scheme E':name==='corp'?'Scheme C':'Scheme G']} labelStyle={{color:'#94a3b8'}}/>
+                            <Area type="monotone" dataKey="equity" stroke="#00d4a1" strokeWidth={1} fill="none" dot={false} name="equity"/>
+                            <Area type="monotone" dataKey="corp"   stroke="#0ea5e9" strokeWidth={1} fill="none" dot={false} name="corp"/>
+                            <Area type="monotone" dataKey="govt"   stroke="#f59e0b" strokeWidth={1} fill="none" dot={false} name="govt"/>
+                            <Area type="monotone" dataKey="total"  stroke="#b39ddb" strokeWidth={2.5} fill="url(#npsGradTab)" dot={{r:3,fill:'#b39ddb',strokeWidth:0}} activeDot={{r:5}} name="total"/>
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      </div>
+                    ) : null}
+
+                    {/* ── Goal linkage ── */}
+                    <div className="db-card" style={{marginBottom:16}}>
+                      <div className="db-card-header">
+                        <div className="db-card-title">🎯 Goal Linkage</div>
+                      </div>
+                      <div style={{display:'flex',alignItems:'center',gap:12}}>
+                        {nl.goals ? (
+                          <span style={{fontSize:13,padding:'4px 12px',borderRadius:8,background:'rgba(99,102,241,0.15)',color:'#818cf8',fontWeight:600}}>
+                            🎯 {nl.goals.name}
+                          </span>
+                        ) : <span style={{fontSize:13,color:'#475569'}}>Not linked to any goal</span>}
+                        <select value={nl.goal_id||''} onChange={async e=>{
+                            await npsAPI.update(nl.id,{goal_id:e.target.value||null}).catch(()=>{});
+                            await loadNPS();
+                          }}
+                          style={{marginLeft:'auto',background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,padding:'8px 12px',color:'#e2e8f0',fontSize:12,outline:'none',cursor:'pointer'}}>
+                          <option value="">— No goal —</option>
+                          {(goals||[]).map(g=><option key={g.id} value={g.id}>{g.name}</option>)}
+                        </select>
+                      </div>
+                      {nl.goals && <div style={{fontSize:11,color:'#475569',marginTop:8}}>
+                        NPS corpus of {fmt2(nl.total_value||0)} is contributing to "{nl.goals.name}"
+                      </div>}
+                    </div>
+
+                    {/* ── All statements table ── */}
+                    {npsData.history && npsData.history.length > 0 && (
+                      <div className="db-card">
+                        <div className="db-card-header">
+                          <div className="db-card-title">Statement History</div>
+                          <div className="db-card-sub">{npsData.count} records</div>
+                        </div>
+                        <div style={{overflowX:'auto'}}>
+                          <table className="db-table">
+                            <thead><tr>
+                              <th>Date</th>
+                              <th className="right">Total Corpus</th>
+                              <th className="right">Invested</th>
+                              <th className="right">Gain/Loss</th>
+                              <th className="right">XIRR</th>
+                              <th className="right">Scheme E</th>
+                              <th className="right">Scheme C</th>
+                              <th className="right">Scheme G</th>
+                            </tr></thead>
+                            <tbody>
+                              {[...npsData.history].reverse().map((h,i)=>(
+                                <tr key={i} className="kv-refresh-row">
+                                  <td style={{color:'#94a3b8',fontSize:12}}>{new Date(h.date+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}</td>
+                                  <td className="right mono" style={{color:'#b39ddb',fontWeight:700}}>{fmt2(h.total_value)}</td>
+                                  <td className="right mono">{fmt2((npsData.history.find(x=>x.date===h.date)||{}).total_value)}</td>
+                                  <td className="right mono" style={{color:parseFloat(h.total_value||0)>0?'#00d4a1':'#f43f5e'}}>—</td>
+                                  <td className="right" style={{color:'#f59e0b'}}>{h.xirr!=null?h.xirr+'%':'—'}</td>
+                                  <td className="right mono" style={{color:'#00d4a1'}}>{fmt2(h.scheme_e||0)}</td>
+                                  <td className="right mono" style={{color:'#0ea5e9'}}>{fmt2(h.scheme_c||0)}</td>
+                                  <td className="right mono" style={{color:'#f59e0b'}}>{fmt2(h.scheme_g||0)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="db-card" style={{padding:'60px 20px',textAlign:'center'}}>
+                    <div style={{fontSize:48,marginBottom:12}}>🏛</div>
+                    <div style={{fontSize:16,fontWeight:600,color:'#e2e8f0',marginBottom:8}}>No NPS Data Yet</div>
+                    <div style={{fontSize:13,color:'#64748b',marginBottom:20,lineHeight:1.6}}>
+                      Click <b style={{color:'#6366f1'}}>⟳ Sync from Gmail</b> to scan all your Protean NPS emails automatically.<br/>
+                      Or use <b style={{color:'#b39ddb'}}>+ Manual Entry</b> to add data directly.<br/>
+                      <span style={{fontSize:11,color:'#334155',display:'block',marginTop:8}}>
+                        PDF password used: first 4 letters of your name + first 4 digits of DOB (e.g. hare1105)<br/>
+                        Make sure your Name and Date of Birth are set in <b>Settings → Profile & PAN</b>
+                      </span>
+                    </div>
+                    <div style={{display:'flex',gap:12,justifyContent:'center'}}>
+                      <button onClick={syncNPS} disabled={npsSyncing}
+                        style={{background:'#6366f1',border:'none',color:'#fff',borderRadius:8,padding:'10px 20px',cursor:'pointer',fontSize:13,fontWeight:700}}>
+                        {npsSyncing?'⟳ Scanning…':'⟳ Sync from Gmail'}
+                      </button>
+                      <button onClick={()=>{setNpsForm({statement_to:'',total_value:'',total_contributions:'',notional_gain:'',xirr:'',scheme_e_value:'',scheme_e_pct:'75',scheme_c_value:'',scheme_c_pct:'15',scheme_g_value:'',scheme_g_pct:'10',goal_id:'',goal_earmark_pct:'100'});setShowNpsForm(true);}}
+                        style={{background:'rgba(179,157,219,0.12)',border:'1px solid rgba(179,157,219,0.3)',color:'#b39ddb',borderRadius:8,padding:'10px 20px',cursor:'pointer',fontSize:13,fontWeight:700}}>
+                        + Manual Entry
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
