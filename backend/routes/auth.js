@@ -114,7 +114,7 @@ router.put('/profile', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── Google OAuth — initiate ────────────────────────────────────────
+// ── Google OAuth — initiate (Web) ──────────────────────────────────
 router.get('/google', (req, res) => {
   try {
     if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET)
@@ -131,7 +131,7 @@ router.get('/google', (req, res) => {
   }
 });
 
-// ── Google OAuth — callback ────────────────────────────────────────
+// ── Google OAuth — callback (Web) ──────────────────────────────────
 router.get('/google/callback', async (req, res) => {
   const { code, error } = req.query;
   console.log('[Google CB] query:', { code: code ? 'present' : 'missing', error });
@@ -169,6 +169,97 @@ router.get('/google/callback', async (req, res) => {
     console.error('[Google CB] FULL ERROR:', err.message);
     console.error('[Google CB] ERROR STACK:', err.stack);
     res.redirect(`${FRONTEND_URL}/login?error=google_failed&reason=${encodeURIComponent(err.message)}`);
+  }
+});
+
+// ── Google Sign-In (Android app) ───────────────────────────────────
+// Called by the Android app with a Google ID token from Credential Manager.
+// Uses google-auth-library (already available as sub-dep of googleapis).
+// Returns same shape as /login so Android SessionManager works identically.
+// Does NOT affect the web GET /google or GET /google/callback routes above.
+router.post('/google', async (req, res) => {
+  try {
+    const { id_token } = req.body;
+    if (!id_token) {
+      return res.status(400).json({ error: 'id_token is required' });
+    }
+
+    // Verify Google ID token — google-auth-library is a sub-dep of googleapis
+    const { OAuth2Client } = require('google-auth-library');
+    const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+    let payload;
+    try {
+      const ticket = await client.verifyIdToken({
+        idToken:  id_token,
+        audience: process.env.GOOGLE_CLIENT_ID,
+      });
+      payload = ticket.getPayload();
+    } catch (verifyErr) {
+      console.error('[Android Google] Token verify failed:', verifyErr.message);
+      return res.status(401).json({ error: 'Invalid Google token' });
+    }
+
+    const { sub: googleId, email, name, picture } = payload;
+    if (!email) {
+      return res.status(400).json({ error: 'No email in Google token' });
+    }
+
+    // Find or create user — same pattern as web Google callback above
+    const { data: existingUser, error: findErr } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', email)
+      .single();
+
+    let user;
+
+    if (findErr && findErr.code === 'PGRST116') {
+      // New user — create (same as web flow)
+      const { data: newUser, error: createErr } = await supabase
+        .from('users')
+        .insert({ name: name || email.split('@')[0], email, google_id: googleId, password_hash: '' })
+        .select('id, name, email')
+        .single();
+
+      if (createErr) {
+        console.error('[Android Google] Create user error:', createErr.message);
+        return res.status(500).json({ error: 'Could not create user' });
+      }
+      user = newUser;
+      console.log(JSON.stringify({ event: 'ANDROID_GOOGLE_SIGNUP', email }));
+
+    } else if (findErr) {
+      console.error('[Android Google] DB lookup error:', findErr.message);
+      return res.status(500).json({ error: 'Database error' });
+
+    } else {
+      // Existing user — link google_id if not already set
+      user = existingUser;
+      if (!user.google_id) {
+        await supabase
+          .from('users')
+          .update({ google_id: googleId })
+          .eq('id', user.id);
+      }
+      console.log(JSON.stringify({ event: 'ANDROID_GOOGLE_LOGIN', email }));
+    }
+
+    // Return token in same shape Android AuthResponse DTO expects
+    const token = makeToken(user);
+    return res.json({
+      token,
+      refresh_token: token,   // Android DTO requires this field; reuse access token
+      user: {
+        id:    user.id,
+        email: user.email,
+        name:  user.name || name || email.split('@')[0],
+      }
+    });
+
+  } catch (err) {
+    console.error('[Android Google] Unexpected error:', err.message);
+    return res.status(500).json({ error: 'Google authentication failed' });
   }
 });
 
