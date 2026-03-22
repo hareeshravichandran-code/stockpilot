@@ -131,6 +131,7 @@ export const portfolioHistoryAPI = {
 
 export const npsAPI = {
   get:    ()         => api.get('/api/nps'),
+  debug:  ()         => api.get('/api/nps/debug'),
   sync:   (fromDate) => api.post('/api/nps/sync', { fromDate }),
   manual: (data)     => api.post('/api/nps/manual', data),
   update: (id, data) => api.put(`/api/nps/${id}`, data),
