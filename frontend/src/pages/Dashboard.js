@@ -1811,6 +1811,7 @@ export default function Dashboard() {
                   </div>
                 </div>
               </div>
+            </div>
             );
           })()}
           {/* MUTUAL FUNDS */}
@@ -2156,6 +2157,7 @@ export default function Dashboard() {
                   </>
                 )}
               </div>
+            </div>
             );
           })()}
 
@@ -3184,6 +3186,7 @@ export default function Dashboard() {
                   </div>
                 )}
               </div>
+            </div>
             );
           })()}
 
