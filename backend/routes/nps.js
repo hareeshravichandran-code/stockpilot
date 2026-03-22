@@ -11,16 +11,29 @@ const { parseNPSText, generateNPSPasswords } = require('../services/npsParser');
 
 // ── GET / — latest holding + history ─────────────────────────────
 router.get('/', requireAuth, async (req, res) => {
+  // Fetch NPS holdings (no join — avoids FK issues with goals)
   const { data, error } = await supabase
     .from('nps_holdings')
-    .select('*, goals(id, name, target_date, target_amount)')
+    .select('*')
     .eq('user_id', req.user.id)
     .order('statement_to', { ascending: false });
 
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) {
+    console.error(JSON.stringify({ event: 'NPS_GET_ERROR', error: error.message }));
+    return res.status(500).json({ error: error.message });
+  }
+
+  console.log(JSON.stringify({ event: 'NPS_GET', userId: req.user.id, count: (data||[]).length }));
 
   const rows   = data || [];
-  const latest = rows[0] || null;
+  // Enrich latest row with goal info if linked
+  let latest = rows[0] || null;
+  if (latest?.goal_id) {
+    const { data: goal } = await supabase
+      .from('goals').select('id, name, target_date, target_amount')
+      .eq('id', latest.goal_id).single();
+    if (goal) latest = { ...latest, goals: goal };
+  }
 
   const history = rows.map(r => ({
     date:        r.statement_to,
@@ -241,8 +254,13 @@ router.post('/sync', requireAuth, async (req, res) => {
 // ── POST /manual ──────────────────────────────────────────────────
 router.post('/manual', requireAuth, async (req, res) => {
   const b = req.body;
-  if (!b.statement_to || !b.total_value) {
-    return res.status(400).json({ error: 'statement_to and total_value are required' });
+  if (!b.total_value) {
+    return res.status(400).json({ error: 'total_value is required' });
+  }
+  // Default statement_to to last day of current month if not provided
+  if (!b.statement_to) {
+    const now = new Date();
+    b.statement_to = new Date(now.getFullYear(), now.getMonth()+1, 0).toISOString().split('T')[0];
   }
   const { data, error } = await supabase.from('nps_holdings').upsert({
     user_id:             req.user.id,
