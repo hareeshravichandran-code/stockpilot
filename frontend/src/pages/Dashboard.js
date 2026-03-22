@@ -710,8 +710,15 @@ export default function Dashboard() {
   const loadNPS = async () => {
     try {
       const r = await npsAPI.get();
-      setNpsData(r.data);
-    } catch(e) { console.error(e); }
+      console.log('[NPS] API response:', JSON.stringify(r.data).slice(0, 300));
+      if (r.data && (r.data.latest !== undefined)) {
+        setNpsData(r.data);
+      } else {
+        console.error('[NPS] Unexpected response shape:', r.data);
+      }
+    } catch(e) {
+      console.error('[NPS] loadNPS failed:', e.message, e.response?.data);
+    }
   };
 
   const syncNPS = async () => {
@@ -3162,17 +3169,22 @@ export default function Dashboard() {
                     )}
                   </div>
                 ) : (
-                  <div className="db-card" style={{padding:'60px 20px',textAlign:'center'}}>
+                  <div className="db-card" style={{padding:'40px 20px',textAlign:'center'}}>
                     <div style={{fontSize:48,marginBottom:12}}>🏛</div>
-                    <div style={{fontSize:16,fontWeight:600,color:'#e2e8f0',marginBottom:8}}>No NPS Data Yet</div>
-                    <div style={{fontSize:13,color:'#64748b',marginBottom:20,lineHeight:1.6}}>
-                      Click <b style={{color:'#6366f1'}}>⟳ Sync from Gmail</b> to scan all your Protean NPS emails automatically.<br/>
-                      Or use <b style={{color:'#b39ddb'}}>+ Manual Entry</b> to add data directly.<br/>
-                      <span style={{fontSize:11,color:'#334155',display:'block',marginTop:8}}>
-                        PDF password used: first 4 letters of your name + first 4 digits of DOB (e.g. hare1105)<br/>
-                        Make sure your Name and Date of Birth are set in <b>Settings → Profile & PAN</b>
-                      </span>
+                    <div style={{fontSize:16,fontWeight:600,color:'#e2e8f0',marginBottom:8}}>No NPS Data Loaded</div>
+                    <div style={{fontSize:13,color:'#64748b',marginBottom:12,lineHeight:1.6}}>
+                      Click <b style={{color:'#6366f1'}}>⟳ Sync from Gmail</b> to scan your Protean NPS emails,<br/>
+                      or use <b style={{color:'#b39ddb'}}>+ Manual Entry</b> to add data directly.
                     </div>
+                    <button onClick={async()=>{
+                      try {
+                        const r = await npsAPI.get();
+                        alert('NPS API Response:\ncount: ' + r.data.count + '\nlatest: ' + JSON.stringify(r.data.latest)?.slice(0,200));
+                        if (r.data.count > 0) loadNPS();
+                      } catch(e) { alert('NPS API Error: ' + e.message); }
+                    }} style={{background:'rgba(99,102,241,0.1)',border:'1px solid rgba(99,102,241,0.3)',color:'#818cf8',borderRadius:8,padding:'8px 16px',cursor:'pointer',fontSize:12,marginBottom:16}}>
+                      🔍 Debug: Check API Response
+                    </button>
                     <div style={{display:'flex',gap:12,justifyContent:'center'}}>
                       <button onClick={syncNPS} disabled={npsSyncing}
                         style={{background:'#6366f1',border:'none',color:'#fff',borderRadius:8,padding:'10px 20px',cursor:'pointer',fontSize:13,fontWeight:700}}>
