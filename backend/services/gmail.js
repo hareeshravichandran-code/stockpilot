@@ -109,6 +109,30 @@ async function parsePdfWithPasswords(pdfBuffer, passwords = [], filename = '') {
   }
 
   console.log(JSON.stringify({ event: 'PDF_ALL_PASSWORDS_FAILED', filename, tried: allPasswords.length, sample: allPasswords.slice(0,3) }));
+
+  // ── Gemini Vision OCR fallback for image-based PDFs ──────────────
+  // When pdfjs extracts no text (scanned/image PDF), send to Gemini for OCR
+  if (process.env.GEMINI_API_KEY && pdfBuffer.length > 0) {
+    try {
+      console.log(JSON.stringify({ event: 'PDF_GEMINI_OCR_START', filename, bytes: pdfBuffer.length }));
+      const { GoogleGenerativeAI } = require('@google/generative-ai');
+      const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+
+      const result = await model.generateContent([
+        { inlineData: { mimeType: 'application/pdf', data: pdfBuffer.toString('base64') } },
+        'Extract ALL text from this financial document. Preserve every number exactly as printed. Focus especially on: PRAN number, Subscriber Name, statement period dates, Investment Summary table (Holdings value, Total Contribution, Notional Gain/Loss, XIRR %), and Scheme-wise breakdown (Scheme E/C/G values, units, NAV). Return plain text only, no formatting.'
+      ]);
+      const ocrText = result.response.text();
+      if (ocrText && ocrText.trim().length > 100) {
+        console.log(JSON.stringify({ event: 'PDF_GEMINI_OCR_SUCCESS', filename, chars: ocrText.length, preview: ocrText.slice(0, 200) }));
+        return { text: ocrText, passwordUsed: 'gemini-vision-ocr', geminiOCR: true };
+      }
+    } catch (gemErr) {
+      console.error(JSON.stringify({ event: 'PDF_GEMINI_OCR_FAILED', filename, error: gemErr.message }));
+    }
+  }
+
   return { text: '', passwordUsed: null, failed: true };
 }
 
