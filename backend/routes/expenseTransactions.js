@@ -164,6 +164,8 @@ router.post('/transactions/bulk', authMiddleware, async (req, res) => {
       bank_name:    t.bank_name || null,
       account_last4:t.account_last4 || null,
       reference_no: t.reference_no || null,
+      sms_sender:   t.sms_sender   || null,
+      payment_type: t.payment_type || null,
       is_deleted:   false,
       created_at:   Date.now(),
       updated_at:   Date.now()
@@ -171,7 +173,10 @@ router.post('/transactions/bulk', authMiddleware, async (req, res) => {
 
     const { data, error } = await supabase
       .from('expense_transactions')
-      .insert(rows)
+      .upsert(rows, {
+        onConflict: 'user_id,reference_no',  // skip duplicates gracefully
+        ignoreDuplicates: true
+      })
       .select();
 
     if (error) throw error;
