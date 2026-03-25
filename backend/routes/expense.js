@@ -363,15 +363,22 @@ router.post('/entries', requireAuth, async (req, res) => {
   const { category, sub_category, amount, expense_date, merchant_name, comments, description } = req.body;
   if (!amount || !expense_date) return res.status(400).json({ error: 'amount and expense_date required' });
 
+  const now = Date.now();
   const { data, error } = await supabase.from('expense_entries').insert({
-    user_id:      req.user.id,
-    category:     category     || null,
-    sub_category: sub_category || null,
-    amount:       parseFloat(amount),
+    user_id:          req.user.id,
+    category:         category     || null,
+    sub_category:     sub_category || null,
+    amount:           parseFloat(amount),
     expense_date,
-    merchant_name: merchant_name || null,
-    comments:     comments || description || null,
-    source:       'manual',
+    merchant_name:    merchant_name || null,
+    comments:         comments || description || null,
+    source:           'manual',
+    // Android-compatible fields
+    type:             'DEBIT',
+    date_time:        new Date(expense_date + 'T00:00:00').getTime(),
+    is_deleted:       false,
+    created_at_epoch: now,
+    updated_at_epoch: now,
   }).select().single();
 
   if (error) return res.status(500).json({ error: error.message });
@@ -596,6 +603,12 @@ router.post('/scan', requireAuth, async (req, res) => {
           bank_sender:   from,
           source:        'auto',
           category_source: catResult.source,
+          // Android-compatible fields
+          type:             'DEBIT',
+          date_time:        new Date(expense_date + 'T00:00:00').getTime(),
+          is_deleted:       false,
+          created_at_epoch: Date.now(),
+          updated_at_epoch: Date.now(),
         }).select().single();
 
         if (!insertErr && entry) {
