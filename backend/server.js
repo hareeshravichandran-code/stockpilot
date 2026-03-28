@@ -64,6 +64,7 @@ app.use('/api/expense', require('./routes/expenseTransactions'));
 app.use('/api/expense', require('./routes/expenseCategories'));
 app.use('/api/expense', require('./routes/expenseBudgets'));
 app.use('/api/expense', require('./routes/expenseSync'));
+app.use('/api/expense', require('./routes/expenseSmsRules'));
 app.use('/api/goals',    goalsRoutes);
 app.use('/api/family',   familyRoutes);
 app.use('/api/portfolio/history', portfolioHistoryRoutes);
