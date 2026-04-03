@@ -1,3 +1,4 @@
+import React from 'react';
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
@@ -2090,8 +2091,7 @@ export default function Dashboard() {
                                     const _g    = goals.find(g => g.assets && g.assets.some(a => a.asset_ref === _r));
                                     const isLast = fi === folios.length - 1;
 
-                                    return [
-                                      // ── Folio row ──────────────────────────────────────────
+                                    return <React.Fragment key={(h.id || fi) + '_frag'}>
                                       <tr key={h.id || fi}
                                         style={{ borderLeft: isMulti ? '3px solid rgba(14,165,233,0.3)' : 'none' }}>
                                         {familyMode && <td style={{verticalAlign:'middle'}}><MemberBadge entry={h}/></td>}
@@ -2185,7 +2185,6 @@ export default function Dashboard() {
                                         </td>
                                       </tr>,
 
-                                      // ── Subtotal row — only after last folio if multiple folios ──
                                       (isMulti && isLast) ? (
                                         <tr key={fundName + '_sub'}
                                           style={{ background:'rgba(14,165,233,0.04)', borderLeft:'3px solid rgba(14,165,233,0.5)', borderTop:'1px solid rgba(14,165,233,0.15)' }}>
@@ -2217,8 +2216,8 @@ export default function Dashboard() {
                                           </td>
                                           <td colSpan={3}/>
                                         </tr>
-                                      ) : null
-                                    ];
+                                      ) : null}
+                                    </React.Fragment>;
                                   });
                                 })}
                               </tbody>
