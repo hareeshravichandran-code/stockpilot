@@ -2078,146 +2078,108 @@ export default function Dashboard() {
                               </thead>
                               <tbody>
                                 {Object.entries(grouped).map(([fundName, folios]) => {
-                                  const groupVal  = folios.reduce((s,h) => s + parseFloat(h.current_value||0), 0);
-                                  const groupCost = folios.reduce((s,h) => s + parseFloat(h.invested_value||0), 0);
-                                  const groupGL   = groupVal - groupCost;
-                                  const groupGLPct= groupCost > 0 ? ((groupGL/groupCost)*100).toFixed(2) : null;
-                                  const isMulti   = folios.length > 1;
+                                  const groupVal   = folios.reduce((s,h) => s + parseFloat(h.current_value||0), 0);
+                                  const groupCost  = folios.reduce((s,h) => s + parseFloat(h.invested_value||0), 0);
+                                  const groupGL    = groupVal - groupCost;
+                                  const groupGLPct = groupCost > 0 ? ((groupGL/groupCost)*100).toFixed(2) : null;
+                                  const isMulti    = folios.length > 1;
 
                                   return folios.map((h, fi) => {
-                                    const gl    = (h.current_value||0) - (h.invested_value||0);
-                                    const glPct = h.invested_value > 0 ? (gl / h.invested_value * 100) : null;
-                                    const _r    = h.isin || h.folio_number;
-                                    const _g    = goals.find(g => g.assets && g.assets.some(a => a.asset_ref === _r));
+                                    const gl     = (h.current_value||0) - (h.invested_value||0);
+                                    const glPct  = h.invested_value > 0 ? (gl / h.invested_value * 100) : null;
+                                    const _r     = h.isin || h.folio_number;
+                                    const _g     = goals.find(g => g.assets && g.assets.some(a => a.asset_ref === _r));
                                     const isLast = fi === folios.length - 1;
-
-                                    return <React.Fragment key={(h.id || fi) + '_frag'}>
-                                      <tr key={h.id || fi}
-                                        style={{ borderLeft: isMulti ? '3px solid rgba(14,165,233,0.3)' : 'none' }}>
-                                        {familyMode && <td style={{verticalAlign:'middle'}}><MemberBadge entry={h}/></td>}
-                                        <td style={{minWidth:200}}>
-                                          <div style={{display:'flex',alignItems:'flex-start',gap:6}}>
-                                            <div style={{flex:1}}>
-                                              {fi === 0 ? (
-                                                <div style={{ fontWeight:700, color:'#e2e8f0', fontSize:12,
-                                                  maxWidth:200, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-                                                  {h.fund_name}
-                                                </div>
-                                              ) : (
-                                                <div style={{ color:'#475569', fontSize:11, paddingLeft:10 }}>↳ same fund</div>
+                                    return (
+                                      <React.Fragment key={String(h.id || fi) + '_' + String(fi)}>
+                                        <tr style={{ borderLeft: isMulti ? '3px solid rgba(14,165,233,0.3)' : 'none' }}>
+                                          {familyMode && <td style={{verticalAlign:'middle'}}><MemberBadge entry={h}/></td>}
+                                          <td style={{minWidth:200}}>
+                                            <div style={{display:'flex',alignItems:'flex-start',gap:6}}>
+                                              <div style={{flex:1}}>
+                                                {fi === 0
+                                                  ? <div style={{fontWeight:700,color:'#e2e8f0',fontSize:12,maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{h.fund_name}</div>
+                                                  : <div style={{color:'#475569',fontSize:11,paddingLeft:10}}>↳ same fund</div>}
+                                                {fi === 0 && <div style={{color:'#475569',fontSize:10,marginTop:1}}>{h.fund_house}</div>}
+                                              </div>
+                                              {fi === 0 && (
+                                                _g
+                                                  ? <span style={{display:'flex',alignItems:'center',gap:2,flexShrink:0,borderRadius:8,background:'rgba(99,102,241,0.12)',border:'1px solid rgba(99,102,241,0.25)',overflow:'hidden',marginTop:2}}>
+                                                      <span onClick={()=>setLinkingAsset({type:'mf',ref:_r,name:h.fund_name,value:h.current_value||0})} style={{fontSize:10,padding:'3px 6px',color:'#818cf8',cursor:'pointer',fontWeight:600,whiteSpace:'nowrap'}}>🎯 {_g.name.slice(0,10)}{_g.name.length>10?'…':''}</span>
+                                                      <span onClick={e=>{e.stopPropagation();unlinkFromRow(_g,_r);}} style={{fontSize:10,padding:'3px 5px',color:'#6366f1',cursor:'pointer',borderLeft:'1px solid rgba(99,102,241,0.25)',lineHeight:1}}>✕</span>
+                                                    </span>
+                                                  : <button onClick={()=>setLinkingAsset({type:'mf',ref:_r,name:h.fund_name,value:h.current_value||0})} style={{flexShrink:0,background:'#6366f1',border:'none',borderRadius:7,fontSize:10,color:'#fff',padding:'3px 9px',cursor:'pointer',whiteSpace:'nowrap',fontWeight:700,marginTop:2}}>🎯 Goal</button>
                                               )}
-                                              {fi === 0 && <div style={{ color:'#475569', fontSize:10, marginTop:1 }}>{h.fund_house}</div>}
                                             </div>
-                                            {fi === 0 && (
-                                              _g ? (
-                                                <span style={{display:'flex',alignItems:'center',gap:2,flexShrink:0,borderRadius:8,background:'rgba(99,102,241,0.12)',border:'1px solid rgba(99,102,241,0.25)',overflow:'hidden',marginTop:2}}>
-                                                  <span onClick={()=>setLinkingAsset({type:'mf',ref:_r,name:h.fund_name,value:h.current_value||0})}
-                                                    style={{fontSize:10,padding:'3px 6px',color:'#818cf8',cursor:'pointer',fontWeight:600,whiteSpace:'nowrap'}}>
-                                                    🎯 {_g.name.slice(0,10)}{_g.name.length>10?'…':''}
-                                                  </span>
-                                                  <span onClick={e=>{e.stopPropagation();unlinkFromRow(_g,_r);}}
-                                                    style={{fontSize:10,padding:'3px 5px',color:'#6366f1',cursor:'pointer',borderLeft:'1px solid rgba(99,102,241,0.25)',lineHeight:1}}>✕</span>
-                                                </span>
-                                              ) : (
-                                                <button onClick={()=>setLinkingAsset({type:'mf',ref:_r,name:h.fund_name,value:h.current_value||0})}
-                                                  style={{flexShrink:0,background:'#6366f1',border:'none',borderRadius:7,fontSize:10,color:'#fff',padding:'3px 9px',cursor:'pointer',whiteSpace:'nowrap',fontWeight:700,marginTop:2}}>
-                                                  🎯 Goal
-                                                </button>
-                                              )
-                                            )}
-                                          </div>
-                                        </td>
-                                        <td>
-                                          <span style={{ fontSize:10, background:'rgba(14,165,233,0.1)', color:'#0ea5e9',
-                                            borderRadius:4, padding:'2px 7px', fontWeight:600, whiteSpace:'nowrap' }}>
-                                            {h.fund_category || 'Equity'}
-                                          </span>
-                                        </td>
-                                        <td className="right mono" style={{ color:'#e2e8f0' }}>
-                                          {Number(h.units||0).toLocaleString('en-IN',{maximumFractionDigits:3,minimumFractionDigits:3})}
-                                        </td>
-                                        <td className="right mono" style={{ color:'#94a3b8' }}>
-                                          {h.nav ? Number(h.nav).toFixed(3) : '—'}
-                                        </td>
-                                        <td className="right mono" style={{ color:'#64ffda', fontWeight:700 }}>
-                                          {h.current_value ? fmt(h.current_value) : '—'}
-                                        </td>
-                                        <td className="right mono" style={{ color:'#64748b' }}>
-                                          {h.invested_value ? fmt(h.invested_value) : '—'}
-                                        </td>
-                                        <td className="right mono">
-                                          {h.invested_value ? (
-                                            <>
-                                              <span style={{ color: gl >= 0 ? '#00d4a1' : '#f43f5e', fontWeight:600, display:'block' }}>
-                                                {gl >= 0 ? '+' : ''}{fmt(Math.abs(gl))}
-                                              </span>
-                                              {glPct !== null && (
-                                                <span style={{ color: glPct >= 0 ? '#00d4a1' : '#f43f5e', fontSize:10 }}>
-                                                  {glPct >= 0 ? '+' : ''}{glPct.toFixed(2)}%
-                                                </span>
-                                              )}
-                                            </>
-                                          ) : '—'}
-                                        </td>
-                                        <td style={{ fontSize:10, color:'#475569' }}>
-                                          {h.folio_number
-                                            ? <span>📁 {h.folio_number}</span>
-                                            : h.isin
-                                            ? <span style={{ color:'#1e3a5f', fontFamily:'monospace' }}>{h.isin}</span>
-                                            : '—'}
-                                        </td>
-                                        <td style={{ fontSize:11, color:'#475569', whiteSpace:'nowrap' }}>
-                                          {(h.cas_mail_date || h.statement_date)
-                                            ? new Date((h.cas_mail_date||h.statement_date)+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})
-                                            : '—'}
-                                        </td>
-                                        <td>
-                                          <span style={{ fontSize:10, borderRadius:4, padding:'2px 6px', fontWeight:600,
-                                            background: h.source === 'CDSL'      ? 'rgba(100,255,218,0.08)' :
-                                                        h.source === 'MFCENTRAL' ? 'rgba(14,165,233,0.12)'  :
-                                                        h.source === 'CAMS'      ? 'rgba(251,146,60,0.12)'  :
-                                                        'rgba(167,139,250,0.12)',
-                                            color: h.source === 'CDSL'      ? '#334155' :
-                                                   h.source === 'MFCENTRAL' ? '#0ea5e9' :
-                                                   h.source === 'CAMS'      ? '#fb923c' : '#a78bfa' }}>
-                                            {h.source || 'NSDL'}
-                                          </span>
-                                        </td>
-                                      </tr>,
-
-                                      (isMulti && isLast) ? (
-                                        <tr key={fundName + '_sub'}
-                                          style={{ background:'rgba(14,165,233,0.04)', borderLeft:'3px solid rgba(14,165,233,0.5)', borderTop:'1px solid rgba(14,165,233,0.15)' }}>
-                                          {familyMode && <td/>}
-                                          <td colSpan={2} style={{ padding:'6px 14px', fontSize:11, color:'#0ea5e9', fontWeight:700 }}>
-                                            Σ {fundName.length > 35 ? fundName.slice(0,35)+'…' : fundName}
-                                            <span style={{ color:'#475569', fontWeight:400, marginLeft:6 }}>({folios.length} folios)</span>
                                           </td>
-                                          <td colSpan={2}/>
-                                          <td className="right mono" style={{ fontSize:12, color:'#64ffda', fontWeight:700, padding:'6px 14px' }}>
-                                            {fmt(groupVal)}
+                                          <td>
+                                            <span style={{fontSize:10,background:'rgba(14,165,233,0.1)',color:'#0ea5e9',borderRadius:4,padding:'2px 7px',fontWeight:600,whiteSpace:'nowrap'}}>
+                                              {h.fund_category || 'Equity'}
+                                            </span>
                                           </td>
-                                          <td className="right mono" style={{ fontSize:12, color:'#64748b', padding:'6px 14px' }}>
-                                            {groupCost > 0 ? fmt(groupCost) : '—'}
+                                          <td className="right mono" style={{color:'#e2e8f0'}}>
+                                            {Number(h.units||0).toLocaleString('en-IN',{maximumFractionDigits:3,minimumFractionDigits:3})}
                                           </td>
-                                          <td className="right mono" style={{ padding:'6px 14px' }}>
-                                            {groupCost > 0 ? (
+                                          <td className="right mono" style={{color:'#94a3b8'}}>
+                                            {h.nav ? Number(h.nav).toFixed(3) : '—'}
+                                          </td>
+                                          <td className="right mono" style={{color:'#64ffda',fontWeight:700}}>
+                                            {h.current_value ? fmt(h.current_value) : '—'}
+                                          </td>
+                                          <td className="right mono" style={{color:'#64748b'}}>
+                                            {h.invested_value ? fmt(h.invested_value) : '—'}
+                                          </td>
+                                          <td className="right mono">
+                                            {h.invested_value ? (
                                               <>
-                                                <span style={{ color: groupGL >= 0 ? '#00d4a1' : '#f43f5e', fontWeight:700, display:'block', fontSize:12 }}>
-                                                  {groupGL >= 0 ? '+' : ''}{fmt(Math.abs(groupGL))}
-                                                </span>
-                                                {groupGLPct && (
-                                                  <span style={{ color: parseFloat(groupGLPct) >= 0 ? '#00d4a1' : '#f43f5e', fontSize:10 }}>
-                                                    {parseFloat(groupGLPct) >= 0 ? '+' : ''}{groupGLPct}%
-                                                  </span>
-                                                )}
+                                                <span style={{color:gl>=0?'#00d4a1':'#f43f5e',fontWeight:600,display:'block'}}>{gl>=0?'+':''}{fmt(Math.abs(gl))}</span>
+                                                {glPct !== null && <span style={{color:glPct>=0?'#00d4a1':'#f43f5e',fontSize:10}}>{glPct>=0?'+':''}{glPct.toFixed(2)}%</span>}
                                               </>
                                             ) : '—'}
                                           </td>
-                                          <td colSpan={3}/>
+                                          <td style={{fontSize:10,color:'#475569'}}>
+                                            {h.folio_number
+                                              ? <span>📁 {h.folio_number}</span>
+                                              : h.isin
+                                              ? <span style={{color:'#1e3a5f',fontFamily:'monospace'}}>{h.isin}</span>
+                                              : '—'}
+                                          </td>
+                                          <td style={{fontSize:11,color:'#475569',whiteSpace:'nowrap'}}>
+                                            {(h.cas_mail_date || h.statement_date)
+                                              ? new Date((h.cas_mail_date||h.statement_date)+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})
+                                              : '—'}
+                                          </td>
+                                          <td>
+                                            <span style={{fontSize:10,borderRadius:4,padding:'2px 6px',fontWeight:600,
+                                              background:h.source==='CDSL'?'rgba(100,255,218,0.08)':h.source==='MFCENTRAL'?'rgba(14,165,233,0.12)':h.source==='CAMS'?'rgba(251,146,60,0.12)':'rgba(167,139,250,0.12)',
+                                              color:h.source==='CDSL'?'#334155':h.source==='MFCENTRAL'?'#0ea5e9':h.source==='CAMS'?'#fb923c':'#a78bfa'}}>
+                                              {h.source || 'NSDL'}
+                                            </span>
+                                          </td>
                                         </tr>
-                                      ) : null}
-                                    </React.Fragment>;
+                                        {isMulti && isLast && (
+                                          <tr style={{background:'rgba(14,165,233,0.04)',borderLeft:'3px solid rgba(14,165,233,0.5)',borderTop:'1px solid rgba(14,165,233,0.15)'}}>
+                                            {familyMode && <td/>}
+                                            <td colSpan={2} style={{padding:'6px 14px',fontSize:11,color:'#0ea5e9',fontWeight:700}}>
+                                              Σ {fundName.length > 35 ? fundName.slice(0,35)+'…' : fundName}
+                                              <span style={{color:'#475569',fontWeight:400,marginLeft:6}}>({folios.length} folios)</span>
+                                            </td>
+                                            <td colSpan={2}/>
+                                            <td className="right mono" style={{fontSize:12,color:'#64ffda',fontWeight:700,padding:'6px 14px'}}>{fmt(groupVal)}</td>
+                                            <td className="right mono" style={{fontSize:12,color:'#64748b',padding:'6px 14px'}}>{groupCost > 0 ? fmt(groupCost) : '—'}</td>
+                                            <td className="right mono" style={{padding:'6px 14px'}}>
+                                              {groupCost > 0 ? (
+                                                <>
+                                                  <span style={{color:groupGL>=0?'#00d4a1':'#f43f5e',fontWeight:700,display:'block',fontSize:12}}>{groupGL>=0?'+':''}{fmt(Math.abs(groupGL))}</span>
+                                                  {groupGLPct && <span style={{color:parseFloat(groupGLPct)>=0?'#00d4a1':'#f43f5e',fontSize:10}}>{parseFloat(groupGLPct)>=0?'+':''}{groupGLPct}%</span>}
+                                                </>
+                                              ) : '—'}
+                                            </td>
+                                            <td colSpan={3}/>
+                                          </tr>
+                                        )}
+                                      </React.Fragment>
+                                    );
                                   });
                                 })}
                               </tbody>
