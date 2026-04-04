@@ -7,6 +7,7 @@ import AdminPanel from './AdminPanel';
 import Dividends from './Dividends';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import './Dashboard.css';
+import * as XLSX from 'xlsx';
 
 const SECTOR_COLORS = {
   'IT': '#0ea5e9', 'Auto': '#f59e0b', 'Bank': '#00d4a1',
@@ -2278,194 +2279,339 @@ export default function Dashboard() {
           )}
 
           {/* EXPENSES TAB */}
-          {tab === 'expenses' && (
-            <div style={{padding:'24px 28px'}} className="fade-in">
+          {tab === 'expenses' && (() => {
+            // ── Expense view state (managed inline via refs for simplicity) ──
+            const [expView,      setExpView]      = React.useState('calendar');   // 'calendar' | 'table'
+            const [calMonth,     setCalMonth]     = React.useState(() => { const n=new Date(); return {y:n.getFullYear(),m:n.getMonth()}; });
+            const [calDay,       setCalDay]       = React.useState(null);
+            const [expTypeTab,   setExpTypeTab]   = React.useState('total');      // 'total' | 'expense' | 'investment'
+            const INV_CATS = new Set(['investment','inv_return','bills']);
 
-              {/* ── Header ──────────────────────────────────── */}
-              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:24}}>
-                <div>
-                  <h2 style={{color:'#e2e8f0',fontSize:22,fontWeight:700,margin:0}}>💸 Expenses</h2>
-                  <div style={{color:'#64748b',fontSize:13,marginTop:3}}>
-                    Synced from Android app · {expenseEntries.filter(e=>e.type!=='CREDIT').length} expenses · {expenseEntries.filter(e=>e.type==='CREDIT').length} credits
-                  </div>
-                </div>
-                <div style={{display:'flex',gap:10}}>
-                  <button onClick={()=>setShowExpenseEntry(true)}
-                    style={{background:'rgba(251,146,60,0.1)',border:'1px solid rgba(251,146,60,0.3)',color:'#fb923c',borderRadius:8,padding:'9px 16px',cursor:'pointer',fontSize:13,fontWeight:700}}>
-                    + Add Manual
-                  </button>
-                  <button onClick={loadExpenses}
-                    style={{background:'#1e293b',border:'1px solid #334155',color:'#94a3b8',borderRadius:8,padding:'9px 16px',cursor:'pointer',fontSize:13}}>
-                    ⟳ Refresh
-                  </button>
-                </div>
-              </div>
+            // Filter entries for current type tab
+            const filteredByType = expenseEntries.filter(e => {
+              if (e.type === 'CREDIT') return false;
+              if (expTypeTab === 'investment') return INV_CATS.has(e.category_id);
+              if (expTypeTab === 'expense')    return !INV_CATS.has(e.category_id);
+              return true; // total = all debits
+            });
 
-              {/* ── Summary tiles ─────────────────────────── */}
-              <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:24}}>
-                {[
-                  {label:`${expenseSummary.fyLabel||'FY26'} Spend`,    val:fmtFull(expenseSummary.currentFYTotal||0),  color:'#fb923c', icon:'📊'},
-                  {label:'This Month Spend', val:fmtFull(expenseSummary.thisMonthTotal||0), color:'#f43f5e', icon:'📅'},
-                  {label:'Total Income',     val:fmtFull(expenseSummary.totalIncome||0),    color:'#00d4a1', icon:'💰'},
-                  {label:'Uncategorized',    val:expenseSummary.uncategorized||0,           color:'#f59e0b', icon:'❓'},
-                ].map(s=>(
-                  <div key={s.label} style={{background:'#0a1628',borderRadius:10,padding:'14px 18px',border:'1px solid #1e3a5f'}}>
-                    <div style={{fontSize:18,marginBottom:6}}>{s.icon}</div>
-                    <div style={{color:s.color,fontWeight:700,fontSize:20}}>{s.val}</div>
-                    <div style={{color:'#475569',fontSize:12,marginTop:3}}>{s.label}</div>
-                  </div>
-                ))}
-              </div>
+            // Build day → amount map for the current calendar month
+            const calKey = (d) => `${calMonth.y}-${String(calMonth.m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+            const dayTotals = {};
+            filteredByType.forEach(e => {
+              if (!e.expense_date) return;
+              const [ey,em,ed] = e.expense_date.split('-').map(Number);
+              if (ey === calMonth.y && em === calMonth.m+1) {
+                const k = e.expense_date;
+                dayTotals[k] = (dayTotals[k] || 0) + parseFloat(e.amount || 0);
+              }
+            });
+            const maxDay = Math.max(0, ...Object.values(dayTotals));
 
-              {/* ── Charts ───────────────────────────────────── */}
-              {expenseEntries.length>0&&(()=>{
-                const EXP_COLORS=['#fb923c','#f43f5e','#a78bfa','#0ea5e9','#64ffda','#34d399','#f59e0b','#ec4899','#6366f1','#10b981'];
-                const catData=Object.entries(expenseSummary.byCategory||{}).map(([name,value])=>({name,value})).filter(d=>d.value>0).sort((a,b)=>b.value-a.value);
-                const mthData=Object.keys(expenseSummary.byMonth||{}).sort().map(m=>({
-                  month:new Date(m+'-01').toLocaleDateString('en-IN',{month:'short',year:'2-digit'}),
-                  amount:expenseSummary.byMonth[m]
-                }));
-                return (
-                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:24}}>
-                    <div style={{background:'#0a1628',borderRadius:10,border:'1px solid #1e3a5f',padding:'16px 20px'}}>
-                      <div style={{color:'#e2e8f0',fontWeight:700,fontSize:14,marginBottom:16}}>By Category ({expenseSummary.fyLabel})</div>
-                      <div style={{display:'flex',gap:16,alignItems:'center'}}>
-                        <ResponsiveContainer width={150} height={150}>
-                          <PieChart>
-                            <Pie data={catData} cx={70} cy={70} innerRadius={40} outerRadius={68} dataKey="value" paddingAngle={2}>
-                              {catData.map((_,i)=><Cell key={i} fill={EXP_COLORS[i%EXP_COLORS.length]}/>)}
-                            </Pie>
-                            <Tooltip formatter={v=>fmtFull(v)} contentStyle={{background:'#141b2d',border:'1px solid #1a2235',borderRadius:8,fontSize:12}}/>
-                          </PieChart>
-                        </ResponsiveContainer>
-                        <div style={{flex:1,maxHeight:150,overflowY:'auto'}}>
-                          {catData.slice(0,8).map((d,i)=>(
-                            <div key={d.name} style={{display:'flex',justifyContent:'space-between',marginBottom:5}}>
-                              <div style={{display:'flex',alignItems:'center',gap:5}}>
-                                <div style={{width:8,height:8,borderRadius:'50%',background:EXP_COLORS[i%EXP_COLORS.length],flexShrink:0}}/>
-                                <span style={{color:'#94a3b8',fontSize:11}}>{d.name}</span>
-                              </div>
-                              <span style={{color:'#e2e8f0',fontSize:11,fontWeight:600}}>{fmtFull(d.value)}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                    <div style={{background:'#0a1628',borderRadius:10,border:'1px solid #1e3a5f',padding:'16px 20px'}}>
-                      <div style={{color:'#e2e8f0',fontWeight:700,fontSize:14,marginBottom:16}}>Monthly Trend</div>
-                      <ResponsiveContainer width="100%" height={150}>
-                        <AreaChart data={mthData} margin={{top:5,right:10,left:0,bottom:0}}>
-                          <defs>
-                            <linearGradient id="expGrad" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#fb923c" stopOpacity={0.3}/>
-                              <stop offset="95%" stopColor="#fb923c" stopOpacity={0}/>
-                            </linearGradient>
-                          </defs>
-                          <XAxis dataKey="month" stroke="#334155" tick={{fill:'#64748b',fontSize:11}}/>
-                          <YAxis stroke="#334155" tick={{fill:'#64748b',fontSize:10}} tickFormatter={v=>'₹'+(v/1000).toFixed(0)+'K'}/>
-                          <Tooltip formatter={v=>[fmtFull(v),'Spend']} contentStyle={{background:'#141b2d',border:'1px solid #1a2235',borderRadius:8,fontSize:12}}/>
-                          <Area type="monotone" dataKey="amount" stroke="#fb923c" strokeWidth={2} fill="url(#expGrad)"/>
-                        </AreaChart>
-                      </ResponsiveContainer>
+            // Transactions for selected day
+            const dayEntries = calDay
+              ? filteredByType.filter(e => e.expense_date === calDay).sort((a,b) => b.amount - a.amount)
+              : [];
+
+            // Calendar helpers
+            const WDAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+            const MONTHS_FULL = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+            const daysInMonth = new Date(calMonth.y, calMonth.m+1, 0).getDate();
+            const firstDow    = new Date(calMonth.y, calMonth.m, 1).getDay();
+
+            // Download Excel
+            const downloadExcel = () => {
+              const rows = expenseEntries.map(e => ({
+                'Date':       e.expense_date || '',
+                'Merchant':   e.merchant_name || '',
+                'Category':   e.category || '',
+                'Category ID':e.category_id || '',
+                'Type':       e.type || 'DEBIT',
+                'Amount':     parseFloat(e.amount || 0),
+                'Bank':       e.bank_sender || '',
+                'Note':       e.comments || '',
+                'Source':     e.source || '',
+              }));
+              const ws = XLSX.utils.json_to_sheet(rows);
+              const wb = XLSX.utils.book_new();
+              XLSX.utils.book_append_sheet(wb, ws, 'Expenses');
+              // Column widths
+              ws['!cols'] = [12,25,18,14,8,12,20,30,10].map(w=>({wch:w}));
+              XLSX.writeFile(wb, `Kanalyst_Expenses_${new Date().toISOString().slice(0,10)}.xlsx`);
+            };
+
+            // Month totals
+            const monthTotal = Object.values(dayTotals).reduce((s,v)=>s+v, 0);
+
+            const fmtAmt = v => v >= 100000 ? `₹${(v/100000).toFixed(1)}L` : v >= 1000 ? `₹${(v/1000).toFixed(1)}K` : `₹${v.toFixed(0)}`;
+
+            return (
+              <div style={{padding:'24px 28px'}} className="fade-in">
+
+                {/* ── Header ───────────────────────────────────────────── */}
+                <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20,flexWrap:'wrap',gap:10}}>
+                  <div>
+                    <h2 style={{color:'#e2e8f0',fontSize:22,fontWeight:700,margin:0}}>💸 Expenses</h2>
+                    <div style={{color:'#64748b',fontSize:13,marginTop:3}}>
+                      {expenseEntries.filter(e=>e.type!=='CREDIT').length} expenses &amp; investments · {expenseEntries.filter(e=>e.type==='CREDIT').length} credits
                     </div>
                   </div>
-                );
-              })()}
-
-              {/* ── Transaction Table ────────────────────────── */}
-              <div style={{background:'#0a1628',borderRadius:10,border:'1px solid #1e3a5f'}}>
-                <div style={{padding:'14px 20px',borderBottom:'1px solid #1e3a5f',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
-                  <div style={{color:'#e2e8f0',fontWeight:700,fontSize:14}}>Transactions</div>
                   <div style={{display:'flex',gap:8,alignItems:'center'}}>
-                    {['ALL','DEBIT','CREDIT'].map(t=>(
-                      <button key={t} onClick={()=>setExpenseFilter&&setExpenseFilter(t)}
-                        style={{fontSize:11,padding:'3px 10px',borderRadius:6,border:'1px solid',cursor:'pointer',
-                          background:((window._expFilter||'ALL')===t)?'rgba(251,146,60,0.15)':'transparent',
-                          borderColor:((window._expFilter||'ALL')===t)?'rgba(251,146,60,0.4)':'#1e3a5f',
-                          color:((window._expFilter||'ALL')===t)?'#fb923c':'#475569'}}>
-                        {t}
+                    {/* View toggle */}
+                    {['calendar','table'].map(v => (
+                      <button key={v} onClick={()=>setExpView(v)}
+                        style={{fontSize:12,padding:'7px 14px',borderRadius:8,border:'1px solid',cursor:'pointer',fontWeight:600,
+                          background:expView===v?'rgba(251,146,60,0.15)':'transparent',
+                          borderColor:expView===v?'rgba(251,146,60,0.5)':'#1e3a5f',
+                          color:expView===v?'#fb923c':'#475569'}}>
+                        {v==='calendar'?'📅 Calendar':'📋 Table'}
                       </button>
                     ))}
-                    <span style={{color:'#475569',fontSize:12,marginLeft:4}}>{expenseEntries.length} entries</span>
+                    <button onClick={()=>setShowExpenseEntry(true)}
+                      style={{background:'rgba(251,146,60,0.1)',border:'1px solid rgba(251,146,60,0.3)',color:'#fb923c',borderRadius:8,padding:'7px 14px',cursor:'pointer',fontSize:12,fontWeight:700}}>
+                      + Add
+                    </button>
+                    <button onClick={downloadExcel}
+                      style={{background:'rgba(34,197,94,0.1)',border:'1px solid rgba(34,197,94,0.3)',color:'#22c55e',borderRadius:8,padding:'7px 14px',cursor:'pointer',fontSize:12,fontWeight:700}}>
+                      ⬇ Excel
+                    </button>
+                    <button onClick={loadExpenses}
+                      style={{background:'#1e293b',border:'1px solid #334155',color:'#64748b',borderRadius:8,padding:'7px 14px',cursor:'pointer',fontSize:12}}>
+                      ⟳
+                    </button>
                   </div>
                 </div>
-                {expenseEntries.length===0?(
-                  <div style={{textAlign:'center',padding:'48px 20px'}}>
-                    <div style={{fontSize:40,marginBottom:12}}>📱</div>
-                    <div style={{fontSize:16,color:'#e2e8f0',fontWeight:600,marginBottom:6}}>No transactions yet</div>
-                    <div style={{fontSize:13,color:'#475569'}}>Sync your Android app to see expenses here, or add manually.</div>
-                  </div>
-                ):(
-                  <div style={{overflowX:'auto'}}>
-                    <table className="db-table" style={{width:'100%'}}>
-                      <thead><tr>
-                        {familyMode&&<th>Member</th>}
-                        <th>Date</th>
-                        <th>Merchant</th>
-                        <th>Category</th>
-                        <th>Bank</th>
-                        <th>Note</th>
-                        <th>Type</th>
-                        <th className="right">Amount</th>
-                        <th></th>
-                      </tr></thead>
-                      <tbody>
-                        {expenseEntries.map(e=>(
-                          <tr key={e.id} style={{cursor:'pointer'}} onClick={()=>setEditingExpense(editingExpense===e.id?null:e.id)}>
-                            {familyMode&&<td style={{verticalAlign:'middle'}}><MemberBadge entry={e}/></td>}
-                            <td style={{color:'#64748b',fontSize:12,whiteSpace:'nowrap'}}>
-                              {e.expense_date ? new Date(e.expense_date+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) : '—'}
-                            </td>
-                            <td>
-                              <div style={{color:'#e2e8f0',fontSize:13,fontWeight:500}}>{e.merchant_name||'—'}</div>
-                              {e.comments&&<div style={{color:'#334155',fontSize:10,marginTop:1}}>{e.comments.slice(0,40)}</div>}
-                            </td>
-                            <td>
-                              {editingExpense===e.id?(
-                                <select className="db-input" style={{background:'#0f1c2e',color:'#e2e8f0',cursor:'pointer',fontSize:12,padding:'4px 6px'}}
-                                  defaultValue={e.category_id||''}
-                                  onClick={ev=>ev.stopPropagation()}
-                                  onChange={ev=>{ev.stopPropagation();updateExpenseCategory(e.id,ev.target.value,null,e.merchant_name);}}>
-                                  <option value="">— select —</option>
-                                  {Object.entries({food_dining:'Food & Dining',groceries:'Groceries',shopping:'Shopping',travel:'Travel',utilities:'Utilities',entertainment:'Entertainment',health:'Healthcare',education:'Education',bills:'Bills',investment:'Investment',fuel:'Fuel',other:'Others'}).map(([id,label])=>(
-                                    <option key={id} value={id}>{label}</option>
-                                  ))}
-                                </select>
-                              ):(
-                                e.category
-                                  ? <span style={{fontSize:11,padding:'2px 8px',borderRadius:4,fontWeight:600,
-                                      background:e.type==='CREDIT'?'rgba(0,212,161,0.1)':'rgba(251,146,60,0.1)',
-                                      color:e.type==='CREDIT'?'#00d4a1':'#fb923c'}}>
-                                      {e.category}
-                                    </span>
-                                  : <span style={{fontSize:11,color:'#f59e0b'}}>⚠ tap to set</span>
-                              )}
-                            </td>
-                            <td style={{color:'#475569',fontSize:11}}>{e.bank_sender||'—'}</td>
-                            <td style={{color:'#475569',fontSize:11,maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{e.comments||'—'}</td>
-                            <td>
-                              <span style={{fontSize:10,padding:'2px 7px',borderRadius:4,fontWeight:600,
-                                background:e.type==='CREDIT'?'rgba(0,212,161,0.08)':'rgba(244,63,94,0.08)',
-                                color:e.type==='CREDIT'?'#00d4a1':'#f87171'}}>
-                                {e.type||'DEBIT'}
-                              </span>
-                            </td>
-                            <td className="right" style={{color:e.type==='CREDIT'?'#00d4a1':'#fb923c',fontWeight:700}}>
-                              {e.type==='CREDIT'?'+':''}{fmtFull(e.amount)}
-                            </td>
-                            <td>
-                              <button onClick={ev=>{ev.stopPropagation();deleteExpenseEntry(e.id);}}
-                                style={{background:'none',border:'none',color:'#334155',cursor:'pointer',fontSize:14,padding:'2px 6px'}}>✕</button>
-                            </td>
-                          </tr>
+
+                {/* ── Type tabs: Total / Expenses / Investment ─────────── */}
+                <div style={{display:'flex',gap:0,marginBottom:20,background:'#0a1628',borderRadius:10,border:'1px solid #1e3a5f',padding:4,width:'fit-content'}}>
+                  {[
+                    {id:'total',      label:'Total Outgoing', color:'#fb923c'},
+                    {id:'expense',    label:'Expenses',        color:'#f43f5e'},
+                    {id:'investment', label:'Investments',     color:'#6366f1'},
+                  ].map(t => {
+                    const amt = expenseEntries.filter(e => {
+                      if (e.type==='CREDIT') return false;
+                      if (t.id==='investment') return INV_CATS.has(e.category_id);
+                      if (t.id==='expense')    return !INV_CATS.has(e.category_id);
+                      return true;
+                    }).reduce((s,e) => s+parseFloat(e.amount||0), 0);
+                    const active = expTypeTab === t.id;
+                    return (
+                      <button key={t.id} onClick={()=>{setExpTypeTab(t.id);setCalDay(null);}}
+                        style={{padding:'8px 18px',borderRadius:7,border:'none',cursor:'pointer',transition:'all 0.15s',
+                          background:active?`${t.color}22`:'transparent',
+                          color:active?t.color:'#475569'}}>
+                        <div style={{fontSize:11,fontWeight:700,marginBottom:2,letterSpacing:0.5}}>{t.label}</div>
+                        <div style={{fontSize:16,fontWeight:700,color:active?t.color:'#64748b'}}>{fmtAmt(amt)}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* ══ CALENDAR VIEW ══════════════════════════════════════ */}
+                {expView === 'calendar' && (
+                  <div>
+                    {/* Month navigator */}
+                    <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16}}>
+                      <button onClick={()=>{setCalDay(null);setCalMonth(p=>{const d=new Date(p.y,p.m-1,1);return{y:d.getFullYear(),m:d.getMonth()};})}}
+                        style={{background:'#0a1628',border:'1px solid #1e3a5f',color:'#94a3b8',borderRadius:8,padding:'6px 14px',cursor:'pointer',fontSize:16}}>‹</button>
+                      <div style={{color:'#e2e8f0',fontWeight:700,fontSize:18,minWidth:180,textAlign:'center'}}>
+                        {MONTHS_FULL[calMonth.m]} {calMonth.y}
+                      </div>
+                      <button onClick={()=>{setCalDay(null);setCalMonth(p=>{const d=new Date(p.y,p.m+1,1);return{y:d.getFullYear(),m:d.getMonth()};})}}
+                        disabled={calMonth.y===new Date().getFullYear()&&calMonth.m===new Date().getMonth()}
+                        style={{background:'#0a1628',border:'1px solid #1e3a5f',color:'#94a3b8',borderRadius:8,padding:'6px 14px',fontSize:16,
+                          cursor:(calMonth.y===new Date().getFullYear()&&calMonth.m===new Date().getMonth())?'default':'pointer',
+                          opacity:(calMonth.y===new Date().getFullYear()&&calMonth.m===new Date().getMonth())?0.3:1}}>›</button>
+                      <div style={{marginLeft:'auto',color:'#fb923c',fontWeight:700,fontSize:14}}>
+                        Month total: {fmtFull(monthTotal)}
+                      </div>
+                    </div>
+
+                    {/* Calendar grid */}
+                    <div style={{background:'#0a1628',borderRadius:12,border:'1px solid #1e3a5f',overflow:'hidden',marginBottom:16}}>
+                      {/* Day headers */}
+                      <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',borderBottom:'1px solid #1e3a5f'}}>
+                        {WDAYS.map(d => (
+                          <div key={d} style={{padding:'8px 4px',textAlign:'center',fontSize:11,fontWeight:700,color:'#334155',letterSpacing:0.5}}>{d}</div>
                         ))}
-                      </tbody>
-                    </table>
+                      </div>
+                      {/* Day cells */}
+                      {(() => {
+                        const cells = [];
+                        // Empty cells for offset
+                        for (let i=0; i<firstDow; i++) cells.push(<div key={`e${i}`}/>);
+                        for (let d=1; d<=daysInMonth; d++) {
+                          const dk    = calKey(d);
+                          const amt   = dayTotals[dk] || 0;
+                          const pct   = maxDay > 0 ? amt / maxDay : 0;
+                          const today = (() => { const n=new Date(); return n.getFullYear()===calMonth.y&&n.getMonth()===calMonth.m&&n.getDate()===d; })();
+                          const sel   = calDay === dk;
+                          const color = expTypeTab==='investment' ? '#6366f1' : expTypeTab==='expense' ? '#f43f5e' : '#fb923c';
+                          cells.push(
+                            <div key={d} onClick={()=>setCalDay(sel ? null : dk)}
+                              style={{padding:'8px 6px',minHeight:64,borderTop:'1px solid #0f1c2e',cursor:amt>0?'pointer':'default',
+                                background:sel?`${color}18`:amt>0?`${color}${Math.round(pct*10).toString(16)}0`:'transparent',
+                                transition:'background 0.15s',position:'relative'}}>
+                              <div style={{fontSize:11,fontWeight:today?700:400,color:today?'#fb923c':amt>0?'#94a3b8':'#1e3a5f',marginBottom:4}}>
+                                {today?<span style={{background:'#fb923c',color:'#000',borderRadius:'50%',width:18,height:18,display:'inline-flex',alignItems:'center',justifyContent:'center',fontSize:10,fontWeight:700}}>{d}</span>:d}
+                              </div>
+                              {amt > 0 && (
+                                <>
+                                  <div style={{fontSize:11,fontWeight:700,color:color}}>{fmtAmt(amt)}</div>
+                                  <div style={{position:'absolute',bottom:0,left:0,right:0,height:3,background:`${color}${Math.round(40+pct*180).toString(16)}`,borderRadius:'0 0 2px 2px'}}/>
+                                </>
+                              )}
+                            </div>
+                          );
+                        }
+                        const totalCells = firstDow + daysInMonth;
+                        const remainder  = totalCells % 7;
+                        if (remainder > 0) for (let i=0; i<7-remainder; i++) cells.push(<div key={`t${i}`}/>);
+                        return <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)'}}>{cells}</div>;
+                      })()}
+                    </div>
+
+                    {/* Day drill-down panel */}
+                    {calDay && (
+                      <div style={{background:'#0a1628',borderRadius:12,border:'1px solid rgba(251,146,60,0.25)',overflow:'hidden',marginBottom:16}}>
+                        <div style={{padding:'12px 18px',borderBottom:'1px solid #1e3a5f',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                          <div>
+                            <span style={{color:'#e2e8f0',fontWeight:700,fontSize:15}}>
+                              {new Date(calDay+'T00:00:00').toLocaleDateString('en-IN',{weekday:'long',day:'2-digit',month:'long',year:'numeric'})}
+                            </span>
+                            <span style={{color:'#fb923c',fontWeight:700,fontSize:14,marginLeft:12}}>{fmtFull(dayTotals[calDay]||0)}</span>
+                          </div>
+                          <button onClick={()=>setCalDay(null)} style={{background:'none',border:'none',color:'#475569',cursor:'pointer',fontSize:18}}>✕</button>
+                        </div>
+                        {dayEntries.length === 0 ? (
+                          <div style={{padding:'20px',color:'#475569',textAlign:'center',fontSize:13}}>No transactions for this filter</div>
+                        ) : (
+                          <table className="db-table" style={{width:'100%'}}>
+                            <thead><tr>
+                              <th>Merchant</th><th>Category</th><th>Bank</th><th>Note</th><th className="right">Amount</th>
+                            </tr></thead>
+                            <tbody>
+                              {dayEntries.map(e=>(
+                                <tr key={e.id}>
+                                  <td style={{color:'#e2e8f0',fontWeight:500}}>{e.merchant_name||'—'}</td>
+                                  <td><span style={{fontSize:11,padding:'2px 7px',borderRadius:4,fontWeight:600,background:'rgba(251,146,60,0.1)',color:'#fb923c'}}>{e.category||'—'}</span></td>
+                                  <td style={{color:'#475569',fontSize:12}}>{e.bank_sender||'—'}</td>
+                                  <td style={{color:'#475569',fontSize:12}}>{e.comments||'—'}</td>
+                                  <td className="right mono" style={{color:'#fb923c',fontWeight:700}}>{fmtFull(e.amount)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Monthly summary by category */}
+                    {Object.keys(dayTotals).length > 0 && (() => {
+                      const catTotals = {};
+                      filteredByType.filter(e => e.expense_date?.startsWith(`${calMonth.y}-${String(calMonth.m+1).padStart(2,'0')}`))
+                        .forEach(e => { const c=e.category||'Others'; catTotals[c]=(catTotals[c]||0)+parseFloat(e.amount||0); });
+                      const sorted = Object.entries(catTotals).sort((a,b)=>b[1]-a[1]);
+                      const CAL_COLORS=['#fb923c','#f43f5e','#a78bfa','#0ea5e9','#64ffda','#f59e0b','#34d399','#ec4899'];
+                      return (
+                        <div style={{background:'#0a1628',borderRadius:12,border:'1px solid #1e3a5f',padding:'16px 20px'}}>
+                          <div style={{color:'#e2e8f0',fontWeight:700,fontSize:14,marginBottom:14}}>Category Breakdown — {MONTHS_FULL[calMonth.m]}</div>
+                          <div style={{display:'flex',gap:16,alignItems:'center'}}>
+                            <div style={{flexShrink:0}}>
+                              <ResponsiveContainer width={140} height={140}>
+                                <PieChart>
+                                  <Pie data={sorted.map(([name,value])=>({name,value}))} cx={65} cy={65} innerRadius={35} outerRadius={62} dataKey="value" paddingAngle={2}>
+                                    {sorted.map((_,i)=><Cell key={i} fill={CAL_COLORS[i%CAL_COLORS.length]}/>)}
+                                  </Pie>
+                                  <Tooltip formatter={v=>fmtFull(v)} contentStyle={{background:'#0d1526',border:'1px solid #1e3a5f',borderRadius:8,fontSize:11}}/>
+                                </PieChart>
+                              </ResponsiveContainer>
+                            </div>
+                            <div style={{flex:1,display:'grid',gridTemplateColumns:'1fr 1fr',gap:'4px 16px'}}>
+                              {sorted.map(([cat,amt],i)=>(
+                                <div key={cat} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'3px 0'}}>
+                                  <div style={{display:'flex',alignItems:'center',gap:6}}>
+                                    <div style={{width:8,height:8,borderRadius:'50%',background:CAL_COLORS[i%CAL_COLORS.length],flexShrink:0}}/>
+                                    <span style={{color:'#94a3b8',fontSize:12}}>{cat}</span>
+                                  </div>
+                                  <span style={{color:'#e2e8f0',fontSize:12,fontWeight:600,marginLeft:8}}>{fmtFull(amt)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+
+                {/* ══ TABLE VIEW ════════════════════════════════════════ */}
+                {expView === 'table' && (
+                  <div style={{background:'#0a1628',borderRadius:10,border:'1px solid #1e3a5f'}}>
+                    <div style={{padding:'12px 18px',borderBottom:'1px solid #1e3a5f',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                      <div style={{color:'#e2e8f0',fontWeight:700,fontSize:14}}>All Transactions</div>
+                      <div style={{color:'#475569',fontSize:12}}>{filteredByType.length} entries · {fmtFull(filteredByType.reduce((s,e)=>s+parseFloat(e.amount||0),0))} total</div>
+                    </div>
+                    {filteredByType.length===0?(
+                      <div style={{textAlign:'center',padding:'48px 20px'}}>
+                        <div style={{fontSize:40,marginBottom:12}}>📱</div>
+                        <div style={{fontSize:16,color:'#e2e8f0',fontWeight:600,marginBottom:6}}>No transactions</div>
+                        <div style={{fontSize:13,color:'#475569'}}>Sync Android app or add manually.</div>
+                      </div>
+                    ):(
+                      <div style={{overflowX:'auto'}}>
+                        <table className="db-table" style={{width:'100%'}}>
+                          <thead><tr>
+                            {familyMode&&<th>Member</th>}
+                            <th>Date</th><th>Merchant</th><th>Category</th><th>Bank</th><th>Note</th>
+                            <th className="right">Amount</th><th></th>
+                          </tr></thead>
+                          <tbody>
+                            {filteredByType.map(e=>(
+                              <tr key={e.id} style={{cursor:'pointer'}} onClick={()=>setEditingExpense(editingExpense===e.id?null:e.id)}>
+                                {familyMode&&<td style={{verticalAlign:'middle'}}><MemberBadge entry={e}/></td>}
+                                <td style={{color:'#64748b',fontSize:12,whiteSpace:'nowrap'}}>
+                                  {e.expense_date?new Date(e.expense_date+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}):'—'}
+                                </td>
+                                <td>
+                                  <div style={{color:'#e2e8f0',fontSize:13,fontWeight:500}}>{e.merchant_name||'—'}</div>
+                                  {e.comments&&<div style={{color:'#334155',fontSize:10,marginTop:1}}>{e.comments.slice(0,40)}</div>}
+                                </td>
+                                <td>
+                                  {editingExpense===e.id?(
+                                    <select className="db-input" style={{background:'#0f1c2e',color:'#e2e8f0',cursor:'pointer',fontSize:12,padding:'4px 6px'}}
+                                      defaultValue={e.category_id||''} onClick={ev=>ev.stopPropagation()}
+                                      onChange={ev=>{ev.stopPropagation();updateExpenseCategory(e.id,ev.target.value,null,e.merchant_name);}}>
+                                      <option value="">— select —</option>
+                                      {Object.entries({food_dining:'Food & Dining',groceries:'Groceries',shopping:'Shopping',travel:'Travel',utilities:'Utilities',entertainment:'Entertainment',health:'Healthcare',education:'Education',bills:'Bills',investment:'Investment',fuel:'Fuel',other:'Others'}).map(([id,label])=>(
+                                        <option key={id} value={id}>{label}</option>
+                                      ))}
+                                    </select>
+                                  ):(
+                                    e.category
+                                      ?<span style={{fontSize:11,padding:'2px 8px',borderRadius:4,fontWeight:600,background:'rgba(251,146,60,0.1)',color:'#fb923c'}}>{e.category}</span>
+                                      :<span style={{fontSize:11,color:'#f59e0b'}}>⚠ tap to set</span>
+                                  )}
+                                </td>
+                                <td style={{color:'#475569',fontSize:11}}>{e.bank_sender||'—'}</td>
+                                <td style={{color:'#475569',fontSize:11,maxWidth:140,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{e.comments||'—'}</td>
+                                <td className="right mono" style={{color:'#fb923c',fontWeight:700}}>{fmtFull(e.amount)}</td>
+                                <td>
+                                  <button onClick={ev=>{ev.stopPropagation();deleteExpenseEntry(e.id);}}
+                                    style={{background:'none',border:'none',color:'#334155',cursor:'pointer',fontSize:14,padding:'2px 6px'}}>✕</button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* INCOME TAB */}
           {tab === 'income' && (
