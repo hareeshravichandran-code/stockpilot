@@ -3077,10 +3077,7 @@ export default function Dashboard() {
                             <XAxis dataKey="month" stroke="#4a5a7a" tick={{fontSize:10,fill:'#64748b'}} interval="preserveStartEnd"/>
                             <YAxis stroke="#4a5a7a" tick={{fontSize:10,fill:'#64748b'}} tickFormatter={v=>v>=100000?`₹${(v/100000).toFixed(1)}L`:`₹${(v/1000).toFixed(0)}K`} width={60}/>
                             <Tooltip contentStyle={{background:'#0d1526',border:'1px solid #1e3a5f',borderRadius:8,fontSize:11}} formatter={(v,name)=>[fmt2(v),name==='total'?'Corpus':name==='equity'?'Scheme E':name==='corp'?'Scheme C':'Scheme G']} labelStyle={{color:'#94a3b8'}}/>
-                            <Area type="monotone" dataKey="equity" stroke="#00d4a1" strokeWidth={1} fill="none" dot={false} name="equity"/>
-                            <Area type="monotone" dataKey="corp"   stroke="#0ea5e9" strokeWidth={1} fill="none" dot={false} name="corp"/>
-                            <Area type="monotone" dataKey="govt"   stroke="#f59e0b" strokeWidth={1} fill="none" dot={false} name="govt"/>
-                            <Area type="monotone" dataKey="total"  stroke="#b39ddb" strokeWidth={2.5} fill="url(#npsGradTab)" dot={{r:3,fill:'#b39ddb',strokeWidth:0}} activeDot={{r:5}} name="total"/>
+                            <Area type="monotone" dataKey="total"  stroke="#b39ddb" strokeWidth={2.5} fill="url(#npsGradTab)" dot={{r:3,fill:'#b39ddb',strokeWidth:0}} activeDot={{r:5}} name="Corpus"/>
                           </AreaChart>
                         </ResponsiveContainer>
                       </div>
@@ -3121,28 +3118,37 @@ export default function Dashboard() {
                         <div style={{overflowX:'auto'}}>
                           <table className="db-table">
                             <thead><tr>
-                              <th>Date</th>
-                              <th className="right">Total Corpus</th>
+                              <th>Statement Date</th>
+                              <th style={{fontSize:10,color:'#334155'}}>Email Date</th>
+                              <th className="right">Current Value</th>
                               <th className="right">Invested</th>
-                              <th className="right">Gain/Loss</th>
+                              <th className="right">Gain / Loss</th>
                               <th className="right">XIRR</th>
                               <th className="right">Scheme E</th>
                               <th className="right">Scheme C</th>
                               <th className="right">Scheme G</th>
                             </tr></thead>
                             <tbody>
-                              {[...npsData.history].reverse().map((h,i)=>(
+                              {[...npsData.history].reverse().map((h,i)=>{
+                                const gain = h.notional_gain || (h.total_value - h.total_contributions);
+                                return (
                                 <tr key={i} className="kv-refresh-row">
                                   <td style={{color:'#94a3b8',fontSize:12}}>{new Date(h.date+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}</td>
+                                  <td style={{color:'#475569',fontSize:11}}>
+                                    {h.email_date ? new Date(h.email_date+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) : '—'}
+                                  </td>
                                   <td className="right mono" style={{color:'#b39ddb',fontWeight:700}}>{fmt2(h.total_value)}</td>
-                                  <td className="right mono">{fmt2((npsData.history.find(x=>x.date===h.date)||{}).total_value)}</td>
-                                  <td className="right mono" style={{color:parseFloat(h.total_value||0)>0?'#00d4a1':'#f43f5e'}}>—</td>
+                                  <td className="right mono" style={{color:'#94a3b8'}}>{h.total_contributions > 0 ? fmt2(h.total_contributions) : '—'}</td>
+                                  <td className="right mono" style={{color:gain>=0?'#00d4a1':'#f43f5e',fontWeight:600}}>
+                                    {h.total_contributions > 0 ? (gain>=0?'+':'')+fmt2(Math.abs(gain)) : '—'}
+                                  </td>
                                   <td className="right" style={{color:'#f59e0b'}}>{h.xirr!=null?h.xirr+'%':'—'}</td>
-                                  <td className="right mono" style={{color:'#00d4a1'}}>{fmt2(h.scheme_e||0)}</td>
-                                  <td className="right mono" style={{color:'#0ea5e9'}}>{fmt2(h.scheme_c||0)}</td>
-                                  <td className="right mono" style={{color:'#f59e0b'}}>{fmt2(h.scheme_g||0)}</td>
+                                  <td className="right mono" style={{color:'#00d4a1'}}>{h.scheme_e>0?fmt2(h.scheme_e):'—'}</td>
+                                  <td className="right mono" style={{color:'#0ea5e9'}}>{h.scheme_c>0?fmt2(h.scheme_c):'—'}</td>
+                                  <td className="right mono" style={{color:'#f59e0b'}}>{h.scheme_g>0?fmt2(h.scheme_g):'—'}</td>
                                 </tr>
-                              ))}
+                                );
+                              })}
                             </tbody>
                           </table>
                         </div>
