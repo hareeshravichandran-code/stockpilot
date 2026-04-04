@@ -85,9 +85,7 @@ export default function Dashboard() {
   // ── Expense state ─────────────────────────────────────────────────
   const [expenseEntries, setExpenseEntries]   = useState([]);
   const [expenseSummary, setExpenseSummary]   = useState({ currentFYTotal:0, thisMonthTotal:0, byCategory:{}, byMonth:{}, fyLabel:'FY26', uncategorized:0 });
-  const [expenseRules, setExpenseRules]       = useState([]);
-  const [expenseScanning, setExpenseScanning] = useState(false);
-  const [expenseScanResult, setExpenseScanResult] = useState(null);
+
   const [expenseCategories, setExpenseCategories] = useState({});
   const [showExpenseEntry, setShowExpenseEntry] = useState(false);
   const [editingExpense, setEditingExpense]   = useState(null); // for inline edit
@@ -264,37 +262,27 @@ export default function Dashboard() {
   // ── Expense handlers ─────────────────────────────────────────────
   const loadExpenses = async () => {
     try {
-      const [rulesRes, catsRes] = await Promise.all([
-        api.get('/api/expense/rules'), api.get('/api/expense/categories')
-      ]);
-      const entriesRes = familyMode
+      const res = familyMode
         ? await familyAPI.combinedExpenses()
         : await api.get('/api/expense/entries');
-      setExpenseEntries(entriesRes.data.entries || []);
-      setExpenseSummary(entriesRes.data.summary || { currentFYTotal:0, thisMonthTotal:0, byCategory:{}, byMonth:{}, fyLabel:'FY26', uncategorized:0 });
-      setExpenseRules(rulesRes.data || []);
-      setExpenseCategories(catsRes.data || {});
+      const entries = Array.isArray(res.data) ? res.data : (res.data?.entries || []);
+      setExpenseEntries(entries);
+      // Compute summary client-side from raw entries
+      const now          = new Date();
+      const fyStart      = now.getMonth() < 3 ? new Date(now.getFullYear()-1,3,1) : new Date(now.getFullYear(),3,1);
+      const fyLabel      = `FY${String(fyStart.getFullYear()+1).slice(2)}`;
+      const mthStart     = new Date(now.getFullYear(), now.getMonth(), 1);
+      const debits       = entries.filter(e => e.type !== 'CREDIT');
+      const credits      = entries.filter(e => e.type === 'CREDIT');
+      const currentFYTotal  = debits.filter(e => new Date(e.expense_date) >= fyStart).reduce((s,e) => s + parseFloat(e.amount||0), 0);
+      const thisMonthTotal  = debits.filter(e => new Date(e.expense_date) >= mthStart).reduce((s,e) => s + parseFloat(e.amount||0), 0);
+      const uncategorized   = debits.filter(e => !e.category_id || e.category_id === 'other').length;
+      const byCategory = {}; debits.forEach(e => { const c = e.category||'Others'; byCategory[c]=(byCategory[c]||0)+parseFloat(e.amount||0); });
+      const byMonth    = {}; debits.forEach(e => { if(e.expense_date){const m=e.expense_date.slice(0,7); byMonth[m]=(byMonth[m]||0)+parseFloat(e.amount||0);} });
+      setExpenseSummary({ currentFYTotal, thisMonthTotal, uncategorized, byCategory, byMonth, fyLabel, totalIncome: credits.reduce((s,e)=>s+parseFloat(e.amount||0),0) });
     } catch(e) { console.error('loadExpenses', e); }
   };
 
-  const scanExpenses = async () => {
-    setExpenseScanning(true); setExpenseScanResult(null);
-    try {
-      const r = await api.post('/api/expense/scan');
-      setExpenseScanResult({
-        success:      true,
-        message:      r.data.message,
-        found:        r.data.found        || 0,
-        emailsFound:  r.data.emailsFound  || 0,
-        emailsRead:   r.data.emailsRead   || 0,
-        rulesApplied: r.data.rulesApplied || 0,
-        ruleResults:  r.data.ruleResults  || [],
-      });
-      await loadExpenses();
-    } catch(e) {
-      setExpenseScanResult({ success:false, message: e.response?.data?.error || 'Scan failed. Check Gmail is connected.' });
-    } finally { setExpenseScanning(false); }
-  };
 
   const saveExpenseEntry = async () => {
     if (!expenseEntryForm.amount || !expenseEntryForm.expense_date) return;
@@ -322,35 +310,11 @@ export default function Dashboard() {
     await loadExpenses();
   };
 
-  const autoCategorizeMerchant = async (merchant) => {
-    if (!merchant) return null;
-    try {
-      const r = await api.post('/api/expense/categorize', { merchant_name: merchant });
-      return r.data;
-    } catch(e) { return null; }
-  };
 
-  const saveExpenseRule = async () => {
-    if (!expenseRuleForm.rule_name) return;
-    setExpenseRuleSaving(true);
-    try {
-      if (editingExpenseRule) await api.put(`/api/expense/rules/${editingExpenseRule.id}`, expenseRuleForm);
-      else                    await api.post('/api/expense/rules', expenseRuleForm);
-      setShowExpenseRuleForm(false); setEditingExpenseRule(null);
-      setExpenseRuleForm({ rule_name:'', email_sender:'', subject_pattern:'', body_pattern:'', lookback_months:'0' });
-      await loadExpenses();
-    } catch(e) { console.error(e); }
-    finally { setExpenseRuleSaving(false); }
-  };
 
-  // Auto-scan expenses every 30 mins
-  useEffect(() => {
-    const interval = setInterval(() => {
-      incomeAPI.scan().catch(() => {});
-      api.post('/api/expense/scan').catch(() => {});
-    }, 30 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, []); // eslint-disable-line
+
+
+
 
   // ── Family handlers ──────────────────────────────────────────────
   const loadFamilyStatus = async () => {
@@ -2316,74 +2280,34 @@ export default function Dashboard() {
           {/* EXPENSES TAB */}
           {tab === 'expenses' && (
             <div style={{padding:'24px 28px'}} className="fade-in">
-              {/* Header */}
+
+              {/* ── Header ──────────────────────────────────── */}
               <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:24}}>
                 <div>
                   <h2 style={{color:'#e2e8f0',fontSize:22,fontWeight:700,margin:0}}>💸 Expenses</h2>
-                  <div style={{color:'#64748b',fontSize:13,marginTop:3}}>Auto-tracked from UPI & credit card emails · AI-powered category detection</div>
+                  <div style={{color:'#64748b',fontSize:13,marginTop:3}}>
+                    Synced from Android app · {expenseEntries.filter(e=>e.type!=='CREDIT').length} expenses · {expenseEntries.filter(e=>e.type==='CREDIT').length} credits
+                  </div>
                 </div>
                 <div style={{display:'flex',gap:10}}>
-                  {expenseSummary.uncategorized>0&&(
-                    <div style={{background:'rgba(251,146,60,0.1)',border:'1px solid rgba(251,146,60,0.3)',color:'#fb923c',borderRadius:8,padding:'9px 14px',fontSize:12,fontWeight:600}}>
-                      ⚠ {expenseSummary.uncategorized} need category
-                    </div>
-                  )}
-                  <button onClick={()=>{setSettingsSection('expense');setShowSettings(true);}}
-                    style={{background:'#1e293b',border:'1px solid #334155',color:'#94a3b8',borderRadius:8,padding:'9px 16px',cursor:'pointer',fontSize:13}}>
-                    ⚙ Rules
-                  </button>
                   <button onClick={()=>setShowExpenseEntry(true)}
                     style={{background:'rgba(251,146,60,0.1)',border:'1px solid rgba(251,146,60,0.3)',color:'#fb923c',borderRadius:8,padding:'9px 16px',cursor:'pointer',fontSize:13,fontWeight:700}}>
-                    + Add Entry
+                    + Add Manual
                   </button>
-                  <button onClick={scanExpenses} disabled={expenseScanning}
-                    style={{background:expenseScanning?'#1e293b':'#fb923c',border:'none',color:'#fff',borderRadius:8,padding:'9px 16px',cursor:expenseScanning?'not-allowed':'pointer',fontSize:13,fontWeight:700}}>
-                    {expenseScanning?'⟳ Scanning…':'⟳ Scan Now'}
+                  <button onClick={loadExpenses}
+                    style={{background:'#1e293b',border:'1px solid #334155',color:'#94a3b8',borderRadius:8,padding:'9px 16px',cursor:'pointer',fontSize:13}}>
+                    ⟳ Refresh
                   </button>
                 </div>
               </div>
 
-              {expenseScanResult&&(
-                <div style={{background:expenseScanResult.success?'rgba(251,146,60,0.06)':'rgba(244,63,94,0.06)',border:`1px solid ${expenseScanResult.success?'rgba(251,146,60,0.25)':'rgba(244,63,94,0.25)'}`,borderRadius:10,padding:'14px 18px',marginBottom:18}}>
-                  <div style={{fontSize:13,fontWeight:600,color:expenseScanResult.success?'#fb923c':'#f43f5e',marginBottom:expenseScanResult.emailsRead>0?8:0}}>
-                    {expenseScanResult.success?'✅':'⚠'} {expenseScanResult.message}
-                  </div>
-                  {expenseScanResult.success&&expenseScanResult.emailsRead>0&&(
-                    <div style={{display:'flex',gap:20,flexWrap:'wrap',marginBottom:expenseScanResult.ruleResults?.length?10:0}}>
-                      {[{label:'Emails Found',val:expenseScanResult.emailsFound||0},{label:'Emails Read',val:expenseScanResult.emailsRead||0},{label:'Captured',val:expenseScanResult.found||0,hi:true},{label:'Rules',val:expenseScanResult.rulesApplied||0}].map(s=>(
-                        <div key={s.label} style={{textAlign:'center',minWidth:55}}>
-                          <div style={{fontWeight:700,fontSize:20,color:s.hi?'#fb923c':'#e2e8f0'}}>{s.val}</div>
-                          <div style={{fontSize:10,color:'#475569',marginTop:1}}>{s.label}</div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {expenseScanResult.ruleResults?.length>0&&(
-                    <div style={{borderTop:'1px solid rgba(255,255,255,0.05)',paddingTop:10}}>
-                      <div style={{fontSize:10,color:'#475569',fontWeight:700,letterSpacing:1,marginBottom:6,textTransform:'uppercase'}}>Per Rule</div>
-                      {expenseScanResult.ruleResults.map((r,i)=>(
-                        <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'5px 8px',marginBottom:3,background:'rgba(255,255,255,0.02)',borderRadius:6}}>
-                          <span style={{color:'#e2e8f0',fontSize:12,fontWeight:600,flex:1}}>{r.ruleName}</span>
-                          <div style={{display:'flex',gap:12,fontSize:11}}>
-                            <span style={{color:'#475569'}}>{r.emailsFound||0} found</span>
-                            <span style={{color:'#64748b'}}>{r.emailsRead||0} read</span>
-                            <span style={{color:r.captured>0?'#fb923c':'#475569',fontWeight:r.captured>0?700:400}}>{r.captured||0} captured</span>
-                            {(r.skipped||0)>0&&<span style={{color:'#374151'}}>{r.skipped} skipped</span>}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Summary cards */}
+              {/* ── Summary tiles ─────────────────────────── */}
               <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:24}}>
                 {[
-                  {label:`${expenseSummary.fyLabel||'FY26'} Total`,val:fmtFull(expenseSummary.currentFYTotal||0),color:'#fb923c',icon:'📊'},
-                  {label:'This Month',val:fmtFull(expenseSummary.thisMonthTotal||0),color:'#f43f5e',icon:'📅'},
-                  {label:'Entries',val:expenseEntries.length,color:'#0ea5e9',icon:'📋'},
-                  {label:'Uncategorized',val:expenseSummary.uncategorized||0,color:'#f59e0b',icon:'❓'},
+                  {label:`${expenseSummary.fyLabel||'FY26'} Spend`,    val:fmtFull(expenseSummary.currentFYTotal||0),  color:'#fb923c', icon:'📊'},
+                  {label:'This Month Spend', val:fmtFull(expenseSummary.thisMonthTotal||0), color:'#f43f5e', icon:'📅'},
+                  {label:'Total Income',     val:fmtFull(expenseSummary.totalIncome||0),    color:'#00d4a1', icon:'💰'},
+                  {label:'Uncategorized',    val:expenseSummary.uncategorized||0,           color:'#f59e0b', icon:'❓'},
                 ].map(s=>(
                   <div key={s.label} style={{background:'#0a1628',borderRadius:10,padding:'14px 18px',border:'1px solid #1e3a5f'}}>
                     <div style={{fontSize:18,marginBottom:6}}>{s.icon}</div>
@@ -2393,12 +2317,12 @@ export default function Dashboard() {
                 ))}
               </div>
 
-              {/* Charts */}
+              {/* ── Charts ───────────────────────────────────── */}
               {expenseEntries.length>0&&(()=>{
                 const EXP_COLORS=['#fb923c','#f43f5e','#a78bfa','#0ea5e9','#64ffda','#34d399','#f59e0b','#ec4899','#6366f1','#10b981'];
-                const catData = Object.entries(expenseSummary.byCategory||{}).map(([name,value])=>({name,value})).filter(d=>d.value>0).sort((a,b)=>b.value-a.value);
-                const mthData = Object.keys(expenseSummary.byMonth||{}).sort().map(m=>({
-                  month:new Date(m+'-01').toLocaleDateString('en-IN',{month:'short'}),
+                const catData=Object.entries(expenseSummary.byCategory||{}).map(([name,value])=>({name,value})).filter(d=>d.value>0).sort((a,b)=>b.value-a.value);
+                const mthData=Object.keys(expenseSummary.byMonth||{}).sort().map(m=>({
+                  month:new Date(m+'-01').toLocaleDateString('en-IN',{month:'short',year:'2-digit'}),
                   amount:expenseSummary.byMonth[m]
                 }));
                 return (
@@ -2439,7 +2363,7 @@ export default function Dashboard() {
                           </defs>
                           <XAxis dataKey="month" stroke="#334155" tick={{fill:'#64748b',fontSize:11}}/>
                           <YAxis stroke="#334155" tick={{fill:'#64748b',fontSize:10}} tickFormatter={v=>'₹'+(v/1000).toFixed(0)+'K'}/>
-                          <Tooltip formatter={v=>[fmtFull(v),'Expense']} contentStyle={{background:'#141b2d',border:'1px solid #1a2235',borderRadius:8,fontSize:12}}/>
+                          <Tooltip formatter={v=>[fmtFull(v),'Spend']} contentStyle={{background:'#141b2d',border:'1px solid #1a2235',borderRadius:8,fontSize:12}}/>
                           <Area type="monotone" dataKey="amount" stroke="#fb923c" strokeWidth={2} fill="url(#expGrad)"/>
                         </AreaChart>
                       </ResponsiveContainer>
@@ -2448,85 +2372,96 @@ export default function Dashboard() {
                 );
               })()}
 
-              {/* Expense table with inline category edit */}
+              {/* ── Transaction Table ────────────────────────── */}
               <div style={{background:'#0a1628',borderRadius:10,border:'1px solid #1e3a5f'}}>
-                <div style={{padding:'14px 20px',borderBottom:'1px solid #1e3a5f',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                  <div style={{color:'#e2e8f0',fontWeight:700,fontSize:14}}>All Expenses</div>
-                  <div style={{color:'#475569',fontSize:12}}>{expenseEntries.length} entries · click row to edit category</div>
+                <div style={{padding:'14px 20px',borderBottom:'1px solid #1e3a5f',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
+                  <div style={{color:'#e2e8f0',fontWeight:700,fontSize:14}}>Transactions</div>
+                  <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                    {['ALL','DEBIT','CREDIT'].map(t=>(
+                      <button key={t} onClick={()=>setExpenseFilter&&setExpenseFilter(t)}
+                        style={{fontSize:11,padding:'3px 10px',borderRadius:6,border:'1px solid',cursor:'pointer',
+                          background:((window._expFilter||'ALL')===t)?'rgba(251,146,60,0.15)':'transparent',
+                          borderColor:((window._expFilter||'ALL')===t)?'rgba(251,146,60,0.4)':'#1e3a5f',
+                          color:((window._expFilter||'ALL')===t)?'#fb923c':'#475569'}}>
+                        {t}
+                      </button>
+                    ))}
+                    <span style={{color:'#475569',fontSize:12,marginLeft:4}}>{expenseEntries.length} entries</span>
+                  </div>
                 </div>
                 {expenseEntries.length===0?(
-                  <div style={{textAlign:'center',padding:'40px 20px'}}>
-                    <div style={{fontSize:36,marginBottom:12}}>💸</div>
-                    <div style={{fontSize:14,color:'#475569',marginBottom:8}}>No expenses yet</div>
-                    <div style={{fontSize:12,color:'#334155'}}>Click "Scan Now" to auto-detect from emails, or add manually</div>
+                  <div style={{textAlign:'center',padding:'48px 20px'}}>
+                    <div style={{fontSize:40,marginBottom:12}}>📱</div>
+                    <div style={{fontSize:16,color:'#e2e8f0',fontWeight:600,marginBottom:6}}>No transactions yet</div>
+                    <div style={{fontSize:13,color:'#475569'}}>Sync your Android app to see expenses here, or add manually.</div>
                   </div>
                 ):(
-                  <table className="db-table" style={{width:'100%'}}>
-                    <thead><tr>
-                      {familyMode&&<th>Member</th>}<th>Date</th><th>Merchant</th><th>Category</th>
-                      <th>Sub-category</th><th>Source</th><th>Comments</th>
-                      <th className="right">Amount</th><th></th>
-                    </tr></thead>
-                    <tbody>
-                      {expenseEntries.map(e=>(
-                        <tr key={e.id} style={{cursor:'pointer'}} onClick={()=>setEditingExpense(editingExpense===e.id?null:e.id)}>
-                          {familyMode && <td style={{verticalAlign:'middle'}}><MemberBadge entry={e}/></td>}
-                          <td style={{color:'#64748b',fontSize:12,whiteSpace:'nowrap'}}>
-                            {new Date(e.expense_date+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}
-                          </td>
-                          <td>
-                            <div style={{color:'#e2e8f0',fontSize:13}}>{e.merchant_name||'—'}</div>
-                            {e.email_subject&&<div style={{color:'#334155',fontSize:10,marginTop:1}}>{e.email_subject.slice(0,45)}</div>}
-                          </td>
-                          <td>
-                            {editingExpense===e.id?(
-                              <select className="db-input" style={{background:'#0f1c2e',color:'#e2e8f0',cursor:'pointer',fontSize:12,padding:'4px 6px'}}
-                                defaultValue={e.category||''} onClick={ev=>ev.stopPropagation()}
-                                onChange={ev=>{ev.stopPropagation();updateExpenseCategory(e.id,ev.target.value,e.sub_category,e.merchant_name);}}>
-                                <option value="">— select —</option>
-                                {Object.keys(expenseCategories).map(cat=><option key={cat} value={cat}>{cat}</option>)}
-                              </select>
-                            ):(
-                              e.category
-                                ? <span style={{fontSize:11,padding:'2px 8px',borderRadius:4,fontWeight:600,background:'rgba(251,146,60,0.1)',color:'#fb923c'}}>{e.category}</span>
-                                : <span style={{fontSize:11,color:'#f59e0b'}}>⚠ tap to set</span>
-                            )}
-                          </td>
-                          <td style={{color:'#64748b',fontSize:12}}>{e.sub_category||'—'}</td>
-                          <td>
-                            <span style={{fontSize:10,padding:'2px 6px',borderRadius:4,
-                              background:e.source==='auto'?'rgba(14,165,233,0.1)':e.category_source==='ai'?'rgba(167,139,250,0.1)':'rgba(100,255,218,0.08)',
-                              color:e.source==='auto'?'#38bdf8':e.category_source==='ai'?'#a78bfa':'#64ffda'}}>
-                              {e.source==='manual'?'✎ manual':e.category_source==='ai'?'🤖 ai':e.category_source==='learned'?'📚 learned':e.category_source==='dict'?'📖 dict':'⚡ auto'}
-                            </span>
-                          </td>
-                          <td style={{color:'#64748b',fontSize:12}}>{e.comments||'—'}</td>
-                          <td className="right" style={{color:'#fb923c',fontWeight:700}}>{fmtFull(e.amount)}</td>
-                          <td>
-                            <div style={{display:'flex',gap:4}}>
-                              {e.receipt_url
-                                ? <a href={e.receipt_url} target="_blank" rel="noreferrer" onClick={ev=>ev.stopPropagation()}
-                                    style={{background:'none',border:'none',color:'#0ea5e9',cursor:'pointer',fontSize:14,padding:'2px 6px',textDecoration:'none'}}>📎</a>
-                                : <label onClick={ev=>ev.stopPropagation()} style={{cursor:'pointer',fontSize:14,padding:'2px 6px',color:'#334155'}}>
-                                    📎
-                                    <input type="file" style={{display:'none'}} accept="image/*,application/pdf"
-                                      onChange={async ev=>{
-                                        ev.stopPropagation();
-                                        const file=ev.target.files[0]; if(!file)return;
-                                        const form=new FormData(); form.append('file',file);
-                                        await api.post(`/api/expense/entries/${e.id}/receipt`, form, { headers:{'Content-Type':'multipart/form-data'} });
-                                        await loadExpenses();
-                                      }} />
-                                  </label>
-                              }
+                  <div style={{overflowX:'auto'}}>
+                    <table className="db-table" style={{width:'100%'}}>
+                      <thead><tr>
+                        {familyMode&&<th>Member</th>}
+                        <th>Date</th>
+                        <th>Merchant</th>
+                        <th>Category</th>
+                        <th>Bank</th>
+                        <th>Note</th>
+                        <th>Type</th>
+                        <th className="right">Amount</th>
+                        <th></th>
+                      </tr></thead>
+                      <tbody>
+                        {expenseEntries.map(e=>(
+                          <tr key={e.id} style={{cursor:'pointer'}} onClick={()=>setEditingExpense(editingExpense===e.id?null:e.id)}>
+                            {familyMode&&<td style={{verticalAlign:'middle'}}><MemberBadge entry={e}/></td>}
+                            <td style={{color:'#64748b',fontSize:12,whiteSpace:'nowrap'}}>
+                              {e.expense_date ? new Date(e.expense_date+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) : '—'}
+                            </td>
+                            <td>
+                              <div style={{color:'#e2e8f0',fontSize:13,fontWeight:500}}>{e.merchant_name||'—'}</div>
+                              {e.comments&&<div style={{color:'#334155',fontSize:10,marginTop:1}}>{e.comments.slice(0,40)}</div>}
+                            </td>
+                            <td>
+                              {editingExpense===e.id?(
+                                <select className="db-input" style={{background:'#0f1c2e',color:'#e2e8f0',cursor:'pointer',fontSize:12,padding:'4px 6px'}}
+                                  defaultValue={e.category_id||''}
+                                  onClick={ev=>ev.stopPropagation()}
+                                  onChange={ev=>{ev.stopPropagation();updateExpenseCategory(e.id,ev.target.value,null,e.merchant_name);}}>
+                                  <option value="">— select —</option>
+                                  {Object.entries({food_dining:'Food & Dining',groceries:'Groceries',shopping:'Shopping',travel:'Travel',utilities:'Utilities',entertainment:'Entertainment',health:'Healthcare',education:'Education',bills:'Bills',investment:'Investment',fuel:'Fuel',other:'Others'}).map(([id,label])=>(
+                                    <option key={id} value={id}>{label}</option>
+                                  ))}
+                                </select>
+                              ):(
+                                e.category
+                                  ? <span style={{fontSize:11,padding:'2px 8px',borderRadius:4,fontWeight:600,
+                                      background:e.type==='CREDIT'?'rgba(0,212,161,0.1)':'rgba(251,146,60,0.1)',
+                                      color:e.type==='CREDIT'?'#00d4a1':'#fb923c'}}>
+                                      {e.category}
+                                    </span>
+                                  : <span style={{fontSize:11,color:'#f59e0b'}}>⚠ tap to set</span>
+                              )}
+                            </td>
+                            <td style={{color:'#475569',fontSize:11}}>{e.bank_sender||'—'}</td>
+                            <td style={{color:'#475569',fontSize:11,maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{e.comments||'—'}</td>
+                            <td>
+                              <span style={{fontSize:10,padding:'2px 7px',borderRadius:4,fontWeight:600,
+                                background:e.type==='CREDIT'?'rgba(0,212,161,0.08)':'rgba(244,63,94,0.08)',
+                                color:e.type==='CREDIT'?'#00d4a1':'#f87171'}}>
+                                {e.type||'DEBIT'}
+                              </span>
+                            </td>
+                            <td className="right" style={{color:e.type==='CREDIT'?'#00d4a1':'#fb923c',fontWeight:700}}>
+                              {e.type==='CREDIT'?'+':''}{fmtFull(e.amount)}
+                            </td>
+                            <td>
                               <button onClick={ev=>{ev.stopPropagation();deleteExpenseEntry(e.id);}}
                                 style={{background:'none',border:'none',color:'#334155',cursor:'pointer',fontSize:14,padding:'2px 6px'}}>✕</button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
               </div>
             </div>
@@ -4275,72 +4210,13 @@ export default function Dashboard() {
                 </div>
 
                 {(settingsSection==='expense' || settingsSection==='expensesettings') && (
-                  <>
-                    <div style={{background:'rgba(251,146,60,0.06)',border:'1px solid rgba(251,146,60,0.2)',borderRadius:8,padding:'10px 14px',marginBottom:16,fontSize:12,color:'#fb923c'}}>
-                      💡 Kanalyst auto-detects expenses from UPI debit & credit card emails every 30 min. Add rules to focus on specific banks.
-                    </div>
-
-                    {showExpenseRuleForm ? (
-                      <div style={{background:'#060e1a',borderRadius:10,padding:16,border:'1px solid #1e3a5f',marginBottom:14}}>
-                        <div style={{color:'#fb923c',fontWeight:700,fontSize:13,marginBottom:14}}>{editingExpenseRule?'✎ Edit Rule':'+ New Scan Rule'}</div>
-                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
-                          <div>
-                            <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>RULE NAME *</label>
-                            <input className="db-input" placeholder="e.g. HDFC Debit Alerts" value={expenseRuleForm.rule_name} onChange={e=>setExpenseRuleForm(p=>({...p,rule_name:e.target.value}))} />
-                          </div>
-                          <div>
-                            <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>BANK SENDER EMAIL</label>
-                            <input className="db-input" placeholder="e.g. alerts@hdfcbank.net" value={expenseRuleForm.email_sender} onChange={e=>setExpenseRuleForm(p=>({...p,email_sender:e.target.value}))} />
-                          </div>
-                        </div>
-                        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
-                          <div>
-                            <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>SUBJECT CONTAINS</label>
-                            <input className="db-input" placeholder="e.g. Debit Alert" value={expenseRuleForm.subject_pattern} onChange={e=>setExpenseRuleForm(p=>({...p,subject_pattern:e.target.value}))} />
-                          </div>
-                          <div>
-                            <label style={{display:'block',color:'#94a3b8',fontSize:11,fontWeight:700,marginBottom:4}}>SCAN HISTORY</label>
-                            <select className="db-input" style={{background:'#0f1c2e',color:'#e2e8f0',cursor:'pointer'}} value={expenseRuleForm.lookback_months} onChange={e=>setExpenseRuleForm(p=>({...p,lookback_months:e.target.value}))}>
-                              <option value="0">From now</option>
-                              <option value="1">Last 1 month</option>
-                              <option value="3">Last 3 months</option>
-                              <option value="6">Last 6 months</option>
-                            </select>
-                          </div>
-                        </div>
-                        <div style={{display:'flex',gap:8}}>
-                          <button onClick={saveExpenseRule} disabled={expenseRuleSaving}
-                            style={{flex:1,background:'#fb923c',color:'#fff',border:'none',borderRadius:8,padding:'10px',fontWeight:700,fontSize:13,cursor:'pointer'}}>
-                            {expenseRuleSaving?'⟳ Saving…':(editingExpenseRule?'Update':'Save Rule')}
-                          </button>
-                          <button onClick={()=>{setShowExpenseRuleForm(false);setEditingExpenseRule(null);}} style={{padding:'10px 16px',background:'#1e2d3d',color:'#94a3b8',border:'1px solid #334155',borderRadius:8,cursor:'pointer',fontSize:13}}>Cancel</button>
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        {expenseRules.map(r=>(
-                          <div key={r.id} style={{background:'#060e1a',border:'1px solid #1e3a5f',borderRadius:8,padding:'10px 14px',marginBottom:8,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                            <div>
-                              <span style={{color:'#e2e8f0',fontWeight:600,fontSize:13}}>{r.rule_name}</span>
-                              {r.email_sender&&<span style={{color:'#475569',fontSize:11,marginLeft:8}}>{r.email_sender}</span>}
-                            </div>
-                            <div style={{display:'flex',gap:6}}>
-                              <button onClick={()=>{setEditingExpenseRule(r);setExpenseRuleForm({rule_name:r.rule_name,email_sender:r.email_sender||'',subject_pattern:r.subject_pattern||'',body_pattern:r.body_pattern||'',lookback_months:String(r.lookback_months||0)});setShowExpenseRuleForm(true);}} style={{background:'#1e2d3d',border:'1px solid #334155',color:'#94a3b8',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:11}}>Edit</button>
-                              <button onClick={async()=>{await api.delete(`/api/expense/rules/${r.id}`);await loadExpenses();}} style={{background:'rgba(244,63,94,0.08)',border:'1px solid rgba(244,63,94,0.2)',color:'#f43f5e',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:11}}>✕</button>
-                            </div>
-                          </div>
-                        ))}
-                        {expenseRules.length===0&&<div style={{textAlign:'center',padding:'16px 0',color:'#334155',fontSize:13,marginBottom:12}}>No rules — default scan catches all debit emails.</div>}
-                        <div style={{display:'flex',gap:10}}>
-                          <button onClick={()=>setShowExpenseRuleForm(true)} style={{flex:1,background:'rgba(251,146,60,0.1)',border:'1px solid rgba(251,146,60,0.3)',color:'#fb923c',borderRadius:8,padding:'10px',fontWeight:700,fontSize:13,cursor:'pointer'}}>+ New Rule</button>
-                          <button onClick={scanExpenses} disabled={expenseScanning} style={{flex:1,background:'#fb923c',border:'none',color:'#fff',borderRadius:8,padding:'10px',fontWeight:700,fontSize:13,cursor:'pointer'}}>{expenseScanning?'⟳ Scanning…':'⟳ Scan Now'}</button>
-                        </div>
-                        {expenseScanResult&&<div style={{marginTop:10,padding:'8px 12px',borderRadius:8,fontSize:12,background:expenseScanResult.success?'rgba(251,146,60,0.08)':'rgba(244,63,94,0.08)',border:`1px solid ${expenseScanResult.success?'rgba(251,146,60,0.2)':'rgba(244,63,94,0.2)'}`,color:expenseScanResult.success?'#fb923c':'#f43f5e'}}>{expenseScanResult.success?'✅':'⚠'} {expenseScanResult.message}{(expenseScanResult.emailsRead||0)>0&&` · ${expenseScanResult.emailsRead} read, ${expenseScanResult.found} captured`}</div>}
-                      </>
-                    )}
-                  </>
+                  <div style={{background:'rgba(251,146,60,0.06)',border:'1px solid rgba(251,146,60,0.2)',borderRadius:10,padding:'18px 20px',fontSize:13,color:'#94a3b8',lineHeight:1.7}}>
+                    <div style={{fontSize:15,fontWeight:700,color:'#fb923c',marginBottom:10}}>📱 Android App Sync</div>
+                    <p style={{margin:'0 0 8px 0'}}>Expenses are synced automatically from your <b style={{color:'#e2e8f0'}}>Kanalyst Android app</b> via SMS detection.</p>
+                    <p style={{margin:'0 0 8px 0'}}>Open the Android app → ensure SMS permission is granted → transactions will appear here automatically.</p>
+                    <p style={{margin:0,color:'#475569',fontSize:12}}>There is no email scan for expenses. To add a transaction manually, use the <b style={{color:'#fb923c'}}>+ Add Manual</b> button on the Expenses tab.</p>
+                  </div>
                 )}
-
                 {settingsSection==='family' && (
                 <div>
                   <div style={{color:'#e2e8f0',fontSize:14,fontWeight:700,marginBottom:16}}>👨‍👩‍👧‍👦 Family</div>
