@@ -36,12 +36,15 @@ router.get('/', requireAuth, async (req, res) => {
   }
 
   const history = rows.map(r => ({
-    date:        r.statement_to,
-    total_value: parseFloat(r.total_value || 0),
-    scheme_e:    parseFloat(r.scheme_e_value || 0),
-    scheme_c:    parseFloat(r.scheme_c_value || 0),
-    scheme_g:    parseFloat(r.scheme_g_value || 0),
-    xirr:        r.xirr,
+    date:               r.statement_to,
+    email_date:         r.email_date || null,
+    total_value:        parseFloat(r.total_value || 0),
+    total_contributions:parseFloat(r.total_contributions || 0),
+    notional_gain:      parseFloat(r.notional_gain || 0),
+    scheme_e:           parseFloat(r.scheme_e_value || 0),
+    scheme_c:           parseFloat(r.scheme_c_value || 0),
+    scheme_g:           parseFloat(r.scheme_g_value || 0),
+    xirr:               r.xirr,
   })).reverse();
 
   const growthPct = history.length > 1 && history[0].total_value > 0
@@ -220,6 +223,7 @@ router.post('/sync', requireAuth, async (req, res) => {
               scheme_g_nav:        parsed_data.scheme_g_nav,
               scheme_g_pct:        parsed_data.scheme_g_pct,
               source:              email.pdfFailed ? 'email_text' : 'email',
+              email_date:          email.date ? new Date(email.date).toISOString().split('T')[0] : null,
               raw_text_snippet:    textToParse.slice(0, 500),
               updated_at:          new Date().toISOString(),
             }, { onConflict: 'user_id,statement_to' });
