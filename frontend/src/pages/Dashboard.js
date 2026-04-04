@@ -7,7 +7,6 @@ import AdminPanel from './AdminPanel';
 import Dividends from './Dividends';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import './Dashboard.css';
-import * as XLSX from 'xlsx';
 
 const SECTOR_COLORS = {
   'IT': '#0ea5e9', 'Auto': '#f59e0b', 'Bank': '#00d4a1',
@@ -2321,23 +2320,32 @@ export default function Dashboard() {
 
             // Download Excel
             const downloadExcel = () => {
-              const rows = expenseEntries.map(e => ({
-                'Date':       e.expense_date || '',
-                'Merchant':   e.merchant_name || '',
-                'Category':   e.category || '',
-                'Category ID':e.category_id || '',
-                'Type':       e.type || 'DEBIT',
-                'Amount':     parseFloat(e.amount || 0),
-                'Bank':       e.bank_sender || '',
-                'Note':       e.comments || '',
-                'Source':     e.source || '',
-              }));
-              const ws = XLSX.utils.json_to_sheet(rows);
-              const wb = XLSX.utils.book_new();
-              XLSX.utils.book_append_sheet(wb, ws, 'Expenses');
-              // Column widths
-              ws['!cols'] = [12,25,18,14,8,12,20,30,10].map(w=>({wch:w}));
-              XLSX.writeFile(wb, `Kanalyst_Expenses_${new Date().toISOString().slice(0,10)}.xlsx`);
+              const headers = ['Date','Merchant','Category','Category ID','Type','Amount','Bank','Note','Source'];
+              const rows = expenseEntries.map(e => [
+                e.expense_date || '',
+                e.merchant_name || '',
+                e.category || '',
+                e.category_id || '',
+                e.type || 'DEBIT',
+                parseFloat(e.amount || 0),
+                e.bank_sender || '',
+                e.comments || '',
+                e.source || '',
+              ]);
+              // Build CSV (UTF-8 BOM so Excel opens correctly)
+              const escape = v => {
+                const s = String(v);
+                return s.includes(',') || s.includes('"') || s.includes('\n')
+                  ? `"${s.replace(/"/g,'""')}"` : s;
+              };
+              const csv = '\uFEFF' + [headers, ...rows].map(r => r.map(escape).join(',')).join('\n');
+              const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+              const url  = URL.createObjectURL(blob);
+              const a    = document.createElement('a');
+              a.href = url;
+              a.download = `Kanalyst_Expenses_${new Date().toISOString().slice(0,10)}.csv`;
+              a.click();
+              URL.revokeObjectURL(url);
             };
 
             // Month totals
