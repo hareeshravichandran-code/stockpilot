@@ -95,11 +95,14 @@ function parseNPSText(text) {
   function parseCompactSummaryRow() {
     var summaryIdx = text.search(/Investment Summary/i);
     if (summaryIdx < 0) return null;
-    var chunk = text.slice(summaryIdx, summaryIdx + 1000);
+    // Use 2000 chars to capture full table including values that appear after column headers
+    var chunk = text.slice(summaryIdx, summaryIdx + 2000);
 
-    // Clean/Indian format with decimals (includes commas)
+    // Clean/Indian format: values must be large (5+ digits before decimal = at least 10,000)
+    // Matches: "439215.01  26  397444.93  0.00  41770.08"
+    // OR Indian: "4,39,215.01  26  3,97,444.93  0.00  41,770.08"
     var cleanRow = chunk.match(
-      /([\d,]{5,}\.\d{2})\s+(\d{1,3})\s+([\d,]{5,}\.\d{2})\s+([\d,]+\.?\d*)\s+([\d,]{4,}\.\d{2})/
+      /([\d,]{6,}\.\d{2})\s+(\d{1,3})\s+([\d,]{6,}\.\d{2})\s+([\d,]+\.?\d*)\s+([\d,]{4,}\.\d{2})/
     );
     if (cleanRow) {
       return {
@@ -111,8 +114,19 @@ function parseNPSText(text) {
       };
     }
 
-    // Garbled OCR: no decimals
-    var garbledRow = chunk.match(/(\d{7,})\s+(\d{1,3})\s+(\d{7,})\s+(\d{1,6})\s+(\d{5,})/);
+    // Pipe/markdown table format: | 439215.01 | 26 | 397444.93 | 0.00 | 41770.08 |
+    var pipeRow = chunk.match(/\|\s*([\d,]{6,}\.\d{2})\s*\|\s*(\d{1,3})\s*\|\s*([\d,]{6,}\.\d{2})\s*\|\s*([\d,.]+)\s*\|\s*([\d,]{4,}\.\d{2})/);
+    if (pipeRow) {
+      return {
+        totalValue:       parseNum(pipeRow[1]),
+        numContributions: parseInt(pipeRow[2]),
+        totalContrib:     parseNum(pipeRow[3]),
+        totalWithdrawal:  parseNum(pipeRow[4]) || 0,
+        notionalGain:     parseNum(pipeRow[5]),
+      };
+    }
+    // Garbled OCR: no decimals, large integers only (reject small values like 3699)
+    var garbledRow = chunk.match(/(\d{7,})\s+(\d{1,3})\s+(\d{7,})\s+(\d{1,6})\s+(\d{6,})/);
     if (garbledRow) {
       return {
         totalValue:       insertDecimal(garbledRow[1]),
@@ -159,26 +173,64 @@ function parseNPSText(text) {
   if (cboM) result.cbo_name = cboM[1].trim();
 
   // ── Investment Summary ────────────────────────────────────────────
-  // Primary: end-of-line number matching
-  result.total_value         = endOfLine('Value of your Holdings');
-  result.total_contributions = endOfLine('Total Contribution');
-  result.total_withdrawals   = endOfLine('Total Withdrawal') || 0;
-  result.notional_gain       = endOfLine('Notional Gain');
+  // CRITICAL FIX: Scope all searches to AFTER "Investment Summary" heading.
+  // NPS PDFs have a scheme table with "Value of your Holdings" column header
+  // that appears BEFORE the Investment Summary section. Without scoping,
+  // endOfLine picks up scheme values (e.g. 36.99, 406264) instead of totals.
+  var summaryIdx2 = text.search(/Investment Summary/i);
+  var summaryText = summaryIdx2 >= 0 ? text.slice(summaryIdx2) : text;
 
-  var ncM = text.match(/No\s+of\s+Contributions[\s:]+(\d+)/i);
-  if (ncM) result.num_contributions = parseInt(ncM[1]);
-
-  // Fallback: compact row (garbled OCR or clean inline)
-  if (!result.total_value || !result.total_contributions) {
-    var compact = parseCompactSummaryRow();
-    if (compact) {
-      if (!result.total_value)         result.total_value         = compact.totalValue;
-      if (!result.total_contributions) result.total_contributions = compact.totalContrib;
-      if (!result.total_withdrawals)   result.total_withdrawals   = compact.totalWithdrawal;
-      if (!result.notional_gain)       result.notional_gain       = compact.notionalGain;
-      if (!result.num_contributions)   result.num_contributions   = compact.numContributions;
-    }
+  // Scoped endOfLine: search only within summaryText
+  function endOfLineSummary(label) {
+    var re = new RegExp(label + '[^\\n]*\\s+([\\d][\\d,]*\\.\\d+)\\s*$', 'im');
+    var m  = summaryText.match(re);
+    if (m) return parseNum(m[1]);
+    var re2 = new RegExp(label + '[\\s\\S]{0,400}?\\s([\\d][\\d,]+\\.\\d{2})(?!\\d)', 'i');
+    var m2  = summaryText.match(re2);
+    return m2 ? parseNum(m2[1]) : null;
   }
+
+  // Strategy: try compact row FIRST (positionally accurate for tabular data),
+  // then fall back to label-based search for non-tabular / labeled formats.
+  var compact = parseCompactSummaryRow();
+  if (compact) {
+    result.total_value         = (compact.totalValue   && compact.totalValue   > 1000) ? compact.totalValue   : null;
+    result.total_contributions = (compact.totalContrib && compact.totalContrib > 1000) ? compact.totalContrib : null;
+    result.total_withdrawals   = compact.totalWithdrawal || 0;
+    result.notional_gain       = (compact.notionalGain && compact.notionalGain > 100)  ? compact.notionalGain  : null;
+    result.num_contributions   = compact.numContributions || null;
+  }
+
+  // For any field still missing, try label-based search scoped to Investment Summary section
+  if (!result.total_value) {
+    var _tv = endOfLineSummary('Value of your Holdings');
+    result.total_value = (_tv && _tv > 1000) ? _tv : null;
+  }
+  if (!result.total_contributions) {
+    // Look for labeled value: "Total Contribution ... (C) ... 397444.93"
+    var tcM = summaryText.match(/Total Contribution[\s\S]{0,400}?\(C\)[^\d]*(\d[\d,]+\.\d{2})/i)
+           || summaryText.match(/Total Contribution[^\n]*\n[^\d\n]*([\d,]{5,}\.\d{2})/i);
+    var _tc = tcM ? parseNum(tcM[1]) : endOfLineSummary('Total Contribution in your account');
+    result.total_contributions = (_tc && _tc > 1000) ? _tc : null;
+  }
+  if (!result.total_withdrawals) {
+    var _tw = endOfLineSummary('Total Withdrawal');
+    result.total_withdrawals = _tw || 0;
+  }
+  if (!result.notional_gain) {
+    var ngM = summaryText.match(/D=\s*\(A-B\)\s*\+C[^\d]*([\d,]+\.\d{2})/i)
+           || summaryText.match(/Notional[^\n]*\n[^\d\n]*([\d,]{4,}\.\d{2})/i)
+           || summaryText.match(/Notional[^\n]*\s([\d][\d,]*\.\d{2})\s*$/im);
+    var _ng = ngM ? parseNum(ngM[1]) : null;
+    if (!_ng) {
+      var ng2 = summaryText.match(/Notional[\s\S]{0,400}?\s([\d][\d,]+\.\d{2})(?!\d)/i);
+      _ng = ng2 ? parseNum(ng2[1]) : null;
+    }
+    result.notional_gain = (_ng && _ng > 100) ? _ng : null;
+  }
+
+  var ncM = summaryText.match(/No\s+of\s+Contributions[\s:]+(\d+)/i);
+  if (ncM && !result.num_contributions) result.num_contributions = parseInt(ncM[1]);
 
   // ── XIRR ─────────────────────────────────────────────────────────
   var xirrM = text.match(/\(?XIRR\)?\s*[:\-]?\s*(\d+\.?\d*)\s*%/i)
@@ -230,12 +282,9 @@ function parseNPSText(text) {
   if (!result.total_value && schemeSum > 0) {
     result.total_value = schemeSum;
   } else if (result.total_value && schemeSum > 1000) {
-    // Cross-check: if scheme sum differs >15% from total, prefer scheme sum (garbled OCR case)
-    var diff = Math.abs(result.total_value - schemeSum) / schemeSum;
-    if (diff > 0.05) {
-      console.log('NPS: total_value corrected from scheme sum', result.total_value, '->', schemeSum);
-      result.total_value = schemeSum;
-    }
+    // Note: do NOT override total_value from scheme sum.
+    // The Investment Summary is the authoritative source.
+    // Scheme sums can differ due to rounding; trust the parsed total.
   }
 
   // Allocation percentages
