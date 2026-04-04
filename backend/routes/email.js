@@ -284,8 +284,7 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
 
       // Save immediately — use statement date from PDF, not email date
       const casDate = summary?.statementDate || null;
-      const emailMailDate = email.date ? new Date(email.date).toISOString().split('T')[0] : null;
-      const saved = await saveCASHoldings(req.user.id, holdings, mfHoldings, casDate, emailMailDate);
+      const saved = await saveCASHoldings(req.user.id, holdings, mfHoldings, casDate);
 
       // Save portfolio snapshot for this statement date (builds history chart)
       saveSnapshot(req.user.id, {
@@ -362,7 +361,7 @@ router.post('/sync', requireAuth, (req, res, next) => {
 
 // ── Save holdings (equity → holdings table, MF → mf_holdings table) ──
 // casDate = statement date from PDF ("As on Date"), NOT email/sync date
-async function saveCASHoldings(userId, holdings, mfHoldings, casDate, emailMailDate) {
+async function saveCASHoldings(userId, holdings, mfHoldings, casDate) {
   const supabase   = require('../services/supabase');
   let saved = 0;
 
@@ -397,7 +396,6 @@ async function saveCASHoldings(userId, holdings, mfHoldings, casDate, emailMailD
           cas_source: h.cas_source || 'CAS',
           demat_account: h.demat_account || null,
           cas_statement_date: statementDate || null,
-          cas_mail_date: emailMailDate || null,
           cas_updated_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         }, { onConflict: 'user_id,isin' });
@@ -415,7 +413,7 @@ async function saveCASHoldings(userId, holdings, mfHoldings, casDate, emailMailD
           invested_value:null,
           gain_loss:     null,
           source:        h.cas_source || 'CDSL',
-        }, statementDate, emailMailDate);
+        }, statementDate);
         if (saved_ok) saved++;
       }
       continue;
@@ -444,7 +442,6 @@ async function saveCASHoldings(userId, holdings, mfHoldings, casDate, emailMailD
     // Add new columns if they exist in DB (graceful degradation)
     if (h.demat_account)  holdingRecord.demat_account      = h.demat_account;
     if (statementDate)    holdingRecord.cas_statement_date  = statementDate;
-    if (emailMailDate)    holdingRecord.cas_mail_date       = emailMailDate;
 
     let { error } = await supabase.from('holdings').upsert(holdingRecord, { onConflict: 'user_id,isin' });
 
@@ -482,7 +479,6 @@ async function saveCASHoldings(userId, holdings, mfHoldings, casDate, emailMailD
       gain_loss:      h.gain_loss      || null,
       source:         h.source         || 'NSDL',
       statement_date: statementDate,
-      cas_mail_date:  emailMailDate || null,
       cas_updated_at: new Date().toISOString(),
       updated_at:     new Date().toISOString(),
     }));
@@ -526,7 +522,7 @@ async function saveCASHoldings(userId, holdings, mfHoldings, casDate, emailMailD
 }
 
 // ── Save a single MF holding to mf_holdings table ─────────────────
-async function saveSingleMF(userId, h, statementDate, emailMailDate) {
+async function saveSingleMF(userId, h, statementDate) {
   const supabase = require('../services/supabase');
   const record = {
     user_id:        userId,
@@ -542,7 +538,6 @@ async function saveSingleMF(userId, h, statementDate, emailMailDate) {
     gain_loss:      h.gain_loss      || null,
     source:         h.source         || 'NSDL',
     statement_date: statementDate,
-    cas_mail_date:  emailMailDate || null,
     cas_updated_at: new Date().toISOString(),
     updated_at:     new Date().toISOString(),
   };
