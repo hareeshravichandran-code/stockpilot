@@ -89,6 +89,11 @@ export default function Dashboard() {
   const [expenseCategories, setExpenseCategories] = useState({});
   const [showExpenseEntry, setShowExpenseEntry] = useState(false);
   const [editingExpense, setEditingExpense]   = useState(null); // for inline edit
+  // Expense calendar state — must be top-level (React hooks rules)
+  const [expView,    setExpView]    = useState('calendar');
+  const [calMonth,   setCalMonth]   = useState(() => { const n=new Date(); return {y:n.getFullYear(), m:n.getMonth()}; });
+  const [calDay,     setCalDay]     = useState(null);
+  const [expTypeTab, setExpTypeTab] = useState('total');
   const [expenseEntryForm, setExpenseEntryForm] = useState({
     category:'', sub_category:'', amount:'',
     expense_date: new Date().toISOString().split('T')[0],
@@ -2279,11 +2284,6 @@ export default function Dashboard() {
 
           {/* EXPENSES TAB */}
           {tab === 'expenses' && (() => {
-            // ── Expense view state (managed inline via refs for simplicity) ──
-            const [expView,      setExpView]      = React.useState('calendar');   // 'calendar' | 'table'
-            const [calMonth,     setCalMonth]     = React.useState(() => { const n=new Date(); return {y:n.getFullYear(),m:n.getMonth()}; });
-            const [calDay,       setCalDay]       = React.useState(null);
-            const [expTypeTab,   setExpTypeTab]   = React.useState('total');      // 'total' | 'expense' | 'investment'
             const INV_CATS = new Set(['investment','inv_return','bills']);
 
             // Filter entries for current type tab
