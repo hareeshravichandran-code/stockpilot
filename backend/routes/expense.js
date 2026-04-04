@@ -1,725 +1,202 @@
 /**
- * Expense Module API — StockPilot
+ * Expense Module — Kanalyst
  *
- * Smart expense tracking from UPI/credit card debit emails.
- * Merchant category detection uses:
- *   1. User-learned mappings (merchant_categories table) — highest priority
- *   2. Built-in keyword dictionary (500+ merchants)
- *   3. Claude AI for unknowns
- *   4. Blank — user fills manually (which then trains the learner)
+ * Single source of truth: expense_transactions (Android app table)
+ * expense_entries is DEPRECATED — no longer used.
+ * No email scan. Data comes from Android SMS sync only.
  *
- * Routes:
- *   GET    /api/expense/entries          list entries + summary
- *   POST   /api/expense/entries          manual entry
- *   PUT    /api/expense/entries/:id      update entry (category/comments)
- *   DELETE /api/expense/entries/:id      delete
- *   POST   /api/expense/entries/:id/receipt  upload receipt
- *   POST   /api/expense/scan             scan Gmail for debit emails
- *   GET    /api/expense/categories       category list
- *   GET    /api/expense/rules            list scan rules
- *   POST   /api/expense/rules            create rule
- *   PUT    /api/expense/rules/:id        update
- *   DELETE /api/expense/rules/:id        delete
- *   POST   /api/expense/categorize       AI categorize a merchant name
+ * Field mapping (expense_transactions → web):
+ *   date_time (epoch ms)  →  expense_date (YYYY-MM-DD)
+ *   merchant              →  merchant_name
+ *   note / description    →  comments
+ *   category_id           →  category (text)
+ *   type (DEBIT/CREDIT)   →  source
  */
+
+'use strict';
 
 const router      = require('express').Router();
 const requireAuth = require('../middleware/requireAuth');
 const supabase    = require('../services/supabase');
-const multer      = require('multer');
-const upload      = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
-// ── Category taxonomy ─────────────────────────────────────────────
-const EXPENSE_CATEGORIES = {
-  'Outside Food':   ['Restaurants', 'Fast Food', 'Café', 'Delivery', 'Bakery'],
-  'Groceries':      ['Supermarket', 'Vegetables', 'Fruits', 'Dairy', 'Online Grocery'],
-  'Shopping':       ['Clothing', 'Electronics', 'Home & Living', 'Books', 'Online Shopping'],
-  'Transport':      ['Cab', 'Auto', 'Fuel', 'Parking', 'Public Transport'],
-  'Utilities':      ['Electricity', 'Water', 'Gas', 'Internet', 'Mobile Recharge'],
-  'Entertainment':  ['Movies', 'OTT', 'Games', 'Events', 'Sports'],
-  'Healthcare':     ['Pharmacy', 'Doctor', 'Hospital', 'Lab Tests', 'Fitness'],
-  'Travel':         ['Flights', 'Hotels', 'Bus/Train', 'Vacation', 'Travel Agency'],
-  'Education':      ['Tuition', 'Books', 'Online Courses', 'School Fees'],
-  'Finance':        ['EMI', 'Insurance', 'Investment', 'Bank Charges', 'Credit Card Bill'],
-  'Rent':           ['House Rent', 'Office Rent'],
-  'Others':         ['Miscellaneous', 'Unknown'],
+// ── Category id ↔ display text ──────────────────────────────────────
+const CAT_ID_TO_TEXT = {
+  food_dining:   'Food & Dining',
+  groceries:     'Groceries',
+  shopping:      'Shopping',
+  travel:        'Travel',
+  utilities:     'Utilities',
+  entertainment: 'Entertainment',
+  health:        'Healthcare',
+  education:     'Education',
+  bills:         'Bills',
+  investment:    'Investment',
+  fuel:          'Fuel',
+  salary:        'Salary',
+  freelance:     'Freelance',
+  refund:        'Refund',
+  cashback:      'Cashback',
+  inv_return:    'Returns',
+  transfer_in:   'Transfer In',
+  other:         'Others',
 };
 
-// ── Built-in merchant → category dictionary ───────────────────────
-// Format: merchant_keyword_lowercase → [category, sub_category, display_name]
-const MERCHANT_DICT = {
-  // Outside Food — delivery
-  'zomato':           ['Outside Food', 'Delivery',   'Zomato'],
-  'swiggy':           ['Outside Food', 'Delivery',   'Swiggy'],
-  'dunzo':            ['Outside Food', 'Delivery',   'Dunzo'],
-  'blinkit':          ['Groceries',    'Online Grocery', 'Blinkit'],
-  'zepto':            ['Groceries',    'Online Grocery', 'Zepto'],
-  'instamart':        ['Groceries',    'Online Grocery', 'Swiggy Instamart'],
-  // Outside Food — restaurants
-  'saravana bhavan':  ['Outside Food', 'Restaurants', 'Saravana Bhavan'],
-  'saravana bavan':   ['Outside Food', 'Restaurants', 'Saravana Bhavan'],
-  'saravanabhavan':   ['Outside Food', 'Restaurants', 'Saravana Bhavan'],
-  'haldirams':        ['Outside Food', 'Restaurants', "Haldiram's"],
-  'haldiram':         ['Outside Food', 'Restaurants', "Haldiram's"],
-  'mcdonalds':        ['Outside Food', 'Fast Food',   "McDonald's"],
-  'mcdonald':         ['Outside Food', 'Fast Food',   "McDonald's"],
-  'dominos':          ['Outside Food', 'Fast Food',   "Domino's"],
-  'pizza hut':        ['Outside Food', 'Fast Food',   'Pizza Hut'],
-  'kfc':              ['Outside Food', 'Fast Food',   'KFC'],
-  'subway':           ['Outside Food', 'Fast Food',   'Subway'],
-  'burger king':      ['Outside Food', 'Fast Food',   'Burger King'],
-  'starbucks':        ['Outside Food', 'Café',        'Starbucks'],
-  'cafe coffee day':  ['Outside Food', 'Café',        'Café Coffee Day'],
-  'ccd':              ['Outside Food', 'Café',        'Café Coffee Day'],
-  'third wave':       ['Outside Food', 'Café',        'Third Wave Coffee'],
-  'chaayos':          ['Outside Food', 'Café',        'Chaayos'],
-  'biryani by kilo':  ['Outside Food', 'Restaurants', 'Biryani By Kilo'],
-  'behrouz':          ['Outside Food', 'Restaurants', 'Behrouz Biryani'],
-  'barbeque nation':  ['Outside Food', 'Restaurants', 'Barbeque Nation'],
-  'paradise':         ['Outside Food', 'Restaurants', 'Paradise Biryani'],
-  'junior kuppanna':  ['Outside Food', 'Restaurants', 'Junior Kuppanna'],
-  'anjappar':         ['Outside Food', 'Restaurants', 'Anjappar'],
-  'murugan idli':     ['Outside Food', 'Restaurants', 'Murugan Idli Shop'],
-  'sangeetha':        ['Outside Food', 'Restaurants', 'Sangeetha Veg Restaurant'],
-  'hotels':           ['Outside Food', 'Restaurants', 'Restaurant'],
-  // Groceries
-  'bigbasket':        ['Groceries', 'Online Grocery', 'BigBasket'],
-  'big basket':       ['Groceries', 'Online Grocery', 'BigBasket'],
-  'grofers':          ['Groceries', 'Online Grocery', 'Grofers'],
-  'dmart':            ['Groceries', 'Supermarket',    'D-Mart'],
-  'd-mart':           ['Groceries', 'Supermarket',    'D-Mart'],
-  'reliance fresh':   ['Groceries', 'Supermarket',    'Reliance Fresh'],
-  'more supermarket': ['Groceries', 'Supermarket',    'More Supermarket'],
-  'nilgiris':         ['Groceries', 'Supermarket',    "Nilgiri's"],
-  'spencers':         ['Groceries', 'Supermarket',    "Spencer's"],
-  'spar':             ['Groceries', 'Supermarket',    'SPAR'],
-  'star bazaar':      ['Groceries', 'Supermarket',    'Star Bazaar'],
-  'jiomart':          ['Groceries', 'Online Grocery', 'JioMart'],
-  'dunzopay':         ['Groceries', 'Online Grocery', 'Dunzo'],
-  // Shopping
-  'amazon':           ['Shopping', 'Online Shopping', 'Amazon'],
-  'flipkart':         ['Shopping', 'Online Shopping', 'Flipkart'],
-  'myntra':           ['Shopping', 'Clothing',        'Myntra'],
-  'ajio':             ['Shopping', 'Clothing',        'Ajio'],
-  'meesho':           ['Shopping', 'Online Shopping', 'Meesho'],
-  'nykaa':            ['Shopping', 'Home & Living',   'Nykaa'],
-  'reliance digital': ['Shopping', 'Electronics',     'Reliance Digital'],
-  'croma':            ['Shopping', 'Electronics',     'Croma'],
-  'decathlon':        ['Shopping', 'Sports',          'Decathlon'],
-  'ikea':             ['Shopping', 'Home & Living',   'IKEA'],
-  // Transport
-  'uber':             ['Transport', 'Cab',   'Uber'],
-  'ola':              ['Transport', 'Cab',   'Ola'],
-  'rapido':           ['Transport', 'Auto',  'Rapido'],
-  'namma yatri':      ['Transport', 'Auto',  'Namma Yatri'],
-  'indian oil':       ['Transport', 'Fuel',  'Indian Oil'],
-  'hp petrol':        ['Transport', 'Fuel',  'HPCL'],
-  'hpcl':             ['Transport', 'Fuel',  'HPCL'],
-  'bpcl':             ['Transport', 'Fuel',  'BPCL'],
-  'bharat petroleum': ['Transport', 'Fuel',  'BPCL'],
-  'iocl':             ['Transport', 'Fuel',  'IOCL'],
-  'fastag':           ['Transport', 'Toll',  'FASTag'],
-  'irctc':            ['Travel', 'Bus/Train', 'IRCTC'],
-  'ksrtc':            ['Transport', 'Public Transport', 'KSRTC'],
-  // Entertainment
-  'netflix':          ['Entertainment', 'OTT',    'Netflix'],
-  'prime video':      ['Entertainment', 'OTT',    'Amazon Prime'],
-  'hotstar':          ['Entertainment', 'OTT',    'Disney+ Hotstar'],
-  'disney':           ['Entertainment', 'OTT',    'Disney+ Hotstar'],
-  'jiocinema':        ['Entertainment', 'OTT',    'JioCinema'],
-  'sonyliv':          ['Entertainment', 'OTT',    'SonyLIV'],
-  'zee5':             ['Entertainment', 'OTT',    'Zee5'],
-  'spotify':          ['Entertainment', 'Music',  'Spotify'],
-  'youtube premium':  ['Entertainment', 'OTT',    'YouTube Premium'],
-  'bookmyshow':       ['Entertainment', 'Movies', 'BookMyShow'],
-  'pvr':              ['Entertainment', 'Movies', 'PVR Cinemas'],
-  'inox':             ['Entertainment', 'Movies', 'INOX'],
-  'cinepolis':        ['Entertainment', 'Movies', 'Cinepolis'],
-  // Utilities
-  'bescom':           ['Utilities', 'Electricity', 'BESCOM'],
-  'tneb':             ['Utilities', 'Electricity', 'TNEB'],
-  'msedcl':           ['Utilities', 'Electricity', 'MSEDCL'],
-  'bses':             ['Utilities', 'Electricity', 'BSES'],
-  'tata power':       ['Utilities', 'Electricity', 'Tata Power'],
-  'adani electricity':['Utilities', 'Electricity', 'Adani Electricity'],
-  'airtel':           ['Utilities', 'Mobile Recharge', 'Airtel'],
-  'jio':              ['Utilities', 'Mobile Recharge', 'Jio'],
-  'vi ': ['Utilities', 'Mobile Recharge', 'Vi'],
-  'vodafone':         ['Utilities', 'Mobile Recharge', 'Vodafone'],
-  'bsnl':             ['Utilities', 'Mobile Recharge', 'BSNL'],
-  'act fibernet':     ['Utilities', 'Internet', 'ACT Fibernet'],
-  'hathway':          ['Utilities', 'Internet', 'Hathway'],
-  'tikona':           ['Utilities', 'Internet', 'Tikona'],
-  'indane':           ['Utilities', 'Gas', 'Indane LPG'],
-  'hp gas':           ['Utilities', 'Gas', 'HP Gas'],
-  'bharat gas':       ['Utilities', 'Gas', 'Bharat Gas'],
-  // Healthcare
-  'apollo':           ['Healthcare', 'Pharmacy',  'Apollo Pharmacy'],
-  'medplus':          ['Healthcare', 'Pharmacy',  'MedPlus'],
-  'netmeds':          ['Healthcare', 'Pharmacy',  'Netmeds'],
-  '1mg':              ['Healthcare', 'Pharmacy',  '1mg'],
-  'pharmeasy':        ['Healthcare', 'Pharmacy',  'PharmEasy'],
-  'practo':           ['Healthcare', 'Doctor',    'Practo'],
-  'cult.fit':         ['Healthcare', 'Fitness',   'Cult.fit'],
-  'cure.fit':         ['Healthcare', 'Fitness',   'Cure.fit'],
-  'gym':              ['Healthcare', 'Fitness',   'Gym'],
-  // Travel
-  'makemytrip':       ['Travel', 'Travel Agency', 'MakeMyTrip'],
-  'goibibo':          ['Travel', 'Travel Agency', 'Goibibo'],
-  'cleartrip':        ['Travel', 'Travel Agency', 'Cleartrip'],
-  'indigo':           ['Travel', 'Flights',       'IndiGo'],
-  'air india':        ['Travel', 'Flights',       'Air India'],
-  'vistara':          ['Travel', 'Flights',       'Vistara'],
-  'spicejet':         ['Travel', 'Flights',       'SpiceJet'],
-  'oyo':              ['Travel', 'Hotels',        'OYO'],
-  'treebo':           ['Travel', 'Hotels',        'Treebo'],
-  'fabhotel':         ['Travel', 'Hotels',        'FabHotel'],
-  // Finance
-  'lic':              ['Finance', 'Insurance',   'LIC'],
-  'hdfc life':        ['Finance', 'Insurance',   'HDFC Life'],
-  'max life':         ['Finance', 'Insurance',   'Max Life'],
-  'bajaj allianz':    ['Finance', 'Insurance',   'Bajaj Allianz'],
-  'star health':      ['Finance', 'Insurance',   'Star Health'],
-  'navi insurance':   ['Finance', 'Insurance',   'Navi Insurance'],
-  'zerodha':          ['Finance', 'Investment',  'Zerodha'],
-  'groww':            ['Finance', 'Investment',  'Groww'],
-  'upstox':           ['Finance', 'Investment',  'Upstox'],
-  'coin':             ['Finance', 'Investment',  'Zerodha Coin'],
-  // Education
-  'byjus':            ['Education', 'Online Courses', "Byju's"],
-  'unacademy':        ['Education', 'Online Courses', 'Unacademy'],
-  'vedantu':          ['Education', 'Online Courses', 'Vedantu'],
-  'udemy':            ['Education', 'Online Courses', 'Udemy'],
-  'coursera':         ['Education', 'Online Courses', 'Coursera'],
-};
+const CAT_TEXT_TO_ID = Object.fromEntries(
+  Object.entries(CAT_ID_TO_TEXT).map(([id, txt]) => [txt, id])
+);
 
-// ── Categorize merchant name ──────────────────────────────────────
-// Returns { category, sub_category, merchant_name, source }
-// source: 'learned' | 'dict' | 'ai' | null
-async function categorizeMerchant(rawName, userId) {
-  if (!rawName) return { category: null, sub_category: null, merchant_name: rawName, source: null };
-
-  const normalized = rawName.toLowerCase().trim();
-
-  // 1. Check user-learned mappings first (highest priority)
-  if (userId) {
-    const { data: learned } = await supabase
-      .from('merchant_categories')
-      .select('category, sub_category, merchant_name')
-      .eq('user_id', userId)
-      .ilike('merchant_name_normalized', `%${normalized.slice(0, 20)}%`)
-      .order('usage_count', { ascending: false })
-      .limit(1);
-
-    if (learned && learned[0]) {
-      return { ...learned[0], source: 'learned' };
-    }
-  }
-
-  // 2. Built-in dictionary (exact + partial match)
-  for (const [keyword, [cat, sub, name]] of Object.entries(MERCHANT_DICT)) {
-    if (normalized.includes(keyword)) {
-      return { category: cat, sub_category: sub, merchant_name: name, source: 'dict' };
-    }
-  }
-
-  // 3. Claude AI for unknowns
-  try {
-    const Anthropic = require('@anthropic-ai/sdk');
-    const client    = new Anthropic.Anthropic();
-    const categories = Object.keys(EXPENSE_CATEGORIES).join(', ');
-    const msg = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 150,
-      messages: [{
-        role: 'user',
-        content: `Categorize this merchant/payee name from an Indian UPI/bank transaction into one of these expense categories: ${categories}.
-Merchant: "${rawName}"
-Respond ONLY with JSON: {"category":"<category>","sub_category":"<sub>","merchant_name":"<cleaned name>"}
-If unsure, use "Others" and "Miscellaneous". Never explain.`
-      }]
-    });
-
-    const text = msg.content[0]?.text || '{}';
-    const clean = text.replace(/```json|```/g, '').trim();
-    const result = JSON.parse(clean);
-    if (result.category) return { ...result, source: 'ai' };
-  } catch (e) {
-    console.warn('[EXPENSE_AI_CATEGORIZE] failed:', e.message);
-  }
-
-  // 4. Could not detect — return blank
-  return { category: null, sub_category: null, merchant_name: rawName, source: null };
+// ── expense_transactions row → web entry ────────────────────────────
+function toWebEntry(t) {
+  const dtMs       = typeof t.date_time === 'number' ? t.date_time : parseInt(t.date_time) || 0;
+  const dateStr    = dtMs ? new Date(dtMs).toISOString().split('T')[0] : null;
+  return {
+    id:            t.id,
+    user_id:       t.user_id,
+    amount:        parseFloat(t.amount) || 0,
+    expense_date:  dateStr,
+    date_time:     dtMs,
+    merchant_name: t.merchant || null,
+    category:      CAT_ID_TO_TEXT[t.category_id] || t.category_id || 'Others',
+    category_id:   t.category_id || 'other',
+    comments:      t.note || t.description || null,
+    type:          t.type || 'DEBIT',
+    bank_sender:   t.bank_name || null,
+    source:        t.source || 'sms',
+    is_deleted:    t.is_deleted || false,
+  };
 }
 
-// ── Extract merchant from email body ─────────────────────────────
-function extractMerchantAndAmount(subject, body) {
-  const text = subject + '\n' + body;
-
-  // Amount: look for ₹ / Rs / INR
-  let amount = null;
-  const amtPatterns = [
-    /₹\s*([\d,]+(?:\.\d{1,2})?)/,
-    /(?:Rs\.?|INR)\s*([\d,]+(?:\.\d{1,2})?)/i,
-    /(?:debited|paid|spent|transaction|amount)\s*(?:of|:)?\s*(?:₹|Rs\.?|INR)?\s*([\d,]+(?:\.\d{1,2})?)/i,
-    /(?:Rs\.?|INR|₹)?\s*([\d,]{4,}(?:\.\d{2})?)\s*(?:debited|paid|spent|charged)/i,
-  ];
-  for (const p of amtPatterns) {
-    const m = text.match(p);
-    if (m) { amount = parseFloat(m[1].replace(/,/g, '')); break; }
-  }
-
-  // Merchant: look for common UPI patterns
-  let merchant = null;
-  const merchantPatterns = [
-    /(?:paid to|payment to|sent to|transferred to|merchant|payee|vpa)\s*[:\-]?\s*([A-Za-z0-9@.\-_ ]{3,40})/i,
-    /UPI[- ](?:Ref|txn)[^\n]*\n.*?to\s+([A-Za-z0-9 .]{3,30})/i,
-    /(?:at|to)\s+([A-Z][A-Za-z0-9 &'.]{2,30})\s+(?:on|for|via|\d)/,
-  ];
-  for (const p of merchantPatterns) {
-    const m = text.match(p);
-    if (m) {
-      merchant = m[1].trim()
-        .replace(/@[\w.]+$/, '')  // remove UPI handles like @okhdfc
-        .replace(/\s+/g, ' ')
-        .trim();
-      if (merchant.length > 2) break;
-    }
-  }
-
-  return { amount, merchant };
+// ── web body → expense_transactions row ─────────────────────────────
+function fromWebEntry(body, userId) {
+  const dateStr = body.expense_date || new Date().toISOString().split('T')[0];
+  const dtMs    = new Date(dateStr + 'T00:00:00').getTime();
+  const now     = Date.now();
+  return {
+    user_id:     userId,
+    amount:      parseFloat(body.amount),
+    type:        body.type || 'DEBIT',
+    category_id: CAT_TEXT_TO_ID[body.category] || body.category_id || 'other',
+    merchant:    body.merchant_name || null,
+    description: body.comments || null,
+    note:        body.comments || null,
+    date_time:   body.date_time || dtMs,
+    source:      body.source || 'MANUAL',
+    bank_name:   body.bank_sender || null,
+    is_deleted:  false,
+    created_at:  now,
+    updated_at:  now,
+  };
 }
 
-// ── Check if email is a debit/expense ────────────────────────────
-function isDebitEmail(subject, body) {
-  const combined = (subject + ' ' + body).toLowerCase();
-  const debitSignals = [
-    'debited', 'debit alert', 'payment successful', 'paid to',
-    'amount debited', 'has been debited', 'sent to', 'transferred to',
-    'upi debit', 'dr alert', 'purchase', 'spent',
-    'payment made', 'payment of', 'via upi', 'made via',
-    'transaction at', 'transaction of',
-    'your payment', 'bill payment', 'emi paid', 'emi debited',
-    'used at', 'charged at', 'pos transaction',
-  ];
-  const creditSignals = [
-    'credited', 'credit alert', 'amount credited', 'received',
-    'money received', 'salary',
-  ];
-  const hasDebit  = debitSignals.some(s => combined.includes(s));
-  const hasCredit = creditSignals.some(s => combined.includes(s));
-  if (hasCredit && !hasDebit) return false;
-  return hasDebit;
-}
+// ══ ROUTES ══════════════════════════════════════════════════════════
 
-// ══════════════════════════════════════════════════════════════════
-//  ROUTES
-// ══════════════════════════════════════════════════════════════════
-
-// ── GET /api/expense/entries ──────────────────────────────────────
+// GET /api/expense/entries
+// Returns all non-deleted transactions, DEBITs = expenses, CREDITs available via ?type=CREDIT
 router.get('/entries', requireAuth, async (req, res) => {
-  const { data, error } = await supabase
-    .from('expense_entries')
+  const { type, from, to, category, limit = 500 } = req.query;
+  let q = supabase
+    .from('expense_transactions')
     .select('*')
     .eq('user_id', req.user.id)
-    .order('expense_date', { ascending: false });
+    .eq('is_deleted', false)
+    .order('date_time', { ascending: false })
+    .limit(parseInt(limit));
 
-  if (error) return res.status(500).json({ error: error.message });
-
-  const entries = data || [];
-  const now     = new Date();
-  const fyStartYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
-  const fyStart = new Date(fyStartYear, 3, 1);
-
-  const currentFY = entries.filter(e => new Date(e.expense_date) >= fyStart);
-  const thisMonth = entries.filter(e => {
-    const d = new Date(e.expense_date);
-    return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
-  });
-
-  const byCategory = {};
-  const byMonth    = {};
-  for (const e of currentFY) {
-    byCategory[e.category || 'Others'] = (byCategory[e.category || 'Others'] || 0) + e.amount;
-    const key = e.expense_date.slice(0, 7);
-    byMonth[key] = (byMonth[key] || 0) + e.amount;
+  if (type)     q = q.eq('type', type.toUpperCase());
+  if (category) q = q.eq('category_id', category);
+  if (from) {
+    const fromMs = new Date(from + 'T00:00:00').getTime();
+    q = q.gte('date_time', fromMs);
+  }
+  if (to) {
+    const toMs = new Date(to + 'T23:59:59').getTime();
+    q = q.lte('date_time', toMs);
   }
 
-  res.json({
-    entries,
-    summary: {
-      currentFYTotal: currentFY.reduce((s, e) => s + e.amount, 0),
-      thisMonthTotal: thisMonth.reduce((s, e) => s + e.amount, 0),
-      byCategory, byMonth,
-      uncategorized: entries.filter(e => !e.category).length,
-      entryCount:    entries.length,
-      fyLabel: 'FY' + String(fyStartYear + 1).slice(-2),
-    }
-  });
+  const { data, error } = await q;
+  if (error) return res.status(500).json({ error: error.message });
+  res.json((data || []).map(toWebEntry));
 });
 
-// ── POST /api/expense/entries (manual) ───────────────────────────
+// POST /api/expense/entries  — manual add
 router.post('/entries', requireAuth, async (req, res) => {
-  const { category, sub_category, amount, expense_date, merchant_name, comments, description } = req.body;
-  if (!amount || !expense_date) return res.status(400).json({ error: 'amount and expense_date required' });
-
-  const now = Date.now();
-  const { data, error } = await supabase.from('expense_entries').insert({
-    user_id:          req.user.id,
-    category:         category     || null,
-    sub_category:     sub_category || null,
-    amount:           parseFloat(amount),
-    expense_date,
-    merchant_name:    merchant_name || null,
-    comments:         comments || description || null,
-    source:           'manual',
-    // Android-compatible fields
-    type:             'DEBIT',
-    date_time:        new Date(expense_date + 'T00:00:00').getTime(),
-    is_deleted:       false,
-    created_at_epoch: now,
-    updated_at_epoch: now,
-  }).select().single();
-
+  const row = fromWebEntry(req.body, req.user.id);
+  if (!row.amount || isNaN(row.amount)) return res.status(400).json({ error: 'amount required' });
+  const { data, error } = await supabase.from('expense_transactions').insert(row).select().single();
   if (error) return res.status(500).json({ error: error.message });
-
-  // Learn: if category given + merchant known, save mapping
-  if (category && merchant_name) {
-    await learnMerchant(req.user.id, merchant_name, category, sub_category || null);
-  }
-
-  res.status(201).json(data);
+  res.json(toWebEntry(data));
 });
 
-// ── PUT /api/expense/entries/:id ──────────────────────────────────
+// PUT /api/expense/entries/:id  — edit
 router.put('/entries/:id', requireAuth, async (req, res) => {
-  const { category, sub_category, comments, merchant_name } = req.body;
-
-  const updates = {};
-  if (category !== undefined)     updates.category     = category || null;
-  if (sub_category !== undefined) updates.sub_category = sub_category || null;
-  if (comments !== undefined)     updates.comments     = comments || null;
-  if (merchant_name !== undefined)updates.merchant_name = merchant_name || null;
-
-  const { data, error } = await supabase.from('expense_entries')
+  const updates = {
+    category_id:  CAT_TEXT_TO_ID[req.body.category] || req.body.category_id || undefined,
+    merchant:     req.body.merchant_name || undefined,
+    note:         req.body.comments || undefined,
+    description:  req.body.comments || undefined,
+    amount:       req.body.amount ? parseFloat(req.body.amount) : undefined,
+    updated_at:   Date.now(),
+  };
+  // Remove undefined keys
+  Object.keys(updates).forEach(k => updates[k] === undefined && delete updates[k]);
+  const { data, error } = await supabase
+    .from('expense_transactions')
     .update(updates)
     .eq('id', req.params.id)
     .eq('user_id', req.user.id)
     .select().single();
-
   if (error) return res.status(500).json({ error: error.message });
-
-  // Learn from manual categorization
-  if (category && (merchant_name || data.merchant_name)) {
-    await learnMerchant(req.user.id, merchant_name || data.merchant_name, category, sub_category || null);
-  }
-
-  res.json(data);
+  res.json(toWebEntry(data));
 });
 
-// ── DELETE /api/expense/entries/:id ──────────────────────────────
+// DELETE /api/expense/entries/:id  — soft delete
 router.delete('/entries/:id', requireAuth, async (req, res) => {
-  const { error } = await supabase.from('expense_entries')
-    .delete().eq('id', req.params.id).eq('user_id', req.user.id);
+  const { error } = await supabase
+    .from('expense_transactions')
+    .update({ is_deleted: true, updated_at: Date.now() })
+    .eq('id', req.params.id)
+    .eq('user_id', req.user.id);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ success: true });
 });
 
-// ── POST /api/expense/entries/:id/receipt ────────────────────────
-router.post('/entries/:id/receipt', requireAuth, upload.single('file'), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-
-  const ext      = req.file.originalname.split('.').pop();
-  const fileName = `receipts/${req.user.id}/${req.params.id}.${ext}`;
-
-  // Upload to Supabase Storage
-  const { error: upErr } = await supabase.storage
-    .from('expense-receipts')
-    .upload(fileName, req.file.buffer, {
-      contentType: req.file.mimetype,
-      upsert: true,
-    });
-
-  if (upErr) {
-    // If storage not configured, store as base64 in DB as fallback
-    const b64 = req.file.buffer.toString('base64');
-    const dataUrl = `data:${req.file.mimetype};base64,${b64.slice(0, 50000)}`; // truncate for DB
-    await supabase.from('expense_entries')
-      .update({ receipt_url: dataUrl })
-      .eq('id', req.params.id).eq('user_id', req.user.id);
-    return res.json({ url: dataUrl, stored: 'db' });
-  }
-
-  const { data: { publicUrl } } = supabase.storage
-    .from('expense-receipts').getPublicUrl(fileName);
-
-  await supabase.from('expense_entries')
-    .update({ receipt_url: publicUrl })
-    .eq('id', req.params.id).eq('user_id', req.user.id);
-
-  res.json({ url: publicUrl, stored: 'storage' });
+// GET /api/expense/categories  — list categories for dropdowns
+router.get('/categories', requireAuth, async (_req, res) => {
+  const cats = Object.entries(CAT_ID_TO_TEXT).map(([id, name]) => ({ id, name }));
+  res.json(cats);
 });
 
-// ── POST /api/expense/categorize ─────────────────────────────────
-router.post('/categorize', requireAuth, async (req, res) => {
-  const { merchant_name } = req.body;
-  if (!merchant_name) return res.status(400).json({ error: 'merchant_name required' });
-  const result = await categorizeMerchant(merchant_name, req.user.id);
-  res.json(result);
-});
+// GET /api/expense/summary  — totals by category for the current month
+router.get('/summary', requireAuth, async (req, res) => {
+  const { year, month } = req.query;
+  const now   = new Date();
+  const y     = parseInt(year  || now.getFullYear());
+  const m     = parseInt(month || now.getMonth() + 1);
+  const from  = new Date(y, m - 1, 1).getTime();
+  const to    = new Date(y, m, 0, 23, 59, 59).getTime();
 
-// ── POST /api/expense/scan ────────────────────────────────────────
-router.post('/scan', requireAuth, async (req, res) => {
-  try {
-    const { data: conn } = await supabase.from('email_connections')
-      .select('access_token, refresh_token')
-      .eq('user_id', req.user.id).eq('provider', 'gmail').single();
-    if (!conn) return res.status(400).json({ error: 'Gmail not connected' });
+  const { data, error } = await supabase
+    .from('expense_transactions')
+    .select('amount, category_id, type')
+    .eq('user_id', req.user.id)
+    .eq('is_deleted', false)
+    .gte('date_time', from)
+    .lte('date_time', to);
 
-    // Get rules (or use a default scan if no rules)
-    const { data: rules } = await supabase.from('expense_rules')
-      .select('*').eq('user_id', req.user.id).eq('is_active', true);
-
-    const { google } = require('googleapis');
-    const oauth2Client = new google.auth.OAuth2(
-      process.env.GOOGLE_CLIENT_ID,
-      process.env.GOOGLE_CLIENT_SECRET,
-      process.env.GOOGLE_REDIRECT_URI
-    );
-    oauth2Client.setCredentials({
-      access_token:  conn.access_token,
-      refresh_token: conn.refresh_token,
-    });
-    oauth2Client.on('tokens', async (tokens) => {
-      if (tokens.access_token) {
-        await supabase.from('email_connections')
-          .update({ access_token: tokens.access_token })
-          .eq('user_id', req.user.id).eq('provider', 'gmail');
-      }
-    });
-    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
-
-    // Build queries: use rules OR default debit query
-    // Build Gmail queries from rules (or default if none)
-    const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const monthTs = Math.floor(startOfMonth.getTime() / 1000);
-
-    const queries = rules && rules.length > 0
-      ? rules.map(r => {
-          const lookbackTs = r.lookback_months > 0
-            ? Math.floor((Date.now() - r.lookback_months * 30 * 86400000) / 1000)
-            : monthTs;
-          const parts = [`after:${lookbackTs}`];
-          if (r.email_sender)    parts.push(`from:${r.email_sender}`);
-          if (r.subject_pattern) parts.push(`subject:"${r.subject_pattern}"`);
-          // Always add debit signals to narrow results
-          parts.push('(debited OR "paid to" OR "payment successful" OR "UPI debit" OR "amount debited" OR "payment made" OR "spent" OR "transaction")');
-          return { query: parts.join(' '), rule: r, label: r.rule_name };
-        })
-      : [{
-          query: `(debited OR "paid to" OR "payment successful" OR "UPI debit" OR "amount debited" OR "payment made" OR "spent" OR "transaction") after:${monthTs}`,
-          rule: null, label: 'Default Scan'
-        }];
-
-    const newEntries = [];
-    const queryStats = [];  // per-query tracking
-
-    for (const { query, rule, label } of queries) {
-      const qStat = { ruleName: label, query, emailsFound: 0, emailsRead: 0, captured: 0, skipped: 0, skipReasons: {} };
-      queryStats.push(qStat);
-
-      let messageIds = [];
-      try {
-        const listRes = await gmail.users.messages.list({ userId:'me', q:query, maxResults:100 });
-        messageIds = listRes.data.messages || [];
-        qStat.emailsFound = messageIds.length;
-        console.log(`[EXPENSE_SCAN] rule="${label}" query="${query.slice(0,80)}" found=${messageIds.length} emails`);
-      } catch(e) {
-        qStat.skipReasons['query_error'] = e.message;
-        console.warn(`[EXPENSE_SCAN] Query failed: ${e.message}`);
-        continue;
-      }
-
-      for (const msg of messageIds) {
-        qStat.emailsRead++;
-        // Skip already imported
-        const { data: existing } = await supabase.from('expense_entries')
-          .select('id').eq('user_id', req.user.id).eq('email_id', msg.id).maybeSingle();
-        if (existing) { qStat.emailsRead--; continue; } // already imported, don't count
-
-        let fullMsg;
-        try {
-          fullMsg = await gmail.users.messages.get({ userId:'me', id:msg.id, format:'full' });
-        } catch(e) { continue; }
-
-        const headers  = fullMsg.data.payload?.headers || [];
-        const subject  = headers.find(h => h.name === 'Subject')?.value || '';
-        const from     = headers.find(h => h.name === 'From')?.value    || '';
-        const dateHdr  = headers.find(h => h.name === 'Date')?.value    || '';
-
-        let bodyText = '';
-        const getBody = (parts) => {
-          if (!parts) return;
-          for (const p of parts) {
-            if (p.mimeType === 'text/plain' && p.body?.data)
-              bodyText += Buffer.from(p.body.data, 'base64').toString('utf-8');
-            if (p.parts) getBody(p.parts);
-          }
-        };
-        if (fullMsg.data.payload?.body?.data)
-          bodyText = Buffer.from(fullMsg.data.payload.body.data, 'base64').toString('utf-8');
-        getBody(fullMsg.data.payload?.parts);
-
-        // Must be a debit email
-        if (!isDebitEmail(subject, bodyText)) {
-          qStat.skipped++; qStat.skipReasons['not debit']=(qStat.skipReasons['not debit']||0)+1;
-          continue;
-        }
-
-        const { amount, merchant } = extractMerchantAndAmount(subject, bodyText);
-        if (!amount || amount <= 0) {
-          qStat.skipped++; qStat.skipReasons['no amount']=(qStat.skipReasons['no amount']||0)+1;
-          continue;
-        }
-
-        let expense_date;
-        try { expense_date = new Date(dateHdr).toISOString().split('T')[0]; }
-        catch(e) { expense_date = new Date().toISOString().split('T')[0]; }
-
-        // Categorize merchant
-        const catResult = await categorizeMerchant(merchant || subject, req.user.id);
-
-        const { data: entry, error: insertErr } = await supabase.from('expense_entries').insert({
-          user_id:       req.user.id,
-          rule_id:       rule?.id || null,
-          category:      catResult.category,
-          sub_category:  catResult.sub_category,
-          amount,
-          expense_date,
-          merchant_name: catResult.merchant_name || merchant || null,
-          email_subject: subject,
-          email_id:      msg.id,
-          bank_sender:   from,
-          source:        'auto',
-          category_source: catResult.source,
-          // Android-compatible fields
-          type:             'DEBIT',
-          date_time:        new Date(expense_date + 'T00:00:00').getTime(),
-          is_deleted:       false,
-          created_at_epoch: Date.now(),
-          updated_at_epoch: Date.now(),
-        }).select().single();
-
-        if (!insertErr && entry) {
-          newEntries.push(entry);
-          qStat.captured++;
-          console.log(`[EXPENSE_SCAN] Captured: ₹${amount} at "${catResult.merchant_name||'unknown'}" (${catResult.category||'uncategorized'})`);
-        } else if (insertErr) {
-          console.error('[EXPENSE_SCAN] Insert error:', insertErr.message);
-        }
-      }
-    }
-
-    const totalRead    = queryStats.reduce((s,q)=>s+q.emailsRead, 0);
-    const totalFound   = queryStats.reduce((s,q)=>s+q.emailsFound, 0);
-    const totalSkipped = queryStats.reduce((s,q)=>s+q.skipped, 0);
-
-    const summary = newEntries.length > 0
-      ? `✅ Captured ${newEntries.length} expense${newEntries.length>1?'s':''} from ${totalRead} emails read`
-      : `📭 No new expenses found. Read ${totalRead} email${totalRead!==1?'s':''} across ${queries.length} rule${queries.length!==1?'s':''}.`;
-
-    console.log(`[EXPENSE_SCAN] Done: found=${totalFound} read=${totalRead} captured=${newEntries.length} skipped=${totalSkipped}`);
-
-    res.json({
-      found:         newEntries.length,
-      emailsFound:   totalFound,
-      emailsRead:    totalRead,
-      emailsSkipped: totalSkipped,
-      rulesApplied:  queries.length,
-      ruleResults:   queryStats,
-      entries:       newEntries,
-      message:       summary,
-    });
-  } catch (err) {
-    console.error('[EXPENSE_SCAN]', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ── Expense Rules CRUD ────────────────────────────────────────────
-router.get('/rules', requireAuth, async (req, res) => {
-  const { data, error } = await supabase.from('expense_rules')
-    .select('*').eq('user_id', req.user.id).order('created_at', { ascending: false });
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data || []);
+
+  const debits  = (data || []).filter(r => r.type === 'DEBIT');
+  const credits = (data || []).filter(r => r.type === 'CREDIT');
+  const totalSpend  = debits.reduce((s, r)  => s + parseFloat(r.amount || 0), 0);
+  const totalIncome = credits.reduce((s, r) => s + parseFloat(r.amount || 0), 0);
+
+  const byCategory = {};
+  debits.forEach(r => {
+    const cat = CAT_ID_TO_TEXT[r.category_id] || r.category_id || 'Others';
+    byCategory[cat] = (byCategory[cat] || 0) + parseFloat(r.amount || 0);
+  });
+
+  res.json({ totalSpend, totalIncome, byCategory, year: y, month: m });
 });
-
-router.post('/rules', requireAuth, async (req, res) => {
-  const { rule_name, email_sender, subject_pattern, body_pattern, lookback_months } = req.body;
-  if (!rule_name) return res.status(400).json({ error: 'rule_name required' });
-  const { data, error } = await supabase.from('expense_rules').insert({
-    user_id: req.user.id, rule_name,
-    email_sender:    email_sender    || null,
-    subject_pattern: subject_pattern || null,
-    body_pattern:    body_pattern    || null,
-    lookback_months: parseInt(lookback_months) || 0,
-    is_active: true,
-    created_at: new Date().toISOString(),
-  }).select().single();
-  if (error) return res.status(500).json({ error: error.message });
-  res.status(201).json(data);
-});
-
-router.put('/rules/:id', requireAuth, async (req, res) => {
-  const { rule_name, email_sender, subject_pattern, body_pattern, lookback_months, is_active } = req.body;
-  const { data, error } = await supabase.from('expense_rules')
-    .update({ rule_name, email_sender, subject_pattern, body_pattern,
-              lookback_months: parseInt(lookback_months)||0, is_active })
-    .eq('id', req.params.id).eq('user_id', req.user.id)
-    .select().single();
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
-});
-
-router.delete('/rules/:id', requireAuth, async (req, res) => {
-  const { error } = await supabase.from('expense_rules')
-    .delete().eq('id', req.params.id).eq('user_id', req.user.id);
-  if (error) return res.status(500).json({ error: error.message });
-  res.json({ success: true });
-});
-
-// ── GET /api/expense/categories ───────────────────────────────────
-router.get('/categories', requireAuth, (req, res) => {
-  res.json(EXPENSE_CATEGORIES);
-});
-
-// ── Helper: save merchant→category learning ───────────────────────
-async function learnMerchant(userId, merchantName, category, subCategory) {
-  if (!merchantName || !category) return;
-  const normalized = merchantName.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
-  if (normalized.length < 2) return;
-
-  const { data: existing } = await supabase.from('merchant_categories')
-    .select('id, usage_count')
-    .eq('user_id', userId)
-    .eq('merchant_name_normalized', normalized)
-    .maybeSingle();
-
-  if (existing) {
-    await supabase.from('merchant_categories')
-      .update({ category, sub_category: subCategory, usage_count: (existing.usage_count || 1) + 1, last_used: new Date().toISOString() })
-      .eq('id', existing.id);
-  } else {
-    await supabase.from('merchant_categories').insert({
-      user_id: userId,
-      merchant_name: merchantName,
-      merchant_name_normalized: normalized,
-      category, sub_category: subCategory,
-      usage_count: 1,
-      last_used: new Date().toISOString(),
-    });
-  }
-}
 
 module.exports = router;
