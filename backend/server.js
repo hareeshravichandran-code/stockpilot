@@ -62,6 +62,7 @@ app.use('/api/income',   incomeRoutes);
 app.use('/api/expense',  expenseRoutes);
 app.use('/api/expense', require('./routes/expenseTransactions'));
 app.use('/api/expense', require('./routes/expenseCategories'));
+app.use('/api/expense', require('./routes/expenseManage'));
 app.use('/api/expense', require('./routes/expenseBudgets'));
 app.use('/api/expense', require('./routes/expenseSync'));
 app.use('/api/expense', require('./routes/expenseSmsRules'));
