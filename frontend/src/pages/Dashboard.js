@@ -5,6 +5,7 @@ import { useAuth } from '../hooks/useAuth';
 import api, { portfolioAPI, emailAPI, authAPI, incomeAPI, mfAPI, goalsAPI, familyAPI, fdAPI, rdAPI, portfolioHistoryAPI, npsAPI } from '../lib/api';
 import AdminPanel from './AdminPanel';
 import Dividends from './Dividends';
+import ManageExpense from './ManageExpense';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import './Dashboard.css';
 
@@ -84,6 +85,7 @@ export default function Dashboard() {
 
   // ── Expense state ─────────────────────────────────────────────────
   const [expenseEntries, setExpenseEntries]   = useState([]);
+  const [showManageExpense, setShowManageExpense] = useState(false);
   const [expenseSummary, setExpenseSummary]   = useState({ currentFYTotal:0, thisMonthTotal:0, byCategory:{}, byMonth:{}, fyLabel:'FY26', uncategorized:0 });
 
   const [expenseCategories, setExpenseCategories] = useState({});
@@ -2378,6 +2380,10 @@ export default function Dashboard() {
                     <button onClick={()=>setShowExpenseEntry(true)}
                       style={{background:'rgba(251,146,60,0.1)',border:'1px solid rgba(251,146,60,0.3)',color:'#fb923c',borderRadius:8,padding:'7px 14px',cursor:'pointer',fontSize:12,fontWeight:700}}>
                       + Add
+                    </button>
+                    <button onClick={() => setShowManageExpense(true)}
+                      style={{background:'rgba(0,212,161,0.1)',border:'1px solid rgba(0,212,161,0.3)',color:'#00d4a1',borderRadius:8,padding:'7px 14px',cursor:'pointer',fontSize:12,fontWeight:700}}>
+                      ⚙️ Manage
                     </button>
                     <button onClick={downloadExcel}
                       style={{background:'rgba(34,197,94,0.1)',border:'1px solid rgba(34,197,94,0.3)',color:'#22c55e',borderRadius:8,padding:'7px 14px',cursor:'pointer',fontSize:12,fontWeight:700}}>
@@ -4835,6 +4841,10 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
+      )}
+
+      {showManageExpense && (
+        <ManageExpense onClose={() => { setShowManageExpense(false); loadExpenses(); }} />
       )}
 
     </div>
