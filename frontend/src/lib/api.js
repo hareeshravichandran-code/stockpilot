@@ -80,18 +80,45 @@ export const incomeAPI = {
 };
 
 export const expenseAPI = {
-  getEntries:   (p)         => api.get('/api/expense/entries', { params: p }),
-  addEntry:     (data)      => api.post('/api/expense/entries', data),
-  updateEntry:  (id, data)  => api.put(`/api/expense/entries/${id}`, data),
-  deleteEntry:  (id)        => api.delete(`/api/expense/entries/${id}`),
-  uploadReceipt:(id, form)  => api.post(`/api/expense/entries/${id}/receipt`, form, { headers:{'Content-Type':'multipart/form-data'} }),
-  scan:         ()          => api.post('/api/expense/scan'),
-  categorize:   (data)      => api.post('/api/expense/categorize', data),
-  getRules:     ()          => api.get('/api/expense/rules'),
-  createRule:   (data)      => api.post('/api/expense/rules', data),
-  updateRule:   (id, data)  => api.put(`/api/expense/rules/${id}`, data),
-  deleteRule:   (id)        => api.delete(`/api/expense/rules/${id}`),
-  categories:   ()          => api.get('/api/expense/categories'),
+  getEntries:          (p)          => api.get('/api/expense/entries', { params: p }),
+  addEntry:            (data)       => api.post('/api/expense/entries', data),
+  updateEntry:         (id, data)   => api.put(`/api/expense/entries/${id}`, data),
+  deleteEntry:         (id)         => api.delete(`/api/expense/entries/${id}`),
+  uploadReceipt:       (id, form)   => api.post(`/api/expense/entries/${id}/receipt`, form, { headers:{'Content-Type':'multipart/form-data'} }),
+  scan:                ()           => api.post('/api/expense/scan'),
+  categorize:          (data)       => api.post('/api/expense/categorize', data),
+  // Rules
+  getRules:            ()           => api.get('/api/expense/rules'),
+  createRule:          (data)       => api.post('/api/expense/rules', data),
+  updateRule:          (id, data)   => api.put(`/api/expense/rules/${id}`, data),
+  deleteRule:          (id)         => api.delete(`/api/expense/rules/${id}`),
+  // Categories
+  categories:          ()           => api.get('/api/expense/categories'),
+  createCategory:      (data)       => api.post('/api/expense/categories', data),
+  updateCategory:      (id, data)   => api.put(`/api/expense/categories/${id}`, data),
+  deleteCategory:      (id)         => api.delete(`/api/expense/categories/${id}`),
+  // SMS Rules
+  getSmsRules:         ()           => api.get('/api/expense/sms-rules'),
+  createSmsRule:       (data)       => api.post('/api/expense/sms-rules', data),
+  updateSmsRule:       (id, data)   => api.put(`/api/expense/sms-rules/${id}`, data),
+  deleteSmsRule:       (id)         => api.delete(`/api/expense/sms-rules/${id}`),
+  // Bulk categorize
+  bulkCategorize:      (txnIds, categoryId) => api.post('/api/expense/transactions/bulk-categorize', { txnIds, categoryId }),
+  // Transactions (Android SMS data)
+  getTransactions:     (p)          => api.get('/api/expense/transactions', { params: p }),
+  updateTransaction:   (id, data)   => api.put(`/api/expense/transactions/${id}`, data),
+  // Budgets
+  getBudgets:          (month)      => api.get('/api/expense/budgets', { params: { month } }),
+  upsertBudget:        (data)       => api.post('/api/expense/budgets', data),
+  deleteBudget:        (id)         => api.delete(`/api/expense/budgets/${id}`),
+  // Custom fields
+  getCustomFields:     ()           => api.get('/api/expense/custom-fields'),
+  createCustomField:   (data)       => api.post('/api/expense/custom-fields', data),
+  updateCustomField:   (id, data)   => api.put(`/api/expense/custom-fields/${id}`, data),
+  deleteCustomField:   (id)         => api.delete(`/api/expense/custom-fields/${id}`),
+  // Sheet config
+  getSheetConfig:      ()           => api.get('/api/expense/sheet-config'),
+  saveSheetConfig:     (data)       => api.post('/api/expense/sheet-config', data),
 };
 
 export const goalsAPI = {
