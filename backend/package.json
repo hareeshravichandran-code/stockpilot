@@ -26,7 +26,8 @@
     "@google/generative-ai": "^0.21.0",
     "multer": "^1.4.5-lts.1",
     "pdfjs-dist": "^3.11.174",
-    "nodemailer": "^6.9.8"
+    "nodemailer": "^6.9.8",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
