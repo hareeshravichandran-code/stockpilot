@@ -47,11 +47,28 @@ router.get('/custom-fields', auth, async (req, res) => {
 router.post('/custom-fields', auth, async (req, res) => {
   try {
     const { id, name, field_type, options, auto_fill_rules, is_required, display_order } = req.body;
+
+    // Android sends options/auto_fill_rules as JSON strings — parse them for Supabase JSONB
+    let parsedOptions = options || [];
+    let parsedRules   = auto_fill_rules || [];
+    try { if (typeof parsedOptions === 'string') parsedOptions = JSON.parse(parsedOptions); } catch(_) { parsedOptions = []; }
+    try { if (typeof parsedRules   === 'string') parsedRules   = JSON.parse(parsedRules);   } catch(_) { parsedRules   = []; }
+
     const { data, error } = await supabase
       .from('custom_fields')
-      .upsert({ id: id || undefined, user_id: req.userId, name, field_type: field_type || 'TEXT',
-        options: options || [], auto_fill_rules: auto_fill_rules || {}, is_required: is_required || false,
-        display_order: display_order || 0, is_deleted: false, updated_at: new Date().toISOString() }, { onConflict: 'id' })
+      .upsert({
+        id: id || undefined,
+        user_id: req.userId,
+        name,
+        field_type: field_type || 'TEXT',
+        options: parsedOptions,
+        auto_fill_rules: parsedRules,
+        is_required: is_required || false,
+        display_order: display_order || 0,
+        is_deleted: false,
+        sync_status: 'SYNCED',
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'id' })
       .select().single();
     if (error) throw error;
     res.status(201).json(data);
@@ -61,9 +78,22 @@ router.post('/custom-fields', auth, async (req, res) => {
 router.put('/custom-fields/:id', auth, async (req, res) => {
   try {
     const { name, field_type, options, auto_fill_rules, is_required } = req.body;
+
+    let parsedOptions = options || [];
+    let parsedRules   = auto_fill_rules || [];
+    try { if (typeof parsedOptions === 'string') parsedOptions = JSON.parse(parsedOptions); } catch(_) { parsedOptions = []; }
+    try { if (typeof parsedRules   === 'string') parsedRules   = JSON.parse(parsedRules);   } catch(_) { parsedRules   = []; }
+
     const { data, error } = await supabase
       .from('custom_fields')
-      .update({ name, field_type, options, auto_fill_rules, is_required, updated_at: new Date().toISOString() })
+      .update({
+        name, field_type,
+        options: parsedOptions,
+        auto_fill_rules: parsedRules,
+        is_required,
+        sync_status: 'SYNCED',
+        updated_at: new Date().toISOString()
+      })
       .eq('id', req.params.id).eq('user_id', req.userId).select().single();
     if (error) throw error;
     res.json(data);
