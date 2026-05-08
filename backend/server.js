@@ -3,7 +3,6 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
-const rateLimit = require('express-rate-limit');
 
 const authRoutes = require('./routes/auth');
 const portfolioRoutes = require('./routes/portfolio');
@@ -42,21 +41,7 @@ app.use(cors({
 // ── Trust Railway proxy ──
 app.set('trust proxy', 1);
 
-// ── Rate limiting ──
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 500,
-  validate: { xForwardedForHeader: false },
-  message: { error: 'Too many requests, please try again later.' }
-});
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 50,
-  validate: { xForwardedForHeader: false },
-  message: { error: 'Too many login attempts, please try again in 15 minutes.' }
-});
-app.use('/api/', limiter);
-app.use('/api/auth', authLimiter);
+// No rate limiting — Railway proxy shares IPs causing false 429s
 
 // ── Routes ──
 app.use('/api/auth', authRoutes);
