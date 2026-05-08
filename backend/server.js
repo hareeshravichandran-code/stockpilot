@@ -45,11 +45,18 @@ app.set('trust proxy', 1);
 // ── Rate limiting ──
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: 500,
   validate: { xForwardedForHeader: false },
   message: { error: 'Too many requests, please try again later.' }
 });
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 50,
+  validate: { xForwardedForHeader: false },
+  message: { error: 'Too many login attempts, please try again in 15 minutes.' }
+});
 app.use('/api/', limiter);
+app.use('/api/auth', authLimiter);
 
 // ── Routes ──
 app.use('/api/auth', authRoutes);
