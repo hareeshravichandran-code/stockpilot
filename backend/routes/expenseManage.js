@@ -66,7 +66,6 @@ router.post('/custom-fields', auth, async (req, res) => {
         is_required: is_required || false,
         display_order: display_order || 0,
         is_deleted: false,
-        sync_status: 'SYNCED',
         updated_at: new Date().toISOString()
       }, { onConflict: 'id' })
       .select().single();
@@ -91,7 +90,6 @@ router.put('/custom-fields/:id', auth, async (req, res) => {
         options: parsedOptions,
         auto_fill_rules: parsedRules,
         is_required,
-        sync_status: 'SYNCED',
         updated_at: new Date().toISOString()
       })
       .eq('id', req.params.id).eq('user_id', req.userId).select().single();
