@@ -1,0 +1,349 @@
+/* ═══════════════════════════════════════════════════════════════════
+   Kanalyst — Design Tokens & Component Styles
+   Drop this into your repo (e.g. src/styles/kanalyst-tokens.css) and
+   @import it ONCE at the top of your global stylesheet, AFTER any
+   reset. It replaces the colour & type tokens in index.css and adds
+   a small set of premium UI primitives (.btn-primary, .seg, .tile…).
+
+   Logic is untouched. To migrate Dashboard.css:
+     1. Delete the old :root block in index.css.
+     2. @import this file in its place.
+     3. Replace any `var(--accent)` / `var(--bg)` etc. usages with the
+        equivalent token below (most names are unchanged).
+     4. Swap inline hex colors in Dashboard.js with these tokens.
+   ═══════════════════════════════════════════════════════════════════ */
+
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@400;500&family=Outfit:wght@300;400;500;600;700&display=swap');
+
+:root {
+  /* ── Motion ─────────────────────────────────────────────────── */
+  --ease:        cubic-bezier(0.32, 0.72, 0, 1);   /* Apple spring */
+  --ease-quick:  cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ── Surfaces (paper / cream) ───────────────────────────────── */
+  --bg:        #efe8d7;   /* page background — warm cream */
+  --bg-2:      #e8e0cc;   /* sidebar slightly deeper */
+  --surface:   #faf5e8;   /* cards */
+  --surface-2: #f3ecd9;   /* recessed wells */
+  --surface-3: #e8dfc7;   /* divider fills */
+
+  /* ── Borders ────────────────────────────────────────────────── */
+  --border:    rgba(26,22,18,0.08);
+  --border-2:  rgba(26,22,18,0.14);
+  --border-3:  rgba(26,22,18,0.22);
+
+  /* ── Text (ink) ─────────────────────────────────────────────── */
+  --text:      #1a1612;
+  --text-2:    #5b4e3a;
+  --text-3:    #8a7d6a;
+  --text-4:    #b8ad97;
+
+  /* ── Accent system (muted vibrant) ──────────────────────────── */
+  --lime:      #6b8e23;   /* moss — signature, hero & active nav */
+  --lime-soft: rgba(107,142,35,0.12);
+  --mint:      #1f6b4a;   /* forest — positive / gains */
+  --mint-soft: rgba(31,107,74,0.10);
+  --coral:    #a82c2c;    /* madder — negative / losses */
+  --coral-soft:rgba(168,44,44,0.10);
+  --gold:     #a8741a;    /* sienna — dividends */
+  --gold-soft:rgba(168,116,26,0.10);
+  --violet:   #5d3b78;    /* aubergine — mutual funds */
+  --violet-soft:rgba(93,59,120,0.10);
+  --teal:     #2d6b6b;    /* deep teal — EPF */
+  --teal-soft:rgba(45,107,107,0.10);
+  --peach:    #b8551f;    /* terracotta — bank deposits */
+  --peach-soft:rgba(184,85,31,0.10);
+  --rose:     #964062;    /* mulberry — SSY */
+  --rose-soft:rgba(150,64,98,0.10);
+  --indigo:   #34487a;    /* prussian — NPS / family / invested */
+  --indigo-soft:rgba(52,72,122,0.10);
+
+  /* Legacy alias mappings — keeps your existing CSS working
+     without renaming. Remove these once migrated.               */
+  --accent:    var(--lime);
+  --accent2:   var(--indigo);
+  --accent3:   var(--gold);
+  --accent4:   var(--coral);
+  --green:     var(--mint);
+  --red:       var(--coral);
+
+  /* ── Typography ─────────────────────────────────────────────── */
+  --font-display: 'DM Serif Display', serif;
+  --font-mono:    'DM Mono', monospace;
+  --font-ui:      'Outfit', sans-serif;
+
+  /* ── Radii ──────────────────────────────────────────────────── */
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 10px;
+  --r-xl: 12px;
+
+  /* ── Shadow ladder ──────────────────────────────────────────── */
+  --shadow-1: 0 1px 2px rgba(26,22,18,0.04), 0 0 0 1px rgba(26,22,18,0.015);
+  --shadow-2: 0 4px 14px rgba(26,22,18,0.06), 0 0 0 1px rgba(26,22,18,0.02);
+  --shadow-3: 0 12px 36px rgba(26,22,18,0.12), 0 0 0 1px rgba(26,22,18,0.025);
+
+  --sidebar-width: 232px;
+}
+
+/* ── Page bg + ambient halos ─────────────────────────────────── */
+html, body { background: var(--bg); color: var(--text); }
+body {
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  letter-spacing: -0.005em;
+}
+body::before {
+  content:''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background:
+    radial-gradient(900px 600px at 12% -8%, rgba(107,142,35,0.06), transparent 60%),
+    radial-gradient(700px 500px at 100% 0%,  rgba(168,116,26,0.05), transparent 60%);
+}
+
+/* ── Scrollbar (Apple narrow) ────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #d4cab2; }
+
+/* ═══════════════════════════════════════════════════════════════
+   COMPONENT PRIMITIVES
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Cards */
+.k-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  overflow: hidden;
+  box-shadow: var(--shadow-1);
+  transition: transform .3s var(--ease), box-shadow .3s var(--ease);
+}
+.k-card.clickable:hover { transform: translateY(-1px); box-shadow: var(--shadow-2); }
+
+/* Tile (stat card) */
+.k-tile {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  padding: 18px 18px 16px;
+  box-shadow: var(--shadow-1);
+  transition: transform .3s var(--ease), border-color .2s var(--ease), box-shadow .3s var(--ease);
+}
+.k-tile:hover { border-color: var(--border-2); transform: translateY(-1px); box-shadow: var(--shadow-2); }
+
+/* Primary button (ink) */
+.k-btn-primary {
+  padding: 8px 14px;
+  background: var(--text);
+  border: none;
+  border-radius: var(--r-md);
+  color: var(--bg);
+  font: 600 12px/1 var(--font-ui);
+  display: inline-flex; align-items: center; gap: 6px;
+  cursor: pointer;
+  transition: all .25s var(--ease);
+  box-shadow: 0 1px 2px rgba(26,22,18,0.1);
+}
+.k-btn-primary:hover  { background:#000; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(26,22,18,0.18), 0 0 0 4px rgba(26,22,18,0.06); }
+.k-btn-primary:active { transform: translateY(0); box-shadow: 0 1px 2px rgba(26,22,18,0.1); }
+
+/* Ghost button */
+.k-btn-ghost {
+  padding: 7px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  font: 500 12px/1 var(--font-ui);
+  display: inline-flex; align-items: center; gap: 6px;
+  cursor: pointer;
+  transition: all .25s var(--ease);
+}
+.k-btn-ghost:hover  { border-color: var(--text); color: var(--text); transform: translateY(-1px); box-shadow: 0 4px 10px rgba(26,22,18,0.05); }
+.k-btn-ghost:active { transform: translateY(0); }
+
+/* Tinted action — use with --c set to one of the accents
+   <button class="k-act" style="--c: var(--mint)">Manage</button>           */
+.k-act {
+  --c: var(--text);
+  padding: 7px 13px;
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--c) 12%, transparent);
+  color: var(--c);
+  border: 1px solid color-mix(in srgb, var(--c) 30%, transparent);
+  font: 600 12px/1 var(--font-ui);
+  cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+  transition: all .25s var(--ease);
+}
+.k-act:hover  { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(26,22,18,0.07); }
+.k-act:active { transform: translateY(0); }
+
+/* Icon button (34px square) */
+.k-iconbtn {
+  width: 34px; height: 34px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--surface);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-md);
+  color: var(--text-3);
+  cursor: pointer;
+  transition: all .25s var(--ease);
+}
+.k-iconbtn:hover  { color: var(--text); border-color: var(--text); transform: translateY(-1px); box-shadow: 0 4px 10px rgba(26,22,18,0.05); }
+.k-iconbtn:active { transform: translateY(0); }
+
+/* Segmented control */
+.k-seg {
+  display: inline-flex;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 3px; gap: 2px;
+  box-shadow: inset 0 1px 1px rgba(26,22,18,0.03);
+}
+.k-seg button {
+  padding: 5px 12px;
+  border: none; background: transparent;
+  border-radius: var(--r-sm);
+  font: 600 11.5px/1 var(--font-mono);
+  letter-spacing: .04em;
+  color: var(--text-3);
+  cursor: pointer;
+  display: inline-flex; align-items: center; gap: 5px;
+  transition: all .25s var(--ease);
+}
+.k-seg button:hover     { color: var(--text-2); }
+.k-seg button.on,
+.k-seg button[aria-selected="true"] {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(26,22,18,0.08), 0 0 0 1px rgba(26,22,18,0.04);
+}
+
+/* Type tabs — stacked label + amount  */
+.k-type-tabs {
+  display: inline-flex;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  padding: 4px; gap: 2px;
+  box-shadow: inset 0 1px 1px rgba(26,22,18,0.03);
+}
+.k-type-tabs button {
+  padding: 9px 18px;
+  border: none; background: transparent;
+  border-radius: var(--r-md);
+  cursor: pointer; text-align: left; min-width: 148px;
+  transition: all .25s var(--ease);
+}
+.k-type-tabs button:hover { background: rgba(26,22,18,0.025); }
+.k-type-tabs button.on {
+  background: var(--surface);
+  box-shadow: 0 1px 3px rgba(26,22,18,0.07), 0 0 0 1px rgba(26,22,18,0.03);
+}
+.k-type-tabs .ttl {
+  font: 600 9.5px/1 var(--font-mono);
+  letter-spacing: .12em; text-transform: uppercase;
+  margin-bottom: 4px;
+  color: var(--text-3);
+}
+.k-type-tabs button.on .ttl { color: var(--c, var(--text)); }
+.k-type-tabs .amt {
+  font: 600 17px/1 var(--font-mono);
+  letter-spacing: -0.02em;
+  color: var(--text-2);
+}
+.k-type-tabs button.on .amt { color: var(--c, var(--text)); }
+
+/* Toggle (iOS-style) */
+.k-toggle {
+  width: 34px; height: 20px; border-radius: 10px;
+  background: var(--surface-3); position: relative;
+  cursor: pointer;
+  transition: background .25s var(--ease);
+}
+.k-toggle.on { background: var(--mint); }
+.k-toggle::after {
+  content:''; position: absolute; top: 2px; left: 2px;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  transition: left .25s var(--ease);
+}
+.k-toggle.on::after { left: 16px; }
+
+/* Badges & tags (mono caps) */
+.k-badge, .k-tag {
+  display: inline-block;
+  font: 600 10px/1.4 var(--font-mono);
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+.k-tag { padding: 3px 8px; }
+
+/* Tinted variants for any accent — set --c
+   <span class="k-badge k-tinted" style="--c: var(--mint)">FINAL</span>     */
+.k-tinted {
+  background: color-mix(in srgb, var(--c, var(--text-3)) 12%, transparent);
+  color: var(--c, var(--text-3));
+  border: 1px solid color-mix(in srgb, var(--c, var(--text-3)) 16%, transparent);
+}
+
+/* Tables (financial) */
+.k-tbl { width:100%; border-collapse: collapse; }
+.k-tbl th {
+  font: 500 9.5px/1.4 var(--font-mono);
+  letter-spacing: .12em; text-transform: uppercase;
+  color: var(--text-3);
+  padding: 11px 18px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+.k-tbl th.r, .k-tbl td.r { text-align: right; }
+.k-tbl td {
+  padding: 13px 18px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-2);
+}
+.k-tbl tr:last-child td { border-bottom: none; }
+.k-tbl tbody tr { transition: background .12s var(--ease); }
+.k-tbl tbody tr:hover td { background: rgba(26,22,18,0.025); }
+.k-tbl td.mono { font: 500 12px/1.4 var(--font-mono); color: var(--text); }
+
+/* Topbar (sticky, blurred paper) */
+.k-topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 28px; height: 60px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(239,232,215,0.85);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  position: sticky; top: 0; z-index: 50;
+}
+
+/* Live status pill */
+.k-live {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 11px;
+  border: 1px solid rgba(31,107,74,0.25);
+  border-radius: var(--r-md);
+  font: 600 11px/1 var(--font-mono);
+  letter-spacing: .04em;
+  color: var(--mint);
+  background: rgba(31,107,74,0.10);
+}
+.k-live::before {
+  content:''; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--mint);
+  box-shadow: 0 0 8px var(--mint);
+  animation: k-pulse 2s ease-in-out infinite;
+}
+@keyframes k-pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+/* Animations */
+@keyframes k-fade-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+.k-fade-in { animation: k-fade-in .35s var(--ease) both; }
