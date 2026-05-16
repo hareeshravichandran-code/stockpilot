@@ -29,7 +29,7 @@ app.use(express.json());
 // ── CORS ──
 app.use(cors({
   origin: function(origin, callback) {
-    if (!origin || origin.includes('vercel.app') || origin.includes('localhost')) {
+    if (!origin || origin.includes('vercel.app') || origin.includes('localhost') || origin.includes('kanalyst.in')) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
