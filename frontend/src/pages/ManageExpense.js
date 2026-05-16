@@ -3,7 +3,7 @@ import { expenseAPI } from '../lib/api';
 
 /* ─────────────────────── helpers ─────────────────────────── */
 const CAT_ICONS = ['🏷️','🍕','🛍️','🚗','🏠','💊','📚','✈️','🎮','💆','⚡','💰','🎁','🏋️','🍎','☕','🏦','📊','🎯','🌿','💎','🔥','🛡️','🥦','🥜'];
-const CAT_COLORS = ['#7C6CF0','#FF6B6B','#10D98C','#06D6C8','#FFBB3B','#74B9FF','#FD79A8','#00d4a1','#f59e0b','#e11d48'];
+const CAT_COLORS = ['#5d3b78','#a82c2c','#1f6b4a','#2d6b6b','#a8741a','#34487a','#964062','#6b8e23','#b8551f','#8a7d6a'];
 const FIELD_TYPES = [
   { id: 'TEXT',      label: 'Text Input',             icon: '✏️' },
   { id: 'DROPDOWN',  label: 'Dropdown',               icon: '📋' },
@@ -24,57 +24,61 @@ const MANAGE_TABS = [
 /* ─────────────────────── styles ─────────────────────────── */
 const S = {
   overlay: {
-    position:'fixed', inset:0, background:'rgba(0,0,0,0.7)', backdropFilter:'blur(4px)',
-    zIndex:1000, display:'flex', alignItems:'stretch', justifyContent:'flex-end',
+    position:'fixed', inset:0, background:'rgba(26,22,18,0.4)', backdropFilter:'blur(6px)',
+    WebkitBackdropFilter:'blur(6px)', zIndex:1000, display:'flex', alignItems:'stretch', justifyContent:'flex-end',
   },
   panel: {
-    width:'min(900px,95vw)', background:'#0e1420', borderLeft:'1px solid rgba(255,255,255,0.08)',
+    width:'min(900px,95vw)', background:'var(--surface)', borderLeft:'1px solid var(--border-2)',
     display:'flex', flexDirection:'column', height:'100vh', overflow:'hidden',
+    boxShadow:'-12px 0 40px rgba(26,22,18,0.08)',
   },
   header: {
-    padding:'20px 24px 0', borderBottom:'1px solid rgba(255,255,255,0.07)',
-    background:'#0b1019', flexShrink:0,
+    padding:'18px 24px 0', borderBottom:'1px solid var(--border)',
+    background:'var(--bg-2)', flexShrink:0,
   },
-  hRow: { display:'flex', alignItems:'center', gap:12, marginBottom:16 },
-  hTitle: { flex:1, fontFamily:'DM Serif Display,serif', fontSize:22, color:'#e8edf5' },
+  hRow: { display:'flex', alignItems:'center', gap:12, marginBottom:14 },
+  hTitle: { flex:1, fontFamily:'var(--font-display)', fontSize:20, color:'var(--text)' },
   closeBtn: {
-    background:'rgba(255,255,255,0.06)', border:'1px solid rgba(255,255,255,0.1)',
-    color:'#8899bb', borderRadius:8, padding:'6px 12px', cursor:'pointer', fontSize:18,
+    background:'var(--surface)', border:'1px solid var(--border-2)',
+    color:'var(--text-3)', borderRadius:8, padding:'6px 12px', cursor:'pointer', fontSize:16,
+    transition:'all 0.15s var(--ease)',
   },
-  tabRow: { display:'flex', gap:2, overflowX:'auto', paddingBottom:0 },
+  tabRow: { display:'flex', gap:0, overflowX:'auto', paddingBottom:0 },
   tab: (active) => ({
-    padding:'10px 16px', cursor:'pointer', borderRadius:'8px 8px 0 0', whiteSpace:'nowrap',
-    fontSize:13, fontWeight:500, border:'none', outline:'none',
-    background: active ? '#141b2d' : 'transparent',
-    color: active ? '#00d4a1' : '#4a5a7a',
-    borderBottom: active ? '2px solid #00d4a1' : '2px solid transparent',
-    transition:'all .15s',
+    padding:'10px 16px', cursor:'pointer', borderRadius:0, whiteSpace:'nowrap',
+    fontSize:12, fontWeight:600, border:'none', outline:'none',
+    background: 'transparent',
+    color: active ? 'var(--lime)' : 'var(--text-3)',
+    borderBottom: active ? '2px solid var(--lime)' : '2px solid transparent',
+    transition:'all .15s var(--ease)',
+    fontFamily:'var(--font-ui)',
   }),
-  body: { flex:1, overflow:'auto', padding:24 },
+  body: { flex:1, overflow:'auto', padding:20 },
   card: {
-    background:'#141b2d', borderRadius:12, border:'1px solid rgba(255,255,255,0.07)',
-    padding:16, marginBottom:12,
+    background:'var(--surface)', borderRadius:10, border:'1px solid var(--border)',
+    padding:14, marginBottom:10, boxShadow:'var(--shadow-1)',
   },
   input: {
-    width:'100%', background:'#0e1420', border:'1px solid rgba(255,255,255,0.12)',
-    borderRadius:8, padding:'9px 12px', color:'#e8edf5', fontSize:13, outline:'none',
-    boxSizing:'border-box',
+    width:'100%', background:'var(--surface-2)', border:'1px solid var(--border-2)',
+    borderRadius:7, padding:'8px 11px', color:'var(--text)', fontSize:13, outline:'none',
+    boxSizing:'border-box', transition:'border-color 0.15s', fontFamily:'var(--font-ui)',
   },
-  label: { fontSize:11, color:'#4a5a7a', letterSpacing:1, textTransform:'uppercase', marginBottom:4, display:'block' },
-  btn: (color='#00d4a1', ghost=false) => ({
+  label: { fontSize:10, color:'var(--text-3)', letterSpacing:1, textTransform:'uppercase', marginBottom:4, display:'block', fontFamily:'var(--font-mono)', fontWeight:500 },
+  btn: (color='var(--lime)', ghost=false) => ({
     background: ghost ? 'transparent' : color,
     border: ghost ? `1px solid ${color}` : 'none',
-    color: ghost ? color : '#0e1420',
-    padding:'8px 16px', borderRadius:8, cursor:'pointer', fontSize:13, fontWeight:600,
+    color: ghost ? color : color === 'var(--lime)' ? '#fff' : (color === 'var(--text)' ? 'var(--bg)' : '#fff'),
+    padding:'8px 14px', borderRadius:7, cursor:'pointer', fontSize:12, fontWeight:600,
+    transition:'all 0.2s var(--ease)', fontFamily:'var(--font-ui)',
   }),
   row: { display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' },
-  badge: (color='#00d4a1') => ({
-    background: color+'22', color, padding:'2px 8px', borderRadius:20,
-    fontSize:11, fontWeight:600, display:'inline-block',
+  badge: (color='var(--lime)') => ({
+    background: color+'18', color, padding:'2px 8px', borderRadius:4,
+    fontSize:10, fontWeight:600, display:'inline-block', fontFamily:'var(--font-mono)',
   }),
-  divider: { borderColor:'rgba(255,255,255,0.06)', margin:'16px 0' },
-  sectionTitle: { fontSize:11, color:'#4a5a7a', letterSpacing:1.5, textTransform:'uppercase', marginBottom:12, fontWeight:700 },
-  empty: { textAlign:'center', padding:'48px 24px', color:'#4a5a7a' },
+  divider: { borderColor:'var(--border)', margin:'14px 0' },
+  sectionTitle: { fontSize:10, color:'var(--text-3)', letterSpacing:1.5, textTransform:'uppercase', marginBottom:10, fontWeight:700, fontFamily:'var(--font-mono)' },
+  empty: { textAlign:'center', padding:'40px 20px', color:'var(--text-3)' },
 };
 
 /* ═══════════════════════════════════════════════════════════ */
@@ -146,7 +150,7 @@ export default function ManageExpense({ onClose }) {
 /* ═══════════════════════════════════════════════════════════ */
 function CategoriesTab({ cats, parentCats, subCats, reload }) {
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm]         = useState({ name:'', type:'EXPENSE', parent_id:'', icon:'🏷️', color:'#00d4a1' });
+  const [form, setForm]         = useState({ name:'', type:'EXPENSE', parent_id:'', icon:'🏷️', color:'var(--lime)' });
   const [saving, setSaving]     = useState(false);
   const [error, setError]       = useState('');
 
@@ -158,7 +162,7 @@ function CategoriesTab({ cats, parentCats, subCats, reload }) {
     setSaving(true); setError('');
     try {
       await expenseAPI.createCategory({ name:form.name, type:form.type, parent_id:form.parent_id||null, icon:form.icon, color:form.color });
-      setShowForm(false); setForm({ name:'', type:'EXPENSE', parent_id:'', icon:'🏷️', color:'#00d4a1' });
+      setShowForm(false); setForm({ name:'', type:'EXPENSE', parent_id:'', icon:'🏷️', color:'var(--lime)' });
       reload();
     } catch(e) { setError(e.message); }
     finally { setSaving(false); }
@@ -179,21 +183,21 @@ function CategoriesTab({ cats, parentCats, subCats, reload }) {
             <span style={{fontSize:22}}>{cat.icon}</span>
             <div>
               <div style={{...S.row, gap:6}}>
-                <span style={{color:'#e8edf5', fontWeight:600}}>{cat.name}</span>
-                <span style={S.badge(cat.color || '#00d4a1')}>{cat.type}</span>
-                {cat.is_system && <span style={S.badge('#4a5a7a')}>System</span>}
-                {children.length > 0 && <span style={{fontSize:11,color:'#4a5a7a'}}>{children.length} subcategory</span>}
+                <span style={{color:'var(--text)', fontWeight:600}}>{cat.name}</span>
+                <span style={S.badge(cat.color || 'var(--lime)')}>{cat.type}</span>
+                {cat.is_system && <span style={S.badge('var(--text-3)')}>System</span>}
+                {children.length > 0 && <span style={{fontSize:11,color:'var(--text-3)'}}>{children.length} subcategory</span>}
               </div>
             </div>
           </div>
           {!cat.is_system && (
-            <button onClick={() => del(cat.id)} style={{background:'transparent',border:'none',cursor:'pointer',color:'#f43f5e',fontSize:16}}>🗑</button>
+            <button onClick={() => del(cat.id)} style={{background:'transparent',border:'none',cursor:'pointer',color:'var(--coral)',fontSize:16}}>🗑</button>
           )}
         </div>
         {children.length > 0 && (
-          <div style={{marginTop:8, paddingLeft:16, borderLeft:'2px solid rgba(255,255,255,0.06)', display:'flex', flexWrap:'wrap', gap:6}}>
+          <div style={{marginTop:8, paddingLeft:16, borderLeft:'2px solid var(--border-2)', display:'flex', flexWrap:'wrap', gap:6}}>
             {children.map(s => (
-              <div key={s.id} style={{...S.badge(s.color||'#8899bb'), display:'flex', alignItems:'center', gap:4}}>
+              <div key={s.id} style={{...S.badge(s.color||'var(--text-3)'), display:'flex', alignItems:'center', gap:4}}>
                 <span>{s.icon}</span><span>{s.name}</span>
                 {!s.is_system && <span onClick={() => del(s.id)} style={{cursor:'pointer',marginLeft:2}}>✕</span>}
               </div>
@@ -212,8 +216,8 @@ function CategoriesTab({ cats, parentCats, subCats, reload }) {
 
       {/* Create form */}
       {showForm && (
-        <div style={{...S.card, border:'1px solid rgba(0,212,161,0.3)', marginBottom:20}}>
-          <div style={{fontSize:13, fontWeight:600, color:'#00d4a1', marginBottom:12}}>New Category</div>
+        <div style={{...S.card, border:'1px solid rgba(107,142,35,0.25)', marginBottom:20}}>
+          <div style={{fontSize:13, fontWeight:600, color:'var(--lime)', marginBottom:12}}>New Category</div>
           <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10}}>
             <div>
               <span style={S.label}>Name *</span>
@@ -237,7 +241,7 @@ function CategoriesTab({ cats, parentCats, subCats, reload }) {
               <div style={{...S.row, flexWrap:'wrap', gap:4, marginTop:2}}>
                 {CAT_ICONS.map(ic => (
                   <button key={ic} onClick={() => setForm(f=>({...f,icon:ic}))}
-                    style={{background:form.icon===ic?'rgba(0,212,161,0.2)':'rgba(255,255,255,0.04)',border:`1px solid ${form.icon===ic?'#00d4a1':'rgba(255,255,255,0.08)'}`,borderRadius:6,padding:'4px 6px',cursor:'pointer',fontSize:16}}>
+                    style={{background:form.icon===ic?'var(--lime-soft)':'var(--surface-2)',border:`1px solid ${form.icon===ic?'var(--lime)':'var(--border)'}`,borderRadius:6,padding:'4px 6px',cursor:'pointer',fontSize:16}}>
                     {ic}
                   </button>
                 ))}
@@ -253,17 +257,17 @@ function CategoriesTab({ cats, parentCats, subCats, reload }) {
               </div>
             </div>
           </div>
-          {error && <div style={{color:'#f43f5e',fontSize:12,marginTop:8}}>{error}</div>}
+          {error && <div style={{color:'var(--coral)',fontSize:12,marginTop:8}}>{error}</div>}
           <div style={{...S.row, marginTop:12}}>
             <button style={S.btn()} onClick={save} disabled={saving}>{saving?'Saving…':'Create'}</button>
-            <button style={S.btn('#8899bb',true)} onClick={() => setShowForm(false)}>Cancel</button>
+            <button style={S.btn('var(--text-3)',true)} onClick={() => setShowForm(false)}>Cancel</button>
           </div>
         </div>
       )}
 
       {/* Standard categories section */}
       <div style={S.sectionTitle}>🗂️ Standard Categories</div>
-      <div style={{...S.card, background:'rgba(14,164,233,0.08)', border:'1px solid rgba(14,164,233,0.2)', fontSize:12, color:'#7cc3e8', marginBottom:12}}>
+      <div style={{...S.card, background:'var(--indigo-soft)', border:'1px solid rgba(52,72,122,0.20)', fontSize:12, color:'var(--indigo)', marginBottom:12}}>
         🔒 System categories are shared across all users and cannot be deleted. You can add subcategories under any of them.
       </div>
       {systemCats.length === 0
@@ -342,20 +346,20 @@ function RulesTab() {
     <div>
       <div style={{...S.row, justifyContent:'space-between', marginBottom:16}}>
         <div>
-          <div style={{color:'#e8edf5', fontWeight:600}}>Categorisation Rules</div>
-          <div style={{fontSize:12, color:'#4a5a7a', marginTop:2}}>Rules auto-assign categories to transactions based on merchant name patterns.</div>
+          <div style={{color:'var(--text)', fontWeight:600}}>Categorisation Rules</div>
+          <div style={{fontSize:12, color:'var(--text-3)', marginTop:2}}>Rules auto-assign categories to transactions based on merchant name patterns.</div>
         </div>
         <button style={S.btn()} onClick={() => { setEditing(null); setForm({ merchant_pattern:'', category_id:'', user_confirmed:true }); setShowForm(v=>!v); }}>+ New Rule</button>
       </div>
 
       {showForm && (
-        <div style={{...S.card, border:'1px solid rgba(0,212,161,0.3)', marginBottom:16}}>
-          <div style={{fontSize:13, fontWeight:600, color:'#00d4a1', marginBottom:12}}>{editing ? 'Edit Rule' : 'New Rule'}</div>
+        <div style={{...S.card, border:'1px solid rgba(107,142,35,0.25)', marginBottom:16}}>
+          <div style={{fontSize:13, fontWeight:600, color:'var(--lime)', marginBottom:12}}>{editing ? 'Edit Rule' : 'New Rule'}</div>
           <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10}}>
             <div>
               <span style={S.label}>Merchant Pattern *</span>
               <input style={S.input} value={form.merchant_pattern} onChange={e=>setForm(f=>({...f,merchant_pattern:e.target.value}))} placeholder="e.g. SWIGGY, AMAZON" />
-              <div style={{fontSize:11,color:'#4a5a7a',marginTop:3}}>Case-insensitive. Use partial name.</div>
+              <div style={{fontSize:11,color:'var(--text-3)',marginTop:3}}>Case-insensitive. Use partial name.</div>
             </div>
             <div>
               <span style={S.label}>Category *</span>
@@ -367,7 +371,7 @@ function RulesTab() {
           </div>
           <div style={{...S.row, marginTop:12}}>
             <button style={S.btn()} onClick={save} disabled={saving}>{saving?'Saving…':'Save Rule'}</button>
-            <button style={S.btn('#8899bb',true)} onClick={() => { setShowForm(false); setEditing(null); }}>Cancel</button>
+            <button style={S.btn('var(--text-3)',true)} onClick={() => { setShowForm(false); setEditing(null); }}>Cancel</button>
           </div>
         </div>
       )}
@@ -379,15 +383,15 @@ function RulesTab() {
           <div style={{...S.row, justifyContent:'space-between'}}>
             <div>
               <div style={{...S.row, gap:8}}>
-                <code style={{background:'rgba(255,255,255,0.06)',padding:'2px 8px',borderRadius:4,fontSize:13,color:'#fb923c'}}>{rule.merchant_pattern}</code>
-                <span style={{color:'#4a5a7a'}}>→</span>
-                <span style={S.badge('#00d4a1')}>{catName(rule.category_id)}</span>
+                <code style={{background:'var(--border)',padding:'2px 8px',borderRadius:4,fontSize:13,color:'var(--peach)'}}>{rule.merchant_pattern}</code>
+                <span style={{color:'var(--text-3)'}}>→</span>
+                <span style={S.badge('var(--lime)')}>{catName(rule.category_id)}</span>
               </div>
-              {rule.match_count > 0 && <div style={{fontSize:11,color:'#4a5a7a',marginTop:4}}>Matched {rule.match_count} transactions</div>}
+              {rule.match_count > 0 && <div style={{fontSize:11,color:'var(--text-3)',marginTop:4}}>Matched {rule.match_count} transactions</div>}
             </div>
             <div style={S.row}>
-              <button onClick={() => openEdit(rule)} style={{background:'transparent',border:'none',cursor:'pointer',color:'#0ea5e9',fontSize:15}}>✏️</button>
-              <button onClick={() => del(rule.id)} style={{background:'transparent',border:'none',cursor:'pointer',color:'#f43f5e',fontSize:15}}>🗑</button>
+              <button onClick={() => openEdit(rule)} style={{background:'transparent',border:'none',cursor:'pointer',color:'var(--indigo)',fontSize:15}}>✏️</button>
+              <button onClick={() => del(rule.id)} style={{background:'transparent',border:'none',cursor:'pointer',color:'var(--coral)',fontSize:15}}>🗑</button>
             </div>
           </div>
         </div>
@@ -434,7 +438,7 @@ function BulkTab({ transactions, categories, reload }) {
 
   return (
     <div>
-      {done && <div style={{...S.card, background:'rgba(0,212,161,0.1)', border:'1px solid rgba(0,212,161,0.3)', color:'#00d4a1', marginBottom:12, fontSize:13}}>{done}</div>}
+      {done && <div style={{...S.card, background:'var(--lime-soft)', border:'1px solid rgba(107,142,35,0.25)', color:'var(--lime)', marginBottom:12, fontSize:13}}>{done}</div>}
 
       {/* Controls */}
       <div style={{...S.card, marginBottom:16}}>
@@ -458,14 +462,14 @@ function BulkTab({ transactions, categories, reload }) {
               {categories.map(c=><option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
             </select>
           </div>
-          <button style={{...S.btn(applying?'#4a5a7a':'#00d4a1'), alignSelf:'flex-end', whiteSpace:'nowrap'}} onClick={apply} disabled={applying||!selected.size||!bulkCatId}>
+          <button style={{...S.btn(applying?'var(--text-3)':'var(--lime)'), alignSelf:'flex-end', whiteSpace:'nowrap'}} onClick={apply} disabled={applying||!selected.size||!bulkCatId}>
             {applying ? 'Applying…' : `Apply to ${selected.size || '…'}`}
           </button>
         </div>
         {selected.size > 0 && (
-          <div style={{marginTop:10, fontSize:12, color:'#00d4a1'}}>
+          <div style={{marginTop:10, fontSize:12, color:'var(--lime)'}}>
             {selected.size} selected
-            <button onClick={() => setSelected(new Set())} style={{background:'transparent',border:'none',color:'#4a5a7a',cursor:'pointer',marginLeft:8}}>Clear</button>
+            <button onClick={() => setSelected(new Set())} style={{background:'transparent',border:'none',color:'var(--text-3)',cursor:'pointer',marginLeft:8}}>Clear</button>
           </div>
         )}
       </div>
@@ -474,45 +478,45 @@ function BulkTab({ transactions, categories, reload }) {
       <div style={{...S.card, padding:0, overflow:'hidden'}}>
         <table style={{width:'100%', borderCollapse:'collapse', fontSize:13}}>
           <thead>
-            <tr style={{background:'#0b1019', borderBottom:'1px solid rgba(255,255,255,0.06)'}}>
+            <tr style={{background:'var(--surface-3)', borderBottom:'1px solid var(--border)'}}>
               <th style={{padding:'10px 12px', textAlign:'left', width:36}}>
                 <input type="checkbox" checked={selected.size===filtered.length&&filtered.length>0} onChange={toggleAll} />
               </th>
-              <th style={{padding:'10px 12px', textAlign:'left', color:'#4a5a7a', fontWeight:600}}>Merchant</th>
-              <th style={{padding:'10px 12px', textAlign:'left', color:'#4a5a7a', fontWeight:600}}>Date</th>
-              <th style={{padding:'10px 12px', textAlign:'right', color:'#4a5a7a', fontWeight:600}}>Amount</th>
-              <th style={{padding:'10px 12px', textAlign:'left', color:'#4a5a7a', fontWeight:600}}>Category</th>
+              <th style={{padding:'10px 12px', textAlign:'left', color:'var(--text-3)', fontWeight:600}}>Merchant</th>
+              <th style={{padding:'10px 12px', textAlign:'left', color:'var(--text-3)', fontWeight:600}}>Date</th>
+              <th style={{padding:'10px 12px', textAlign:'right', color:'var(--text-3)', fontWeight:600}}>Amount</th>
+              <th style={{padding:'10px 12px', textAlign:'left', color:'var(--text-3)', fontWeight:600}}>Category</th>
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 && (
-              <tr><td colSpan={5} style={{padding:32, textAlign:'center', color:'#4a5a7a'}}>No transactions found</td></tr>
+              <tr><td colSpan={5} style={{padding:32, textAlign:'center', color:'var(--text-3)'}}>No transactions found</td></tr>
             )}
             {filtered.slice(0, 200).map(t => (
-              <tr key={t.id} style={{borderBottom:'1px solid rgba(255,255,255,0.04)', background:selected.has(t.id)?'rgba(0,212,161,0.06)':'transparent'}}
+              <tr key={t.id} style={{borderBottom:'1px solid var(--surface-2)', background:selected.has(t.id)?'var(--lime-soft)':'transparent'}}
                 onClick={() => setSelected(prev => { const n=new Set(prev); n.has(t.id)?n.delete(t.id):n.add(t.id); return n; })}>
                 <td style={{padding:'9px 12px'}}>
                   <input type="checkbox" checked={selected.has(t.id)} onChange={()=>{}} />
                 </td>
-                <td style={{padding:'9px 12px', color:'#e8edf5', maxWidth:180, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+                <td style={{padding:'9px 12px', color:'var(--text)', maxWidth:180, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
                   {t.merchant_name || t.merchant || '—'}
                 </td>
-                <td style={{padding:'9px 12px', color:'#8899bb', fontSize:12}}>
+                <td style={{padding:'9px 12px', color:'var(--text-3)', fontSize:12}}>
                   {t.date_time ? new Date(parseInt(t.date_time)).toLocaleDateString('en-IN') : t.expense_date || '—'}
                 </td>
-                <td style={{padding:'9px 12px', textAlign:'right', color: t.type==='CREDIT'?'#00d4a1':'#f43f5e', fontWeight:600}}>
+                <td style={{padding:'9px 12px', textAlign:'right', color: t.type==='CREDIT'?'var(--lime)':'var(--coral)', fontWeight:600}}>
                   {t.type==='CREDIT'?'+':'-'}{fmtAmt(t.amount)}
                 </td>
                 <td style={{padding:'9px 12px'}}>
                   {t.category_id
-                    ? <span style={S.badge('#0ea5e9')}>{catName(t.category_id) || t.category_id}</span>
-                    : <span style={{color:'#4a5a7a', fontSize:11}}>Uncategorised</span>}
+                    ? <span style={S.badge('var(--indigo)')}>{catName(t.category_id) || t.category_id}</span>
+                    : <span style={{color:'var(--text-3)', fontSize:11}}>Uncategorised</span>}
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
-        {filtered.length > 200 && <div style={{padding:'8px 12px', fontSize:11, color:'#4a5a7a'}}>Showing first 200 of {filtered.length} transactions</div>}
+        {filtered.length > 200 && <div style={{padding:'8px 12px', fontSize:11, color:'var(--text-3)'}}>Showing first 200 of {filtered.length} transactions</div>}
       </div>
     </div>
   );
@@ -563,8 +567,8 @@ function BudgetTab({ parentCats }) {
     <div>
       <div style={{...S.row, justifyContent:'space-between', marginBottom:16}}>
         <div>
-          <div style={{color:'#e8edf5', fontWeight:600}}>Monthly Budgets</div>
-          <div style={{fontSize:12, color:'#4a5a7a', marginTop:2}}>Set spending limits per category.</div>
+          <div style={{color:'var(--text)', fontWeight:600}}>Monthly Budgets</div>
+          <div style={{fontSize:12, color:'var(--text-3)', marginTop:2}}>Set spending limits per category.</div>
         </div>
         <div style={S.row}>
           <input type="month" value={`${month.slice(0,4)}-${month.slice(4,6)}`}
@@ -575,8 +579,8 @@ function BudgetTab({ parentCats }) {
       </div>
 
       {showForm && (
-        <div style={{...S.card, border:'1px solid rgba(0,212,161,0.3)', marginBottom:16}}>
-          <div style={{fontSize:13,fontWeight:600,color:'#00d4a1',marginBottom:12}}>New Budget — {displayMonth()}</div>
+        <div style={{...S.card, border:'1px solid rgba(107,142,35,0.25)', marginBottom:16}}>
+          <div style={{fontSize:13,fontWeight:600,color:'var(--lime)',marginBottom:12}}>New Budget — {displayMonth()}</div>
           <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10}}>
             <div>
               <span style={S.label}>Category *</span>
@@ -592,7 +596,7 @@ function BudgetTab({ parentCats }) {
           </div>
           <div style={{...S.row, marginTop:12}}>
             <button style={S.btn()} onClick={save} disabled={saving}>{saving?'Saving…':'Save Budget'}</button>
-            <button style={S.btn('#8899bb',true)} onClick={() => setShowForm(false)}>Cancel</button>
+            <button style={S.btn('var(--text-3)',true)} onClick={() => setShowForm(false)}>Cancel</button>
           </div>
         </div>
       )}
@@ -610,19 +614,19 @@ function BudgetTab({ parentCats }) {
                 <div style={S.row}>
                   <span style={{fontSize:20}}>{catIcon(b.category_id)}</span>
                   <div>
-                    <div style={{color:'#e8edf5',fontWeight:600}}>{catName(b.category_id)}</div>
-                    <div style={{fontSize:12,color:'#4a5a7a'}}>Budget: {fmtAmt(b.amount)}</div>
+                    <div style={{color:'var(--text)',fontWeight:600}}>{catName(b.category_id)}</div>
+                    <div style={{fontSize:12,color:'var(--text-3)'}}>Budget: {fmtAmt(b.amount)}</div>
                   </div>
                 </div>
                 <div style={S.row}>
-                  <span style={{color: over?'#f43f5e':'#00d4a1', fontWeight:700}}>{fmtAmt(spent)}</span>
-                  <button onClick={() => del(b.id)} style={{background:'transparent',border:'none',cursor:'pointer',color:'#f43f5e'}}>🗑</button>
+                  <span style={{color: over?'var(--coral)':'var(--lime)', fontWeight:700}}>{fmtAmt(spent)}</span>
+                  <button onClick={() => del(b.id)} style={{background:'transparent',border:'none',cursor:'pointer',color:'var(--coral)'}}>🗑</button>
                 </div>
               </div>
-              <div style={{background:'rgba(255,255,255,0.06)',borderRadius:4,height:6,overflow:'hidden'}}>
-                <div style={{width:`${pct}%`,height:'100%',background:over?'#f43f5e':'#00d4a1',transition:'width .4s',borderRadius:4}} />
+              <div style={{background:'var(--border)',borderRadius:4,height:6,overflow:'hidden'}}>
+                <div style={{width:`${pct}%`,height:'100%',background:over?'var(--coral)':'var(--lime)',transition:'width .4s',borderRadius:4}} />
               </div>
-              <div style={{fontSize:11,color:'#4a5a7a',marginTop:4}}>{pct.toFixed(0)}% used {over&&<span style={{color:'#f43f5e'}}> · Over budget by {fmtAmt(spent-b.amount)}</span>}</div>
+              <div style={{fontSize:11,color:'var(--text-3)',marginTop:4}}>{pct.toFixed(0)}% used {over&&<span style={{color:'var(--coral)'}}> · Over budget by {fmtAmt(spent-b.amount)}</span>}</div>
             </div>
           );
         })
@@ -699,15 +703,15 @@ function FieldsTab({ categories, subCats }) {
     <div>
       <div style={{...S.row, justifyContent:'space-between', marginBottom:16}}>
         <div>
-          <div style={{color:'#e8edf5', fontWeight:600}}>Custom Entry Fields</div>
-          <div style={{fontSize:12, color:'#4a5a7a', marginTop:2}}>Extra fields shown on every transaction. Text, dropdown, or auto-fill by category.</div>
+          <div style={{color:'var(--text)', fontWeight:600}}>Custom Entry Fields</div>
+          <div style={{fontSize:12, color:'var(--text-3)', marginTop:2}}>Extra fields shown on every transaction. Text, dropdown, or auto-fill by category.</div>
         </div>
         <button style={S.btn()} onClick={() => { setEditing(null); setForm(EMPTY); setShowForm(v=>!v); }}>+ Add Field</button>
       </div>
 
       {showForm && (
-        <div style={{...S.card, border:'1px solid rgba(0,212,161,0.3)', marginBottom:16}}>
-          <div style={{fontSize:13,fontWeight:600,color:'#00d4a1',marginBottom:12}}>{editing?'Edit Field':'New Custom Field'}</div>
+        <div style={{...S.card, border:'1px solid rgba(107,142,35,0.25)', marginBottom:16}}>
+          <div style={{fontSize:13,fontWeight:600,color:'var(--lime)',marginBottom:12}}>{editing?'Edit Field':'New Custom Field'}</div>
           <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:12}}>
             <div>
               <span style={S.label}>Field Name *</span>
@@ -724,7 +728,7 @@ function FieldsTab({ categories, subCats }) {
           <div style={{...S.row, marginBottom:12}}>
             <label style={{...S.row, gap:6, cursor:'pointer'}}>
               <input type="checkbox" checked={form.is_required} onChange={e=>setForm(f=>({...f,is_required:e.target.checked}))} />
-              <span style={{fontSize:13,color:'#8899bb'}}>Required field</span>
+              <span style={{fontSize:13,color:'var(--text-3)'}}>Required field</span>
             </label>
           </div>
 
@@ -740,9 +744,9 @@ function FieldsTab({ categories, subCats }) {
               </div>
               <div style={{...S.row, flexWrap:'wrap', gap:6, marginTop:8}}>
                 {form.options.map(opt => (
-                  <div key={opt} style={{background:'rgba(255,255,255,0.06)',borderRadius:20,padding:'3px 10px',fontSize:12,color:'#e8edf5',...S.row,gap:4}}>
+                  <div key={opt} style={{background:'var(--border)',borderRadius:20,padding:'3px 10px',fontSize:12,color:'var(--text)',...S.row,gap:4}}>
                     {opt}
-                    <span onClick={() => setForm(f=>({...f,options:f.options.filter(o=>o!==opt)}))} style={{cursor:'pointer',color:'#f43f5e'}}>✕</span>
+                    <span onClick={() => setForm(f=>({...f,options:f.options.filter(o=>o!==opt)}))} style={{cursor:'pointer',color:'var(--coral)'}}>✕</span>
                   </div>
                 ))}
               </div>
@@ -773,14 +777,14 @@ function FieldsTab({ categories, subCats }) {
                   <span style={S.label}>Auto-fill Value</span>
                   <input style={S.input} value={ruleValue} onChange={e=>setRuleValue(e.target.value)} placeholder="e.g. Idly, Car" />
                 </div>
-                <button style={{...S.btn('#00d4a1'),alignSelf:'flex-end'}} onClick={addRule}>Add</button>
+                <button style={{...S.btn('var(--lime)'),alignSelf:'flex-end'}} onClick={addRule}>Add</button>
               </div>
               {form.auto_fill_rules.map((r,i) => (
-                <div key={i} style={{...S.row, justifyContent:'space-between', background:'rgba(255,255,255,0.04)', borderRadius:8, padding:'6px 10px', marginBottom:4}}>
-                  <span style={{fontSize:12, color:'#06D6C8'}}>
+                <div key={i} style={{...S.row, justifyContent:'space-between', background:'var(--surface-2)', borderRadius:8, padding:'6px 10px', marginBottom:4}}>
+                  <span style={{fontSize:12, color:'var(--teal)'}}>
                     ⚡ {r.categoryName}{r.subcategoryName ? ` › ${r.subcategoryName}` : ''} → "{r.value}"
                   </span>
-                  <span onClick={() => setForm(f=>({...f,auto_fill_rules:f.auto_fill_rules.filter((_,j)=>j!==i)}))} style={{cursor:'pointer',color:'#f43f5e',fontSize:12}}>✕</span>
+                  <span onClick={() => setForm(f=>({...f,auto_fill_rules:f.auto_fill_rules.filter((_,j)=>j!==i)}))} style={{cursor:'pointer',color:'var(--coral)',fontSize:12}}>✕</span>
                 </div>
               ))}
             </div>
@@ -788,7 +792,7 @@ function FieldsTab({ categories, subCats }) {
 
           <div style={S.row}>
             <button style={S.btn()} onClick={save} disabled={saving||!form.name}>{saving?'Saving…':editing?'Save Changes':'Create Field'}</button>
-            <button style={S.btn('#8899bb',true)} onClick={() => { setShowForm(false); setEditing(null); }}>Cancel</button>
+            <button style={S.btn('var(--text-3)',true)} onClick={() => { setShowForm(false); setEditing(null); }}>Cancel</button>
           </div>
         </div>
       )}
@@ -803,21 +807,21 @@ function FieldsTab({ categories, subCats }) {
                 <span style={{fontSize:22}}>{FIELD_TYPES.find(t=>t.id===f.field_type)?.icon||'✏️'}</span>
                 <div>
                   <div style={{...S.row,gap:6}}>
-                    <span style={{color:'#e8edf5',fontWeight:600}}>{f.name}</span>
-                    <span style={S.badge('#7C6CF0')}>{FIELD_TYPES.find(t=>t.id===f.field_type)?.label}</span>
-                    {f.is_required && <span style={S.badge('#f43f5e')}>Required</span>}
+                    <span style={{color:'var(--text)',fontWeight:600}}>{f.name}</span>
+                    <span style={S.badge('var(--violet)')}>{FIELD_TYPES.find(t=>t.id===f.field_type)?.label}</span>
+                    {f.is_required && <span style={S.badge('var(--coral)')}>Required</span>}
                   </div>
                   {f.field_type==='DROPDOWN' && Array.isArray(f.options) && f.options.length > 0 && (
-                    <div style={{fontSize:11,color:'#4a5a7a',marginTop:3}}>Options: {f.options.slice(0,4).join(', ')}{f.options.length>4?`…+${f.options.length-4} more`:''}</div>
+                    <div style={{fontSize:11,color:'var(--text-3)',marginTop:3}}>Options: {f.options.slice(0,4).join(', ')}{f.options.length>4?`…+${f.options.length-4} more`:''}</div>
                   )}
                   {f.field_type==='AUTOFILL' && Array.isArray(f.auto_fill_rules) && f.auto_fill_rules.length > 0 && (
-                    <div style={{fontSize:11,color:'#06D6C8',marginTop:3}}>{f.auto_fill_rules.length} auto-fill rule(s)</div>
+                    <div style={{fontSize:11,color:'var(--teal)',marginTop:3}}>{f.auto_fill_rules.length} auto-fill rule(s)</div>
                   )}
                 </div>
               </div>
               <div style={S.row}>
-                <button onClick={() => openEdit(f)} style={{background:'transparent',border:'none',cursor:'pointer',color:'#0ea5e9',fontSize:15}}>✏️</button>
-                <button onClick={() => del(f.id)} style={{background:'transparent',border:'none',cursor:'pointer',color:'#f43f5e',fontSize:15}}>🗑</button>
+                <button onClick={() => openEdit(f)} style={{background:'transparent',border:'none',cursor:'pointer',color:'var(--indigo)',fontSize:15}}>✏️</button>
+                <button onClick={() => del(f.id)} style={{background:'transparent',border:'none',cursor:'pointer',color:'var(--coral)',fontSize:15}}>🗑</button>
               </div>
             </div>
           </div>
@@ -867,14 +871,14 @@ function SheetsTab() {
 
   return (
     <div>
-      <div style={{color:'#e8edf5',fontWeight:600,marginBottom:4}}>Google Sheets Sync</div>
-      <div style={{fontSize:12,color:'#4a5a7a',marginBottom:16}}>Configure your Google Sheet to auto-receive transactions from the Android app.</div>
+      <div style={{color:'var(--text)',fontWeight:600,marginBottom:4}}>Google Sheets Sync</div>
+      <div style={{fontSize:12,color:'var(--text-3)',marginBottom:16}}>Configure your Google Sheet to auto-receive transactions from the Android app.</div>
 
       <div style={S.card}>
         <div style={{...S.row, justifyContent:'space-between', marginBottom:16}}>
-          <span style={{color:'#e8edf5',fontWeight:600}}>Enable Sheet Sync</span>
+          <span style={{color:'var(--text)',fontWeight:600}}>Enable Sheet Sync</span>
           <div onClick={() => setForm(f=>({...f,is_enabled:!f.is_enabled}))}
-            style={{width:44,height:24,borderRadius:12,background:form.is_enabled?'#00d4a1':'#1a2235',cursor:'pointer',position:'relative',transition:'background .2s'}}>
+            style={{width:44,height:24,borderRadius:12,background:form.is_enabled?'var(--lime)':'var(--surface-3)',cursor:'pointer',position:'relative',transition:'background .2s'}}>
             <div style={{position:'absolute',top:2,left:form.is_enabled?20:2,width:20,height:20,borderRadius:'50%',background:'#fff',transition:'left .2s'}} />
           </div>
         </div>
@@ -917,11 +921,11 @@ function SheetsTab() {
 
         <div style={{...S.row, gap:10}}>
           <button style={S.btn()} onClick={save} disabled={saving}>{saving?'Saving…':'Save Configuration'}</button>
-          {saved && <span style={{color:'#00d4a1',fontSize:13}}>✓ Saved</span>}
+          {saved && <span style={{color:'var(--lime)',fontSize:13}}>✓ Saved</span>}
         </div>
       </div>
 
-      <div style={{...S.card,background:'rgba(14,164,233,0.08)',border:'1px solid rgba(14,164,233,0.2)',fontSize:12,color:'#7cc3e8',marginTop:12}}>
+      <div style={{...S.card,background:'var(--indigo-soft)',border:'1px solid rgba(52,72,122,0.20)',fontSize:12,color:'var(--indigo)',marginTop:12}}>
         <div style={{fontWeight:600,marginBottom:4}}>ℹ️ How it works</div>
         <div>The Android Kanalyst app writes transactions directly to this sheet. This web config mirrors the same settings — changes here sync to your mobile app on next open.</div>
       </div>
