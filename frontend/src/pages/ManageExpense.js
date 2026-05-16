@@ -95,7 +95,9 @@ export default function ManageExpense({ onClose }) {
   const loadTransactions = useCallback(async () => {
     try {
       const r = await expenseAPI.getTransactions({ limit: 500 });
-      setTransactions(r.data || []);
+      // backend returns { data: [...], page, limit, total } so unwrap .data.data
+      const rows = Array.isArray(r.data) ? r.data : (r.data?.data ?? []);
+      setTransactions(rows);
     } catch (e) { console.error(e); }
   }, []);
 
@@ -143,7 +145,6 @@ export default function ManageExpense({ onClose }) {
 /*  TAB: CATEGORIES                                           */
 /* ═══════════════════════════════════════════════════════════ */
 function CategoriesTab({ cats, parentCats, subCats, reload }) {
-  const [section, setSection]   = useState('standard'); // standard | custom
   const [showForm, setShowForm] = useState(false);
   const [form, setForm]         = useState({ name:'', type:'EXPENSE', parent_id:'', icon:'🏷️', color:'#00d4a1' });
   const [saving, setSaving]     = useState(false);
@@ -169,16 +170,43 @@ function CategoriesTab({ cats, parentCats, subCats, reload }) {
     catch(e) { alert(e.message); }
   };
 
-  const displayCats = section === 'standard' ? systemCats : userCats;
+  const renderCatCard = (cat) => {
+    const children = subCats.filter(s => s.parent_id === cat.id);
+    return (
+      <div key={cat.id} style={S.card}>
+        <div style={{...S.row, justifyContent:'space-between'}}>
+          <div style={S.row}>
+            <span style={{fontSize:22}}>{cat.icon}</span>
+            <div>
+              <div style={{...S.row, gap:6}}>
+                <span style={{color:'#e8edf5', fontWeight:600}}>{cat.name}</span>
+                <span style={S.badge(cat.color || '#00d4a1')}>{cat.type}</span>
+                {cat.is_system && <span style={S.badge('#4a5a7a')}>System</span>}
+                {children.length > 0 && <span style={{fontSize:11,color:'#4a5a7a'}}>{children.length} subcategory</span>}
+              </div>
+            </div>
+          </div>
+          {!cat.is_system && (
+            <button onClick={() => del(cat.id)} style={{background:'transparent',border:'none',cursor:'pointer',color:'#f43f5e',fontSize:16}}>🗑</button>
+          )}
+        </div>
+        {children.length > 0 && (
+          <div style={{marginTop:8, paddingLeft:16, borderLeft:'2px solid rgba(255,255,255,0.06)', display:'flex', flexWrap:'wrap', gap:6}}>
+            {children.map(s => (
+              <div key={s.id} style={{...S.badge(s.color||'#8899bb'), display:'flex', alignItems:'center', gap:4}}>
+                <span>{s.icon}</span><span>{s.name}</span>
+                {!s.is_system && <span onClick={() => del(s.id)} style={{cursor:'pointer',marginLeft:2}}>✕</span>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div>
-      <div style={{...S.row, justifyContent:'space-between', marginBottom:16}}>
-        <div style={S.row}>
-          {[['standard','🗂️ Standard'],['custom','✨ My Categories']].map(([id,lbl]) => (
-            <button key={id} style={S.tab(section===id)} onClick={() => setSection(id)}>{lbl}</button>
-          ))}
-        </div>
+      <div style={{...S.row, justifyContent:'flex-end', marginBottom:16}}>
         <button style={S.btn()} onClick={() => setShowForm(v => !v)}>+ New Category</button>
       </div>
 
@@ -233,53 +261,22 @@ function CategoriesTab({ cats, parentCats, subCats, reload }) {
         </div>
       )}
 
-      {/* Info banner for standard tab */}
-      {section === 'standard' && (
-        <div style={{...S.card, background:'rgba(14,164,233,0.08)', border:'1px solid rgba(14,164,233,0.2)', fontSize:12, color:'#7cc3e8', marginBottom:12}}>
-          🔒 System categories are shared across all users and cannot be deleted. You can add subcategories under any of them.
-        </div>
-      )}
+      {/* Standard categories section */}
+      <div style={S.sectionTitle}>🗂️ Standard Categories</div>
+      <div style={{...S.card, background:'rgba(14,164,233,0.08)', border:'1px solid rgba(14,164,233,0.2)', fontSize:12, color:'#7cc3e8', marginBottom:12}}>
+        🔒 System categories are shared across all users and cannot be deleted. You can add subcategories under any of them.
+      </div>
+      {systemCats.length === 0
+        ? <div style={S.empty}><div>No system categories found.</div></div>
+        : systemCats.map(renderCatCard)
+      }
 
-      {displayCats.length === 0 && (
-        <div style={S.empty}>
-          <div style={{fontSize:32, marginBottom:8}}>{section==='custom'?'✨':'🗂️'}</div>
-          <div>{section==='custom'?'No custom categories yet. Create one above.':'No system categories found.'}</div>
-        </div>
-      )}
-
-      {displayCats.map(cat => {
-        const children = subCats.filter(s => s.parent_id === cat.id);
-        return (
-          <div key={cat.id} style={S.card}>
-            <div style={{...S.row, justifyContent:'space-between'}}>
-              <div style={S.row}>
-                <span style={{fontSize:22}}>{cat.icon}</span>
-                <div>
-                  <div style={{...S.row, gap:6}}>
-                    <span style={{color:'#e8edf5', fontWeight:600}}>{cat.name}</span>
-                    <span style={S.badge(cat.color || '#00d4a1')}>{cat.type}</span>
-                    {cat.is_system && <span style={S.badge('#4a5a7a')}>System</span>}
-                    {children.length > 0 && <span style={{fontSize:11,color:'#4a5a7a'}}>{children.length} subcategory</span>}
-                  </div>
-                </div>
-              </div>
-              {!cat.is_system && (
-                <button onClick={() => del(cat.id)} style={{background:'transparent',border:'none',cursor:'pointer',color:'#f43f5e',fontSize:16}}>🗑</button>
-              )}
-            </div>
-            {children.length > 0 && (
-              <div style={{marginTop:8, paddingLeft:16, borderLeft:'2px solid rgba(255,255,255,0.06)', display:'flex', flexWrap:'wrap', gap:6}}>
-                {children.map(s => (
-                  <div key={s.id} style={{...S.badge(s.color||'#8899bb'), display:'flex', alignItems:'center', gap:4}}>
-                    <span>{s.icon}</span><span>{s.name}</span>
-                    {!s.is_system && <span onClick={() => del(s.id)} style={{cursor:'pointer',marginLeft:2}}>✕</span>}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        );
-      })}
+      {/* Custom categories section */}
+      <div style={{...S.sectionTitle, marginTop:24}}>✨ My Categories</div>
+      {userCats.length === 0
+        ? <div style={S.empty}><div style={{fontSize:32, marginBottom:8}}>✨</div><div>No custom categories yet. Create one above.</div></div>
+        : userCats.map(renderCatCard)
+      }
     </div>
   );
 }
@@ -288,27 +285,31 @@ function CategoriesTab({ cats, parentCats, subCats, reload }) {
 /*  TAB: SMS RULES                                            */
 /* ═══════════════════════════════════════════════════════════ */
 function RulesTab() {
-  const [rules, setRules]       = useState([]);
-  const [categories, setCategories] = useState([]);
-  const [loading, setLoading]   = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [editing, setEditing]   = useState(null);
-  const [form, setForm]         = useState({ merchant_pattern:'', category_id:'', user_confirmed:true });
-  const [saving, setSaving]     = useState(false);
+  const [rules, setRules]           = useState([]);
+  const [categories, setCategories] = useState([]);   // parent-only → for the dropdown
+  const [allCats, setAllCats]       = useState([]);   // all including subcats → for name lookup
+  const [loading, setLoading]       = useState(true);
+  const [showForm, setShowForm]     = useState(false);
+  const [editing, setEditing]       = useState(null);
+  const [form, setForm]             = useState({ merchant_pattern:'', category_id:'', user_confirmed:true });
+  const [saving, setSaving]         = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const [r, c] = await Promise.all([expenseAPI.getSmsRules(), expenseAPI.categories()]);
       setRules(r.data || r || []);
-      setCategories((c.data || c || []).filter(x => !x.parent_id));
+      const cats = c.data || c || [];
+      setAllCats(cats);
+      setCategories(cats.filter(x => !x.parent_id));
     } catch(e) { console.error(e); }
     finally { setLoading(false); }
   }, []);
 
   useEffect(() => { load(); }, []);
 
-  const catName = (id) => categories.find(c=>c.id===id)?.name || id;
+  // search all categories (including subcats) so rules created on Android resolve correctly
+  const catName = (id) => allCats.find(c => c.id === id)?.name || id;
 
   const openEdit = (rule) => {
     setEditing(rule.id);
