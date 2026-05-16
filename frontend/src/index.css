@@ -1,53 +1,9 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@400;500&family=Outfit:wght@300;400;500;600;700&display=swap');
-
-:root {
-  --bg: #080c14;
-  --surface: #0e1420;
-  --surface2: #141b2d;
-  --surface3: #1a2235;
-  --border: rgba(255,255,255,0.07);
-  --border2: rgba(255,255,255,0.12);
-  --accent: #00d4a1;
-  --accent2: #0ea5e9;
-  --accent3: #f59e0b;
-  --accent4: #f43f5e;
-  --text: #e8edf5;
-  --text2: #8899bb;
-  --text3: #4a5a7a;
-  --green: #10b981;
-  --red: #f43f5e;
-  --gold: #f59e0b;
-}
+@import './styles/kanalyst-tokens.css';
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
-body {
-  font-family: 'Outfit', sans-serif;
-  background: var(--bg);
-  color: var(--text);
-  min-height: 100vh;
-  -webkit-font-smoothing: antialiased;
-}
-
-body::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  background-image:
-    linear-gradient(rgba(0,212,161,0.025) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0,212,161,0.025) 1px, transparent 1px);
-  background-size: 40px 40px;
-  pointer-events: none;
-}
-
 a { color: inherit; text-decoration: none; }
-button { cursor: pointer; }
-input, select, textarea { font-family: 'Outfit', sans-serif; }
+button { cursor: pointer; font-family: var(--font-ui); }
+input, select, textarea { font-family: var(--font-ui); }
 
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: var(--surface); }
-::-webkit-scrollbar-thumb { background: var(--surface3); border-radius: 3px; }
-
-.fade-in { animation: fadeIn 0.4s ease both; }
-@keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+.fade-in { animation: k-fade-in 0.35s var(--ease) both; }
