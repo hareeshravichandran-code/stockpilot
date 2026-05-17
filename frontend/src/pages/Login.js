@@ -18,13 +18,15 @@ export default function Login() {
   // Handle Google OAuth callback — token in URL
   useEffect(() => {
     const token = searchParams.get('token');
+    const name  = searchParams.get('name');
     const err   = searchParams.get('error');
     const reason = searchParams.get('reason');
 
     if (token) {
-      localStorage.setItem('sp_token', token);
-      localStorage.removeItem('sp_user');
-      window.location.replace('/dashboard');
+      // Use loginWithToken so AuthContext is updated in-memory before navigation.
+      // This avoids the race where PrivateRoute sees user=null and bounces back.
+      loginWithToken(token, name ? { name: decodeURIComponent(name) } : null);
+      nav('/dashboard', { replace: true });
       return;
     }
 
