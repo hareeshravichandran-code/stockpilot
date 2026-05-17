@@ -4520,27 +4520,123 @@ export default function Dashboard() {
                 </div>
               )}
 
-              {settingsSection==='privacy' && (
-                <div>
-                  <div style={{color:'var(--text)',fontSize:14,fontWeight:700,marginBottom:16}}>Privacy Settings</div>
-                  <div style={{background:'var(--surface-2)',border:'1px solid var(--border-2)',borderRadius:10,padding:16}}>
-                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
-                      <div>
-                        <div style={{color:'var(--text)',fontSize:13,fontWeight:600}}>Hide values on startup</div>
-                        <div style={{color:'var(--text-3)',fontSize:11,marginTop:2}}>Dashboard opens with values hidden by default</div>
-                      </div>
-                      <div
-                        onClick={()=>{ const next=!hideValues; setHideValues(next); try{localStorage.setItem('kanalyst_hide_values',String(next));}catch(e){} }}
-                        style={{ width:44,height:24,borderRadius:12,background:hideValues?'#a82c2c':'var(--text-4)',cursor:'pointer',position:'relative',transition:'background 0.2s',flexShrink:0 }}>
-                        <div style={{ position:'absolute',top:2,left:hideValues?20:2,width:20,height:20,borderRadius:'50%',background:'#fff',transition:'left 0.2s' }}/>
+              {settingsSection==='privacy' && (() => {
+                const [disconnecting, setDisconnecting] = React.useState(false);
+                const [deleting, setDeleting] = React.useState(false);
+                const [confirmDelete, setConfirmDelete] = React.useState('');
+                const [privMsg, setPrivMsg] = React.useState('');
+
+                const disconnectGmail = async () => {
+                  if (!window.confirm('Disconnect Gmail? You will need to reconnect to sync portfolio data again.')) return;
+                  setDisconnecting(true); setPrivMsg('');
+                  try {
+                    await api.delete('/api/email/gmail/disconnect');
+                    setPrivMsg('✅ Gmail disconnected and access revoked.');
+                    setTimeout(() => window.location.reload(), 1500);
+                  } catch(e) {
+                    setPrivMsg('❌ ' + (e.response?.data?.error || 'Disconnect failed'));
+                  } finally { setDisconnecting(false); }
+                };
+
+                const deleteAccount = async () => {
+                  if (confirmDelete !== 'DELETE') return;
+                  setDeleting(true); setPrivMsg('');
+                  try {
+                    await api.delete('/api/email/user/delete-all');
+                    logout(); nav('/');
+                  } catch(e) {
+                    setPrivMsg('❌ ' + (e.response?.data?.error || 'Deletion failed'));
+                    setDeleting(false);
+                  }
+                };
+
+                const gmailConnected = emailStatus.length > 0;
+
+                return (
+                  <div>
+                    <div style={{color:'var(--text)',fontSize:14,fontWeight:700,marginBottom:16}}>Data &amp; Privacy</div>
+
+                    {/* Hide values toggle */}
+                    <div style={{background:'var(--surface-2)',border:'1px solid var(--border-2)',borderRadius:10,padding:16,marginBottom:14}}>
+                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+                        <div>
+                          <div style={{color:'var(--text)',fontSize:13,fontWeight:600}}>Hide values on startup</div>
+                          <div style={{color:'var(--text-3)',fontSize:11,marginTop:2}}>Dashboard opens with values hidden by default</div>
+                        </div>
+                        <div onClick={()=>{ const next=!hideValues; setHideValues(next); try{localStorage.setItem('kanalyst_hide_values',String(next));}catch(e){} }}
+                          style={{width:44,height:24,borderRadius:12,background:hideValues?'var(--lime)':'var(--text-4)',cursor:'pointer',position:'relative',transition:'background 0.2s',flexShrink:0}}>
+                          <div style={{position:'absolute',top:2,left:hideValues?20:2,width:20,height:20,borderRadius:'50%',background:'#fff',transition:'left 0.2s'}}/>
+                        </div>
                       </div>
                     </div>
-                    <div style={{fontSize:11,color:'var(--text-4)',padding:'8px 10px',background:'var(--surface)',borderRadius:6}}>
-                      💡 You can also toggle visibility anytime with the 👁 button in the top bar
+
+                    {/* Gmail access */}
+                    <div style={{background:'var(--surface-2)',border:'1px solid var(--border-2)',borderRadius:10,padding:16,marginBottom:14}}>
+                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:10}}>
+                        <div>
+                          <div style={{color:'var(--text)',fontSize:13,fontWeight:600}}>✉ Gmail Access</div>
+                          <div style={{color:'var(--text-3)',fontSize:11,marginTop:3,lineHeight:1.5}}>
+                            We use <code style={{background:'var(--surface-3)',padding:'1px 5px',borderRadius:3,fontSize:10}}>gmail.readonly</code> to read CAS and NPS statements from NSDL / CDSL / Protean emails only. Raw emails are never stored.
+                          </div>
+                        </div>
+                        <span style={{flexShrink:0,fontSize:11,padding:'3px 8px',borderRadius:4,background:gmailConnected?'var(--mint-soft)':'var(--surface-3)',color:gmailConnected?'var(--mint)':'var(--text-3)',fontWeight:600,border:`1px solid ${gmailConnected?'rgba(31,107,74,0.25)':'var(--border)'}`}}>
+                          {gmailConnected?'Connected':'Not connected'}
+                        </span>
+                      </div>
+                      <div style={{fontSize:11,color:'var(--text-3)',marginBottom:12,padding:'8px 10px',background:'var(--surface)',borderRadius:6,lineHeight:1.6}}>
+                        <strong style={{color:'var(--text)'}}>What we access:</strong> Email subjects and PDF attachments from NSDL, CDSL, and Protean only.&nbsp;
+                        <strong style={{color:'var(--text)'}}>What we never do:</strong> Read personal emails, store raw email content, or share your data.&nbsp;
+                        <a href="https://kanalyst.in/privacy.html#gmail" target="_blank" rel="noreferrer" style={{color:'var(--lime)'}}>Full disclosure →</a>
+                      </div>
+                      <div style={{display:'flex',gap:8}}>
+                        {gmailConnected ? (
+                          <button onClick={disconnectGmail} disabled={disconnecting}
+                            style={{padding:'8px 14px',background:'var(--coral-soft)',border:'1px solid rgba(168,44,44,0.30)',color:'var(--coral)',borderRadius:7,fontSize:12,fontWeight:600,cursor:'pointer',opacity:disconnecting?0.6:1}}>
+                            {disconnecting?'Disconnecting…':'Disconnect Gmail'}
+                          </button>
+                        ) : (
+                          <button onClick={()=>{setShowSettings(false);setShowConnectModal(true);setConnectStep('choose');}}
+                            style={{padding:'8px 14px',background:'var(--lime-soft)',border:'1px solid rgba(107,142,35,0.30)',color:'var(--lime)',borderRadius:7,fontSize:12,fontWeight:600,cursor:'pointer'}}>
+                            Connect Gmail
+                          </button>
+                        )}
+                        <a href="https://myaccount.google.com/permissions" target="_blank" rel="noreferrer"
+                          style={{padding:'8px 14px',border:'1px solid var(--border-2)',background:'var(--surface)',color:'var(--text-3)',borderRadius:7,fontSize:12,fontWeight:600,textDecoration:'none',display:'inline-flex',alignItems:'center'}}>
+                          Manage at Google ↗
+                        </a>
+                      </div>
                     </div>
+
+                    {/* Data export - placeholder */}
+                    <div style={{background:'var(--surface-2)',border:'1px solid var(--border-2)',borderRadius:10,padding:16,marginBottom:14}}>
+                      <div style={{color:'var(--text)',fontSize:13,fontWeight:600,marginBottom:4}}>📦 Export Your Data</div>
+                      <div style={{color:'var(--text-3)',fontSize:11,marginBottom:10}}>Download all your portfolio data, transactions, and settings as a JSON file.</div>
+                      <button style={{padding:'8px 14px',border:'1px solid var(--border-2)',background:'var(--surface)',color:'var(--text-2)',borderRadius:7,fontSize:12,fontWeight:500,cursor:'pointer'}}
+                        onClick={()=>window.open('mailto:hello@kanalyst.in?subject=Data Export Request','_blank')}>
+                        Request Data Export
+                      </button>
+                    </div>
+
+                    {/* Delete account */}
+                    <div style={{background:'var(--coral-soft)',border:'1px solid rgba(168,44,44,0.25)',borderRadius:10,padding:16}}>
+                      <div style={{color:'var(--coral)',fontSize:13,fontWeight:700,marginBottom:4}}>⚠ Delete Account &amp; All Data</div>
+                      <div style={{color:'var(--text-2)',fontSize:11,marginBottom:12,lineHeight:1.6}}>
+                        This permanently deletes your account, all portfolio data, transaction history, goals, and Gmail tokens. This action cannot be undone. Gmail access will be revoked immediately.
+                      </div>
+                      <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                        <input value={confirmDelete} onChange={e=>setConfirmDelete(e.target.value)} placeholder='Type DELETE to confirm'
+                          style={{flex:1,padding:'8px 12px',border:'1px solid var(--border-2)',borderRadius:7,background:'var(--surface)',color:'var(--text)',fontSize:12,outline:'none'}}/>
+                        <button onClick={deleteAccount} disabled={confirmDelete!=='DELETE'||deleting}
+                          style={{padding:'8px 14px',background:confirmDelete==='DELETE'?'var(--coral)':'var(--surface-3)',border:'none',color:confirmDelete==='DELETE'?'#fff':'var(--text-4)',borderRadius:7,fontSize:12,fontWeight:700,cursor:confirmDelete==='DELETE'?'pointer':'not-allowed',whiteSpace:'nowrap',opacity:deleting?0.6:1}}>
+                          {deleting?'Deleting…':'Delete Everything'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {privMsg && <div style={{marginTop:12,fontSize:12,color:privMsg.startsWith('✅')?'var(--mint)':'var(--coral)',padding:'8px 12px',background:privMsg.startsWith('✅')?'var(--mint-soft)':'var(--coral-soft)',borderRadius:6}}>{privMsg}</div>}
                   </div>
-                </div>
-              )}
+                );
+              })()}
 
               {settingsSection==='income' && (
                   <>
