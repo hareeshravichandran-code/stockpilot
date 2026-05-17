@@ -5,6 +5,7 @@
  * Fixed: BUG-6 (handle image-based PDFs via OCR text in email.body)
  */
 const router                      = require('express').Router();
+const { decrypt } = require('../services/tokenCrypto');
 const requireAuth                 = require('../middleware/requireAuth');
 const supabase                    = require('../services/supabase');
 const { parseNPSText, generateNPSPasswords } = require('../services/npsParser');
@@ -121,8 +122,8 @@ router.post('/sync', requireAuth, async (req, res) => {
         };
 
         const emails = await fetchEmails(
-          conn.access_token,
-          conn.refresh_token,
+          decrypt(conn.access_token),
+          decrypt(conn.refresh_token),
           query,
           profileWithNPS,
           { maxResults: 60 }   // BUG-1 FIX: now actually used

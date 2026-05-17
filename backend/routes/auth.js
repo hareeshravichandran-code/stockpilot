@@ -357,4 +357,40 @@ function generatePdfPasswords(pan, dob, email, broker) {
   return [...new Set(passwords)].filter(Boolean);
 }
 
+
+// ── Delete Account (Google OAuth verification requirement) ────────────
+router.delete('/delete-account', requireAuth, async (req, res) => {
+  const uid = req.user.id;
+  try {
+    // Revoke Gmail if connected
+    try {
+      const { data: conn } = await supabase.from('email_connections')
+        .select('access_token').eq('user_id', uid).eq('provider', 'gmail').single();
+      if (conn?.access_token) {
+        const { decrypt } = require('../services/tokenCrypto');
+        const { google } = require('googleapis');
+        const oa = new google.auth.OAuth2(process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET);
+        await oa.revokeToken(decrypt(conn.access_token));
+      }
+    } catch(_){}
+
+    const tables = [
+      'email_connections','holdings','mf_holdings','mf_statements',
+      'transactions','dividends','income_entries','income_rules',
+      'expense_transactions','expense_categories','expense_sms_rules',
+      'goals','fixed_deposits','recurring_deposits','nps_data',
+      'portfolio_snapshots','portfolio_history','sync_logs',
+      'family_members','family_invites','password_reset_tokens',
+    ];
+    for (const t of tables) {
+      try { await supabase.from(t).delete().eq('user_id', uid); } catch(_) {}
+    }
+    await supabase.from('users').delete().eq('id', uid);
+    console.log(JSON.stringify({ event: 'ACCOUNT_DELETED', userId: uid }));
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

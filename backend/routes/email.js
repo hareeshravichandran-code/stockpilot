@@ -1,15 +1,17 @@
 /**
- * StockPilot Email Routes — CAS Phase Only
- * gmail.js already extracts PDFs and merges text into email.body
- * Every attempt is logged to Railway console + Supabase sync_logs
+ * Kanalyst Email Routes — CAS / NPS / Dividend sync
+ * gmail.js extracts PDFs and merges text into email.body
+ * Tokens are encrypted at rest with AES-256-GCM (tokenCrypto.js)
+ * to comply with Google's Limited Use Policy for gmail.readonly scope.
  */
 const router      = require('express').Router();
 const requireAuth = require('../middleware/requireAuth');
 const supabase    = require('../services/supabase');
 const { getAuthUrl, exchangeCode, fetchEmails } = require('../services/gmail');
 const { parseCAS, detectCASType }               = require('../services/casParser');
-const { saveSnapshot }                       = require('./portfolioHistory');
+const { saveSnapshot }                          = require('./portfolioHistory');
 const SyncLogger                                = require('../services/logger');
+const { encrypt, decrypt }                      = require('../services/tokenCrypto');
 
 // ── Gmail OAuth URL ───────────────────────────────────────────────────
 router.get('/gmail/connect', requireAuth, (req, res) => {
@@ -23,9 +25,11 @@ router.get('/gmail/callback', async (req, res) => {
     return res.redirect(`${process.env.FRONTEND_URL}/dashboard?error=oauth_failed`);
   try {
     const tokens = await exchangeCode(code);
+    // Encrypt tokens before storing — required by Google Limited Use Policy
     await supabase.from('email_connections').upsert({
       user_id: userId, provider: 'gmail',
-      access_token: tokens.access_token, refresh_token: tokens.refresh_token,
+      access_token:  encrypt(tokens.access_token),
+      refresh_token: encrypt(tokens.refresh_token),
       expires_at: tokens.expiry_date ? new Date(tokens.expiry_date).toISOString() : null,
       connected_at: new Date().toISOString()
     }, { onConflict: 'user_id,provider' });
@@ -83,7 +87,7 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
     for (const attempt of searchAttempts) {
       console.log(JSON.stringify({ event: 'GMAIL_SEARCH', label: attempt.label, q: attempt.q }));
       try {
-        const results = await fetchEmails(conn.access_token, conn.refresh_token, attempt.q, userProfile || {});
+        const results = await fetchEmails(decrypt(conn.access_token), decrypt(conn.refresh_token), attempt.q, userProfile || {});
         console.log(JSON.stringify({ event: 'GMAIL_SEARCH_RESULT', label: attempt.label, count: results?.length || 0 }));
         if (results && results.length > 0) {
           casEmails = results;
@@ -625,7 +629,7 @@ router.get('/debug-cdsl', requireAuth, async (req, res) => {
 
     // Broad search — confirmed CDSL sender is eCAS@cdslstatement.com
     const query = 'from:(cdslstatement.com OR nsdl.co.in OR nsdlindia.com OR cvlindia.com OR cdslindia.com) has:attachment';
-    const emails = await fetchEmails(conn.access_token, conn.refresh_token, query, userRow || {});
+    const emails = await fetchEmails(decrypt(conn.access_token), decrypt(conn.refresh_token), query, userRow || {});
 
     if (!emails || emails.length === 0) {
       return res.json({
@@ -792,7 +796,7 @@ router.get('/debug-mf-text', requireAuth, async (req, res) => {
     const { data: userRow } = await supabase.from('users')
       .select('pan, dob, name').eq('id', req.user.id).single();
 
-    const emails = await fetchEmails(conn.access_token, conn.refresh_token,
+    const emails = await fetchEmails(decrypt(conn.access_token), decrypt(conn.refresh_token),
       'from:(nsdl.co.in OR nsdlindia.com) has:attachment', userRow || {});
     if (!emails?.length) return res.json({ error: 'No NSDL emails found', pan: userRow?.pan ? 'set' : 'NOT SET' });
 
@@ -865,6 +869,89 @@ router.get('/mf-status', requireAuth, async (req, res) => {
       ? 'No MF data. Sync emails to populate. Check recentMFLogs for errors.'
       : 'MF data present.',
   });
+});
+
+module.exports = router;
+
+// ── Gmail Disconnect — revoke token + delete from DB ─────────────────
+// Required by Google OAuth verification: users must be able to revoke access
+router.delete('/gmail/disconnect', requireAuth, async (req, res) => {
+  try {
+    const { data: conn } = await supabase.from('email_connections')
+      .select('access_token, refresh_token').eq('user_id', req.user.id).eq('provider', 'gmail').single();
+    if (!conn) return res.json({ success: true, message: 'No connection found' });
+
+    // Revoke token at Google so it's immediately invalidated
+    try {
+      const { google } = require('googleapis');
+      const oauth2Client = new google.auth.OAuth2(
+        process.env.GOOGLE_CLIENT_ID,
+        process.env.GOOGLE_CLIENT_SECRET,
+        process.env.GOOGLE_REDIRECT_URI
+      );
+      const plainToken = decrypt(conn.access_token) || decrypt(conn.refresh_token);
+      if (plainToken) await oauth2Client.revokeToken(plainToken);
+    } catch (revokeErr) {
+      // Token may already be expired — still proceed to delete from DB
+      console.log(JSON.stringify({ event: 'GMAIL_REVOKE_WARN', error: revokeErr.message }));
+    }
+
+    // Delete connection record (tokens) from DB
+    await supabase.from('email_connections')
+      .delete().eq('user_id', req.user.id).eq('provider', 'gmail');
+
+    console.log(JSON.stringify({ event: 'GMAIL_DISCONNECTED', userId: req.user.id }));
+    res.json({ success: true, message: 'Gmail disconnected and access revoked.' });
+  } catch (err) {
+    console.error(JSON.stringify({ event: 'GMAIL_DISCONNECT_ERROR', error: err.message }));
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GDPR / Full Data Delete — deletes ALL user data ─────────────────
+// Required by Google OAuth verification: users must be able to delete all data
+router.delete('/user/delete-all', requireAuth, async (req, res) => {
+  const uid = req.user.id;
+  try {
+    // Revoke Gmail token first
+    try {
+      const { data: conn } = await supabase.from('email_connections')
+        .select('access_token, refresh_token').eq('user_id', uid).eq('provider', 'gmail').single();
+      if (conn) {
+        const { google } = require('googleapis');
+        const oauth2Client = new google.auth.OAuth2(
+          process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET, process.env.GOOGLE_REDIRECT_URI
+        );
+        const plainToken = decrypt(conn.access_token) || decrypt(conn.refresh_token);
+        if (plainToken) await oauth2Client.revokeToken(plainToken);
+      }
+    } catch (_) {}
+
+    // Delete all user data across every table
+    const tables = [
+      'email_connections', 'holdings', 'mf_holdings', 'mf_statements',
+      'transactions', 'dividends', 'income_entries', 'income_rules',
+      'expense_transactions', 'expense_categories', 'expense_sms_rules',
+      'goals', 'fixed_deposits', 'recurring_deposits', 'nps_data',
+      'portfolio_snapshots', 'portfolio_history', 'sync_logs',
+      'family_members', 'family_invites', 'password_reset_tokens',
+    ];
+
+    for (const table of tables) {
+      try {
+        await supabase.from(table).delete().eq('user_id', uid);
+      } catch (_) {}
+    }
+
+    // Finally delete the user record itself
+    await supabase.from('users').delete().eq('id', uid);
+
+    console.log(JSON.stringify({ event: 'GDPR_DELETE_ALL', userId: uid }));
+    res.json({ success: true, message: 'All data deleted.' });
+  } catch (err) {
+    console.error(JSON.stringify({ event: 'GDPR_DELETE_ERROR', error: err.message }));
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;

@@ -23,6 +23,7 @@
  */
 
 const router      = require('express').Router();
+const { decrypt } = require('../services/tokenCrypto');
 const requireAuth = require('../middleware/requireAuth');
 const supabase    = require('../services/supabase');
 
@@ -254,15 +255,15 @@ router.post('/scan', requireAuth, async (req, res) => {
       process.env.GOOGLE_REDIRECT_URI
     );
     oauth2Client.setCredentials({
-      access_token:  conn.access_token,
-      refresh_token: conn.refresh_token,
+      access_token:  decrypt(conn.access_token),
+      refresh_token: decrypt(conn.refresh_token),
     });
 
     // Auto-refresh token if expired
     oauth2Client.on('tokens', async (tokens) => {
       if (tokens.access_token) {
         await supabase.from('email_connections')
-          .update({ access_token: tokens.access_token, updated_at: new Date().toISOString() })
+          .update({ access_token: require('../services/tokenCrypto').encrypt(tokens.access_token), updated_at: new Date().toISOString() })
           .eq('user_id', req.user.id).eq('provider', 'gmail');
       }
     });
