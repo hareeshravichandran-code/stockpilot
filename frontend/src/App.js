@@ -10,12 +10,11 @@ function PrivateRoute({ children }) {
   const { user, loading } = useAuth();
   if (loading) return (
     <div style={{ display:'flex', alignItems:'center', justifyContent:'center',
-      height:'100vh', background:'#080c14', color:'#00d4a1', fontSize:'18px' }}>
-      Loading StockPilot…
+      height:'100vh', background:'var(--bg)', color:'var(--lime)', fontSize:'18px' }}>
+      Loading Kanalyst…
     </div>
   );
   if (!user) {
-    // Preserve query params (e.g. ?connected=gmail) through login redirect
     const params = window.location.search;
     return <Navigate to={`/login${params}`} replace />;
   }
@@ -25,6 +24,10 @@ function PrivateRoute({ children }) {
 function PublicRoute({ children }) {
   const { user, loading } = useAuth();
   if (loading) return null;
+  // If a ?token= param is in the URL we must let Login.js handle it —
+  // never redirect away from /login while token processing is in flight
+  const hasToken = new URLSearchParams(window.location.search).has('token');
+  if (hasToken) return children;
   return user ? <Navigate to="/dashboard" replace /> : children;
 }
 
