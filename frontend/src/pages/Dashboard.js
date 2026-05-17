@@ -1348,8 +1348,8 @@ export default function Dashboard() {
                         <AreaChart data={growthData} margin={{ top:5, right:10, left:0, bottom:0 }}>
                           <defs>
                             <linearGradient id="growthGrad" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#6b8e23" stopOpacity={}/>
-                              <stop offset="95%" stopColor="#6b8e23" stopOpacity={}/>
+                              <stop offset="5%" stopColor="#6b8e23" stopOpacity={0.25}/>
+                              <stop offset="95%" stopColor="#6b8e23" stopOpacity={0}/>
                             </linearGradient>
                           </defs>
                           <XAxis dataKey="fy" stroke="var(--border-2)" tick={{ fill:'var(--text-3)', fontSize:11 }} />
@@ -1416,12 +1416,12 @@ export default function Dashboard() {
                         onClick={e=>{if(e?.activePayload?.[0]?.payload?.fullDate) loadHistoryDetail(e.activePayload[0].payload.fullDate);}}>
                         <defs>
                           <linearGradient id="mktGrad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#6b8e23" stopOpacity={}/>
-                            <stop offset="95%" stopColor="#6b8e23" stopOpacity={}/>
+                            <stop offset="5%" stopColor="#6b8e23" stopOpacity={0.25}/>
+                            <stop offset="95%" stopColor="#6b8e23" stopOpacity={0}/>
                           </linearGradient>
                           <linearGradient id="costGrad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#5d3b78" stopOpacity={}/>
-                            <stop offset="95%" stopColor="#5d3b78" stopOpacity={}/>
+                            <stop offset="5%" stopColor="#5d3b78" stopOpacity={0.25}/>
+                            <stop offset="95%" stopColor="#5d3b78" stopOpacity={0}/>
                           </linearGradient>
                         </defs>
                         <XAxis dataKey="month" stroke="var(--border-2)" tick={{ fontSize:10, fill:'var(--text-3)' }} interval="preserveStartEnd"/>
@@ -2710,8 +2710,8 @@ export default function Dashboard() {
                         <AreaChart data={mthData} margin={{top:5,right:10,left:0,bottom:0}}>
                           <defs>
                             <linearGradient id="incGrad" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#6b8e23" stopOpacity={}/>
-                              <stop offset="95%" stopColor="#6b8e23" stopOpacity={}/>
+                              <stop offset="5%" stopColor="#6b8e23" stopOpacity={0.25}/>
+                              <stop offset="95%" stopColor="#6b8e23" stopOpacity={0}/>
                             </linearGradient>
                           </defs>
                           <XAxis dataKey="month" stroke="var(--text-4)" tick={{fill:'var(--text-3)',fontSize:11}}/>
@@ -3133,8 +3133,8 @@ export default function Dashboard() {
                           }))}>
                             <defs>
                               <linearGradient id="npsGradTab" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%"  stopColor="#5d3b78" stopOpacity={}/>
-                                <stop offset="95%" stopColor="#5d3b78" stopOpacity={}/>
+                                <stop offset="5%"  stopColor="#5d3b78" stopOpacity={0.25}/>
+                                <stop offset="95%" stopColor="#5d3b78" stopOpacity={0}/>
                               </linearGradient>
                             </defs>
                             <XAxis dataKey="month" stroke="var(--border-2)" tick={{fontSize:10,fill:'var(--text-3)'}} interval="preserveStartEnd"/>
