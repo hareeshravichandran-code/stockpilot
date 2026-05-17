@@ -18,38 +18,47 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  const hydrateFromStorage = () => {
     const token = localStorage.getItem('sp_token');
-    if (!token) { setLoading(false); return; }
+    if (!token) { setLoading(false); return false; }
 
-    // Step 1: Try cached sp_user first (instant, no flicker)
+    // Try cached user first
     const cached = localStorage.getItem('sp_user');
     if (cached) {
       try { setUser(JSON.parse(cached)); } catch(e) {}
     } else {
-      // Step 2: No cache — decode JWT immediately as minimal user
-      // This guarantees user is never null as long as token is valid
       const decoded = decodeToken(token);
       if (decoded?.id) {
         setUser({ id: decoded.id, email: decoded.email, name: decoded.name || decoded.email });
+      } else {
+        // Token is malformed — clear it
+        localStorage.removeItem('sp_token');
+        setLoading(false);
+        return false;
       }
     }
+    return true;
+  };
 
-    // Step 3: Always refresh from server in background
+  useEffect(() => {
+    const ok = hydrateFromStorage();
+    if (!ok) return;
+
+    // Refresh from server in background
     authAPI.me()
       .then(res => {
         setUser(res.data);
         localStorage.setItem('sp_user', JSON.stringify(res.data));
       })
       .catch(err => {
+        // ONLY clear token on definitive 401 from /me
+        // Network errors, CORS, 500s → keep the decoded/cached user
         if (err.response?.status === 401) {
-          // Token is invalid — clear everything
           localStorage.removeItem('sp_token');
           localStorage.removeItem('sp_user');
           setUser(null);
         }
-        // Any other error (network, 500) — keep the cached/decoded user
-        // App remains usable even if backend is briefly down
+        // Otherwise stay logged in with decoded JWT data
       })
       .finally(() => setLoading(false));
   }, []);
@@ -70,20 +79,23 @@ export function AuthProvider({ children }) {
     return res.data;
   };
 
-  const loginWithToken = (token, userData) => {
+  const loginWithToken = (token, partialUser) => {
     localStorage.setItem('sp_token', token);
-    // Decode token immediately as fallback
     const decoded = decodeToken(token);
-    const minimalUser = userData || (decoded?.id ? { id: decoded.id, email: decoded.email, name: decoded.name || decoded.email } : null);
+    const minimalUser = decoded?.id
+      ? { id: decoded.id, email: decoded.email, name: partialUser?.name || decoded.name || decoded.email }
+      : partialUser || null;
     if (minimalUser) {
       setUser(minimalUser);
       localStorage.setItem('sp_user', JSON.stringify(minimalUser));
     }
     // Refresh with full user data in background
-    authAPI.me().then(res => {
-      setUser(res.data);
-      localStorage.setItem('sp_user', JSON.stringify(res.data));
-    }).catch(() => {});
+    authAPI.me()
+      .then(res => {
+        setUser(res.data);
+        localStorage.setItem('sp_user', JSON.stringify(res.data));
+      })
+      .catch(() => {});
   };
 
   const logout = () => {
