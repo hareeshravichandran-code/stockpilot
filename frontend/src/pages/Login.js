@@ -22,10 +22,8 @@ export default function Login() {
     const reason = searchParams.get('reason');
 
     if (token) {
-      // Save token — useAuth will decode it immediately on /dashboard load
-      // No need for API call here; decodeToken() in useAuth handles it
       localStorage.setItem('sp_token', token);
-      localStorage.removeItem('sp_user'); // force fresh decode from JWT
+      localStorage.removeItem('sp_user');
       window.location.replace('/dashboard');
       return;
     }
@@ -83,7 +81,10 @@ export default function Login() {
   };
 
   const handleGoogle = () => {
-    window.location.href = `${API}/api/auth/google`;
+    // Pass the current origin so the backend callback redirects back here,
+    // regardless of what FRONTEND_URL env var is set to on Railway.
+    const origin = window.location.origin; // e.g. https://app.kanalyst.in
+    window.location.href = `${API}/api/auth/google?origin=${encodeURIComponent(origin)}`;
   };
 
   return (
