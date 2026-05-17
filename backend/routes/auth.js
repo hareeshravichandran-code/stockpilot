@@ -114,10 +114,14 @@ router.get('/google', (req, res) => {
   try {
     if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET)
       return res.status(500).json({ error: 'Google OAuth not configured.' });
+    // Accept origin from query so the callback can redirect back to the
+    // exact domain the user came from (app.kanalyst.in OR localhost etc.)
+    const origin = req.query.origin || FRONTEND_URL;
     const url = getGoogleClient().generateAuthUrl({
       access_type: 'offline',
       scope: ['openid', 'email', 'profile'],
-      prompt: 'select_account'
+      prompt: 'select_account',
+      state: Buffer.from(JSON.stringify({ origin })).toString('base64'),
     });
     res.redirect(url);
   } catch (err) {
@@ -128,8 +132,20 @@ router.get('/google', (req, res) => {
 
 // ── Google OAuth — callback (Web) ──────────────────────────────────
 router.get('/google/callback', async (req, res) => {
-  const { code, error } = req.query;
-  if (error) return res.redirect(`${FRONTEND_URL}/login?error=google_denied`);
+  const { code, error, state } = req.query;
+
+  // Recover the origin the user came from
+  let frontendOrigin = FRONTEND_URL;
+  try {
+    if (state) {
+      const decoded = JSON.parse(Buffer.from(state, 'base64').toString('utf8'));
+      if (decoded.origin && /^https?:\/\//.test(decoded.origin)) {
+        frontendOrigin = decoded.origin;
+      }
+    }
+  } catch (_) { /* ignore bad state */ }
+
+  if (error) return res.redirect(`${frontendOrigin}/login?error=google_denied`);
   try {
     const client = getGoogleClient();
     const { tokens } = await client.getToken(code);
@@ -140,15 +156,15 @@ router.get('/google/callback', async (req, res) => {
       const { data: newUser, error: createErr } = await supabase.from('users')
         .insert({ name: gUser.name, email: gUser.email, google_id: gUser.id, password_hash: '' })
         .select('id, name, email').single();
-      if (createErr) return res.redirect(`${FRONTEND_URL}/login?error=create_failed`);
+      if (createErr) return res.redirect(`${frontendOrigin}/login?error=create_failed`);
       user = newUser;
     } else if (!user.google_id) {
       await supabase.from('users').update({ google_id: gUser.id }).eq('id', user.id);
     }
-    res.redirect(`${FRONTEND_URL}/login?token=${makeToken(user)}&name=${encodeURIComponent(user.name)}`);
+    res.redirect(`${frontendOrigin}/login?token=${makeToken(user)}&name=${encodeURIComponent(user.name)}`);
   } catch (err) {
     console.error('[Google CB] ERROR:', err.message);
-    res.redirect(`${FRONTEND_URL}/login?error=google_failed&reason=${encodeURIComponent(err.message)}`);
+    res.redirect(`${frontendOrigin}/login?error=google_failed&reason=${encodeURIComponent(err.message)}`);
   }
 });
 
