@@ -201,6 +201,33 @@ export default function Dashboard() {
   // ── Sidebar & profile dropdown ────────────────────────────────────
   const [sidebarOpen, setSidebarOpen]         = useState(true);
   const [showProfileDropdown, setShowProfileDropdown] = useState(false);
+
+  // ── FD/RD live preview — computed at component level so modals can access ──
+  const fdPreview = React.useMemo(() => {
+    if (!fdForm.principal_amount || !fdForm.interest_rate_pa || !fdForm.start_date) return null;
+    const P=parseFloat(fdForm.principal_amount), r=parseFloat(fdForm.interest_rate_pa)/100;
+    const n={monthly:12,quarterly:4,half_yearly:2,annually:1,simple:1}[fdForm.compounding_freq]||4;
+    const tenor = (parseInt(fdForm.tenor_years||0)*365)+(parseInt(fdForm.tenor_months_part||0)*30)+parseInt(fdForm.tenor_days_part||0);
+    const t = tenor/365;
+    if(t<=0) return null;
+    const mat = fdForm.compounding_freq==='simple' ? P*(1+r*t) : P*Math.pow(1+r/n,n*t);
+    const tds = fdForm.tds_applicable&&!fdForm.form_15g ? (parseFloat(fdForm.tds_rate)||10)/100 : 0;
+    const net = P + (mat-P)*(1-tds);
+    const matDt = new Date(fdForm.start_date); matDt.setDate(matDt.getDate()+tenor);
+    return { maturity: mat.toFixed(0), net: net.toFixed(0), interest: (mat-P).toFixed(0), matDate: isNaN(matDt)?'—':matDt.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) };
+  }, [fdForm]);
+
+  const rdPreview = React.useMemo(() => {
+    if (!rdForm.monthly_installment || !rdForm.interest_rate_pa || !rdForm.tenure_months) return null;
+    const R=parseFloat(rdForm.monthly_installment), r=parseFloat(rdForm.interest_rate_pa)/100, n=4, tm=parseInt(rdForm.tenure_months||0);
+    if(tm<1) return null;
+    let mat=0;
+    for(let i=1;i<=tm;i++) mat+=R*Math.pow(1+r/n,n*(tm-i+1)/12);
+    const total=R*tm, tds=rdForm.tds_applicable&&!rdForm.form_15g?(parseFloat(rdForm.tds_rate)||10)/100:0;
+    const net = total+(mat-total)*(1-tds);
+    const matDt = new Date(rdForm.start_date||new Date()); matDt.setMonth(matDt.getMonth()+tm);
+    return { maturity: mat.toFixed(0), net: net.toFixed(0), interest: (mat-total).toFixed(0), totalInvest: (R*tm).toFixed(0), matDate: isNaN(matDt)?'—':matDt.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) };
+  }, [rdForm]);
   const [liabilities, setLiabilities] = useState({ homeLoan: 0, creditCard: 0 });
   const [monthlyIncome, setMonthlyIncome] = useState(0);
   const [monthlyExpenses, setMonthlyExpenses] = useState(0);
@@ -2784,31 +2811,7 @@ export default function Dashboard() {
             const matDateFD = (sd, td) => { const dt=new Date(sd||new Date()); dt.setDate(dt.getDate()+parseInt(td||0)); return isNaN(dt)?'—':dt.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}); };
             const matDateRD = (sd, tm) => { const dt=new Date(sd||new Date()); dt.setMonth(dt.getMonth()+parseInt(tm||0)); return isNaN(dt)?'—':dt.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}); };
 
-            // Live preview computations for form
-            const fdPreview = (() => {
-              if (!fdForm.principal_amount || !fdForm.interest_rate_pa || !fdForm.start_date) return null;
-              const P=parseFloat(fdForm.principal_amount), r=parseFloat(fdForm.interest_rate_pa)/100;
-              const n={monthly:12,quarterly:4,half_yearly:2,annually:1,simple:1}[fdForm.compounding_freq]||4;
-              const t=daysToTenor(fdForm.tenor_years,fdForm.tenor_months_part,fdForm.tenor_days_part)/365;
-              if(t<=0) return null;
-              const mat = fdForm.compounding_freq==='simple' ? P*(1+r*t) : P*Math.pow(1+r/n,n*t);
-              const tds = fdForm.tds_applicable&&!fdForm.form_15g ? (parseFloat(fdForm.tds_rate)||10)/100 : 0;
-              const net = P + (mat-P)*(1-tds);
-              const matDt = matDateFD(fdForm.start_date, daysToTenor(fdForm.tenor_years,fdForm.tenor_months_part,fdForm.tenor_days_part));
-              return { maturity: mat.toFixed(0), net: net.toFixed(0), interest: (mat-P).toFixed(0), matDate: matDt };
-            })();
-
-            const rdPreview = (() => {
-              if (!rdForm.monthly_installment || !rdForm.interest_rate_pa || !rdForm.tenure_months) return null;
-              const R=parseFloat(rdForm.monthly_installment), r=parseFloat(rdForm.interest_rate_pa)/100, n=4, tm=parseInt(rdForm.tenure_months||0);
-              if(tm<1) return null;
-              let mat=0;
-              for(let i=1;i<=tm;i++) mat+=R*Math.pow(1+r/n,n*(tm-i+1)/12);
-              const total=R*tm, tds=rdForm.tds_applicable&&!rdForm.form_15g?(parseFloat(rdForm.tds_rate)||10)/100:0;
-              const net = total+(mat-total)*(1-tds);
-              const matDt = matDateRD(rdForm.start_date, rdForm.tenure_months);
-              return { maturity: mat.toFixed(0), net: net.toFixed(0), interest: (mat-total).toFixed(0), totalInvest: (R*tm).toFixed(0), matDate: matDt };
-            })();
+            // Live preview computed at component level (see useMemo above)
 
             const InputField = ({label,val,onChange,type='text',placeholder='',note,required}) => (
               <div>

@@ -20,12 +20,12 @@ function BarChart({ byFY }) {
         const h = Math.max((val / max) * 140, 4);
         return (
           <div key={fy} style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', gap:6 }}>
-            <div style={{ fontSize:11, color:'#64ffda', fontWeight:600 }}>{fmt(val)}</div>
+            <div style={{ fontSize:11, color:'var(--lime)', fontWeight:600 }}>{fmt(val)}</div>
             <div style={{
               width:'100%', height:h, borderRadius:'4px 4px 0 0',
               background: fy === CURRENT_FY
-                ? 'linear-gradient(180deg,#64ffda,#00bcd4)'
-                : 'linear-gradient(180deg,rgba(100,255,218,0.4),rgba(100,255,218,0.15))',
+                ? 'linear-gradient(180deg,#6b8e23,#1f6b4a)'
+                : 'linear-gradient(180deg,rgba(107,142,35,0.30),rgba(107,142,35,0.06))',
               transition:'height 0.5s ease',
             }} />
             <div style={{ fontSize:11, color:'#888' }}>{fy}</div>
@@ -77,7 +77,7 @@ function MonthDrillDown({ yearMonth, income, onClose }) {
 
   return (
     <div style={{ background:'rgba(255,255,255,0.04)', borderRadius:12, padding:24,
-      border:'1px solid rgba(100,255,218,0.2)', marginBottom:24 }}>
+      border:'1px solid rgba(107,142,35,0.15)', marginBottom:24 }}>
 
       {/* Header row */}
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20 }}>
@@ -88,7 +88,7 @@ function MonthDrillDown({ yearMonth, income, onClose }) {
             ‹
           </button>
           <div>
-            <div style={{ fontSize:18, fontWeight:700, color:'#64ffda' }}>
+            <div style={{ fontSize:18, fontWeight:700, color:'var(--lime)' }}>
               {MONTH_NAMES_FULL[currentMon]} {currentYear}
             </div>
             <div style={{ fontSize:12, color:'#666', marginTop:2 }}>
@@ -127,10 +127,10 @@ function MonthDrillDown({ yearMonth, income, onClose }) {
                 border:'1px solid rgba(255,255,255,0.06)', overflow:'hidden' }}>
                 {/* Date header */}
                 <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center',
-                  padding:'8px 14px', background:'rgba(100,255,218,0.06)',
-                  borderBottom:'1px solid rgba(100,255,218,0.1)' }}>
-                  <span style={{ fontSize:13, fontWeight:700, color:'#64ffda' }}>{dayLabel}</span>
-                  <span style={{ fontSize:13, fontWeight:700, color:'#64ffda' }}>{fmtD(dayTotal)}</span>
+                  padding:'8px 14px', background:'rgba(107,142,35,0.06)',
+                  borderBottom:'1px solid rgba(107,142,35,0.10)' }}>
+                  <span style={{ fontSize:13, fontWeight:700, color:'var(--lime)' }}>{dayLabel}</span>
+                  <span style={{ fontSize:13, fontWeight:700, color:'var(--lime)' }}>{fmtD(dayTotal)}</span>
                 </div>
                 {/* Stocks on that date */}
                 {dayEntries.map((d, i) => (
@@ -140,9 +140,9 @@ function MonthDrillDown({ yearMonth, income, onClose }) {
                     onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.03)'}
                     onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
                     <div style={{ display:'flex', alignItems:'center', gap:12 }}>
-                      <div style={{ width:32, height:32, borderRadius:8, background:'rgba(100,255,218,0.1)',
+                      <div style={{ width:32, height:32, borderRadius:8, background:'rgba(107,142,35,0.10)',
                         display:'flex', alignItems:'center', justifyContent:'center',
-                        fontSize:11, fontWeight:700, color:'#64ffda', flexShrink:0 }}>
+                        fontSize:11, fontWeight:700, color:'var(--lime)', flexShrink:0 }}>
                         {(d.symbol || d.company || '??').slice(0, 4)}
                       </div>
                       <div>
@@ -153,11 +153,11 @@ function MonthDrillDown({ yearMonth, income, onClose }) {
                       </div>
                     </div>
                     <div style={{ textAlign:'right' }}>
-                      <div style={{ fontSize:14, fontWeight:700, color:'#64ffda' }}>{fmtD(d.total_dividend)}</div>
+                      <div style={{ fontSize:14, fontWeight:700, color:'var(--lime)' }}>{fmtD(d.total_dividend)}</div>
                       <div style={{ fontSize:10, color:'#555', marginTop:2 }}>
                         <span style={{ padding:'1px 6px', borderRadius:10, fontSize:10,
-                          background: d.dividend_type === 'Final' ? 'rgba(100,255,218,0.12)' : 'rgba(255,215,0,0.12)',
-                          color: d.dividend_type === 'Final' ? '#64ffda' : '#ffd700' }}>
+                          background: d.dividend_type === 'Final' ? 'var(--mint-soft)' : 'var(--gold-soft)',
+                          color: d.dividend_type === 'Final' ? 'var(--mint)' : 'var(--gold)' }}>
                           {d.dividend_type || 'Interim'}
                         </span>
                       </div>
@@ -180,7 +180,7 @@ function CalendarView({ byMonth, income, onMonthClick, selectedMonthKey }) {
     <div style={{ display:'flex', flexDirection:'column', gap:24 }}>
       {years.map(year => (
         <div key={year}>
-          <div style={{ fontWeight:600, color:'#64ffda', marginBottom:8 }}>{year}</div>
+          <div style={{ fontWeight:600, color:'var(--lime)', marginBottom:8 }}>{year}</div>
           <div style={{ display:'grid', gridTemplateColumns:'repeat(12, 1fr)', gap:4 }}>
             {MONTHS.map((m, i) => {
               const key       = `${year}-${String(i+1).padStart(2,'0')}`;
@@ -197,21 +197,21 @@ function CalendarView({ byMonth, income, onMonthClick, selectedMonthKey }) {
                     padding:'6px 4px', borderRadius:6, textAlign:'center',
                     cursor: hasData ? 'pointer' : 'default',
                     background: isSelected
-                      ? 'rgba(100,255,218,0.35)'
+                      ? 'rgba(107,142,35,0.25)'
                       : amt > 0
                       ? `rgba(100,255,218,${intensity})`
                       : 'rgba(255,255,255,0.04)',
                     border: isSelected
-                      ? '1px solid rgba(100,255,218,0.8)'
+                      ? '1px solid rgba(107,142,35,0.50)'
                       : '1px solid rgba(255,255,255,0.06)',
                     transform: hasData && !isSelected ? undefined : undefined,
                     transition: 'all 0.15s',
-                    boxShadow: isSelected ? '0 0 8px rgba(100,255,218,0.3)' : 'none',
+                    boxShadow: isSelected ? '0 0 8px rgba(107,142,35,0.20)' : 'none',
                   }}>
-                  <div style={{ fontSize:10, color: isSelected ? '#0a0a0a' : '#aaa' }}>{m}</div>
+                  <div style={{ fontSize:10, color: isSelected ? 'var(--text)' : '#aaa' }}>{m}</div>
                   {amt > 0 && (
                     <div style={{ fontSize:10, fontWeight:700,
-                      color: isSelected ? '#0a0a0a' : amt > 5000 ? '#0a0a0a' : '#64ffda' }}>
+                      color: isSelected ? '#fff' : amt > 5000 ? 'var(--lime)' : 'var(--text-3)' }}>
                       {fmt(amt).replace('₹','')}
                     </div>
                   )}
@@ -253,7 +253,7 @@ export default function Dividends() {
   useEffect(() => { load(); }, [load]);
 
   if (loading) return (
-    <div style={{ display:'flex', justifyContent:'center', alignItems:'center', height:'60vh', color:'#64ffda', fontSize:18 }}>
+    <div style={{ display:'flex', justifyContent:'center', alignItems:'center', height:'60vh', color:'var(--lime)', fontSize:18 }}>
       ⏳ Fetching dividend data from NSE...
     </div>
   );
@@ -283,7 +283,7 @@ export default function Dividends() {
     <div style={{ padding:'24px', maxWidth:1100, margin:'0 auto', color:'#e0e0e0', fontFamily:'Inter, sans-serif' }}>
       {/* Page header */}
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:24 }}>
-        <h2 style={{ color:'#64ffda', margin:0, fontSize:22 }}>💰 Dividend Income</h2>
+        <h2 style={{ color:'var(--text)', margin:0, fontSize:22 }}>💰 Dividend Income</h2>
         <div style={{ display:'flex', alignItems:'center', gap:12 }}>
           {lastSynced && (
             <span style={{ fontSize:12, color:'#666' }}>
@@ -291,8 +291,8 @@ export default function Dividends() {
             </span>
           )}
           <button onClick={() => load(true)} disabled={loading} style={{
-            background:'rgba(100,255,218,0.08)', border:'1px solid rgba(100,255,218,0.2)',
-            color:'#64ffda', borderRadius:8, padding:'7px 14px', cursor:'pointer', fontSize:12, fontWeight:600
+            background:'rgba(107,142,35,0.08)', border:'1px solid rgba(107,142,35,0.15)',
+            color:'var(--lime)', borderRadius:8, padding:'7px 14px', cursor:'pointer', fontSize:12, fontWeight:600
           }}>{loading ? '⏳ Fetching...' : '🔄 Refresh from Yahoo'}</button>
         </div>
       </div>
@@ -300,9 +300,9 @@ export default function Dividends() {
       {/* Top stat tiles */}
       <div style={{ display:'grid', gridTemplateColumns:'repeat(4, 1fr)', gap:16, marginBottom:32 }}>
         {[
-          { label:'FY2026 Dividends',   val: fmt(currentFY),       sub:'Current financial year',       color:'#64ffda' },
-          { label:'All-Time Income',    val: fmt(totalAllTime),    sub:'Since FY2021',                 color:'#ffd700' },
-          { label:`${selectedFY} Total`,val: fmt(fyTotal),         sub:`${fyCount} dividends received`,color:'#00bcd4' },
+          { label:'FY2026 Dividends',   val: fmt(currentFY),       sub:'Current financial year',       color:'var(--lime)' },
+          { label:'All-Time Income',    val: fmt(totalAllTime),    sub:'Since FY2021',                 color:'var(--gold)' },
+          { label:`${selectedFY} Total`,val: fmt(fyTotal),         sub:`${fyCount} dividends received`,color:'var(--teal)' },
           { label:'Avg Per Month',      val: fmt(currentFY / 12),  sub:'FY2026 monthly average',       color:'#b39ddb' },
         ].map(t => (
           <div key={t.label} style={{
@@ -341,7 +341,7 @@ export default function Dividends() {
           background:'rgba(255,255,255,0.04)',
           borderRadius:'0 0 12px 12px',
           border:'1px solid rgba(255,255,255,0.08)',
-          borderTopColor:'rgba(100,255,218,0.2)',
+          borderTopColor:'rgba(107,142,35,0.15)',
           marginBottom:24,
           padding:'0 24px 24px',
         }}>
@@ -355,8 +355,8 @@ export default function Dividends() {
 
       {/* Upcoming dividends */}
       {upcoming.length > 0 && (
-        <div style={{ background:'rgba(100,255,218,0.06)', borderRadius:12, padding:20, marginBottom:24, border:'1px solid rgba(100,255,218,0.15)' }}>
-          <div style={{ fontWeight:600, color:'#64ffda', marginBottom:12, fontSize:14 }}>⏰ Upcoming Dividends</div>
+        <div style={{ background:'rgba(107,142,35,0.06)', borderRadius:12, padding:20, marginBottom:24, border:'1px solid rgba(107,142,35,0.12)' }}>
+          <div style={{ fontWeight:600, color:'var(--lime)', marginBottom:12, fontSize:14 }}>⏰ Upcoming Dividends</div>
           <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
             {upcoming.map((d, i) => (
               <div key={i} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'8px 0', borderBottom:'1px solid rgba(255,255,255,0.06)' }}>
@@ -365,7 +365,7 @@ export default function Dividends() {
                   <span style={{ marginLeft:8, fontSize:12, color:'#888' }}>{d.dividend_type} · ₹{d.dividend_per_share}/share</span>
                 </div>
                 <div style={{ textAlign:'right' }}>
-                  <div style={{ color:'#64ffda', fontWeight:600 }}>{fmtD(d.total_dividend)}</div>
+                  <div style={{ color:'var(--lime)', fontWeight:600 }}>{fmtD(d.total_dividend)}</div>
                   <div style={{ fontSize:11, color:'#888' }}>Ex-date: {d.ex_date}</div>
                 </div>
               </div>
@@ -381,8 +381,8 @@ export default function Dividends() {
             {FY_ORDER.filter(fy => byFY[fy] || fy === CURRENT_FY).map(fy => (
               <button key={fy} onClick={() => setSelectedFY(fy)} style={{
                 padding:'6px 14px', borderRadius:20, border:'none', cursor:'pointer', fontSize:13,
-                background: selectedFY === fy ? '#64ffda' : 'rgba(255,255,255,0.08)',
-                color: selectedFY === fy ? '#0a0a0a' : '#aaa',
+                background: selectedFY === fy ? 'var(--lime)' : 'var(--surface-2)',
+                color: selectedFY === fy ? 'var(--text)' : '#aaa',
                 fontWeight: selectedFY === fy ? 700 : 400,
               }}>{fy}</button>
             ))}
@@ -421,19 +421,19 @@ export default function Dividends() {
                   <td style={{ padding:'10px 12px' }}>
                     <span style={{
                       padding:'2px 8px', borderRadius:12, fontSize:11,
-                      background: d.dividend_type === 'Final' ? 'rgba(100,255,218,0.15)' : 'rgba(255,215,0,0.15)',
-                      color: d.dividend_type === 'Final' ? '#64ffda' : '#ffd700',
+                      background: d.dividend_type === 'Final' ? 'rgba(107,142,35,0.12)' : 'rgba(255,215,0,0.15)',
+                      color: d.dividend_type === 'Final' ? 'var(--mint)' : 'var(--gold)',
                     }}>{d.dividend_type}</span>
                   </td>
                   <td style={{ padding:'10px 12px', color:'#888' }}>{d.ex_date}</td>
                   <td style={{ padding:'10px 12px', textAlign:'right' }}>₹{d.dividend_per_share}</td>
                   <td style={{ padding:'10px 12px', textAlign:'right', color:'#888' }}>{d.quantity}</td>
-                  <td style={{ padding:'10px 12px', textAlign:'right', fontWeight:700, color:'#64ffda' }}>{fmtD(d.total_dividend)}</td>
+                  <td style={{ padding:'10px 12px', textAlign:'right', fontWeight:700, color:'var(--lime)' }}>{fmtD(d.total_dividend)}</td>
                 </tr>
               ))}
               <tr style={{ borderTop:'2px solid rgba(255,255,255,0.12)', fontWeight:700 }}>
                 <td colSpan={5} style={{ padding:'10px 12px', color:'#aaa' }}>Total {selectedFY}</td>
-                <td style={{ padding:'10px 12px', textAlign:'right', color:'#64ffda', fontSize:16 }}>{fmtD(fyTotal)}</td>
+                <td style={{ padding:'10px 12px', textAlign:'right', color:'var(--lime)', fontSize:16 }}>{fmtD(fyTotal)}</td>
               </tr>
             </tbody>
           </table>
