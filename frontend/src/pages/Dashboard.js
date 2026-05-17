@@ -190,7 +190,7 @@ export default function Dashboard() {
   const [rdSummary, setRdSummary]       = useState({});
   const [rdLoading, setRdLoading]       = useState(false);
   const [showRdForm, setShowRdForm]     = useState(false);
-  const [editingRd, setEditingRd]       = useState(null);
+  const [editingRd, setEditingRd] = useState(null);
   const [rdSaving, setRdSaving]         = useState(false);
   const [rdError, setRdError]           = useState('');
   const [rdForm, setRdForm]             = useState({});
@@ -1200,7 +1200,7 @@ export default function Dashboard() {
 
         {/* Family mode banner */}
         {familyMode && familyStatus.inFamily && (
-          <div style={{display:'flex',alignItems:'center',gap:12,padding:'8px 28px',background:'rgba(93,59,120,0.08)',borderBottom:'1px solid rgba(93,59,120,0.20)',fontSize:12,color:'#5d3b78'}}>
+          <div style={{display:'flex',alignItems:'center',gap:12,padding:'8px 28px',background:'var(--indigo-soft)',borderBottom:'1px solid rgba(52,72,122,0.18)',fontSize:12,color:'var(--indigo)'}}>
             <span style={{fontSize:16}}>👨‍👩‍👧‍👦</span>
             <span style={{fontWeight:600}}>Family View</span>
             <span style={{color:'var(--text-3)'}}>•</span>
@@ -1208,7 +1208,7 @@ export default function Dashboard() {
               Combined data from {familyStatus.members.length} member{familyStatus.members.length!==1?'s':''}:{' '}
               {familyStatus.members.map(m=>m.isMe?'You':m.name).join(', ')}
             </span>
-            <button onClick={toggleFamilyMode} style={{marginLeft:'auto',background:'none',border:'1px solid rgba(93,59,120,0.25)',color:'#5d3b78',borderRadius:6,padding:'3px 10px',cursor:'pointer',fontSize:11}}>
+            <button onClick={toggleFamilyMode} style={{marginLeft:'auto',background:'none',border:'1px solid rgba(52,72,122,0.25)',color:'var(--indigo)',borderRadius:6,padding:'3px 10px',cursor:'pointer',fontSize:11}}>
               Switch to personal
             </button>
           </div>
@@ -1324,7 +1324,7 @@ export default function Dashboard() {
                             <Pie data={pieData} cx={100} cy={90} innerRadius={55} outerRadius={85} dataKey="value" paddingAngle={2}>
                               {pieData.map((d,i) => <Cell key={i} fill={d.color} />)}
                             </Pie>
-                            <Tooltip formatter={(v) => fmt(v)} contentStyle={{ background:'var(--surface)', border:'1px solid #333', borderRadius:8, fontSize:12 }} />
+                            <Tooltip formatter={(v) => fmt(v)} contentStyle={{ background:'var(--surface)', border:'1px solid rgba(26,22,18,0.12)', borderRadius:8, fontSize:12 }} />
                           </PieChart>
                           <div style={{ display:'flex', flexWrap:'wrap', gap:'6px 12px', marginTop:8 }}>
                             {pieData.map(d => (
@@ -1348,13 +1348,13 @@ export default function Dashboard() {
                         <AreaChart data={growthData} margin={{ top:5, right:10, left:0, bottom:0 }}>
                           <defs>
                             <linearGradient id="growthGrad" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#6b8e23" stopOpacity={0.25}/>
-                              <stop offset="95%" stopColor="#6b8e23" stopOpacity={0}/>
+                              <stop offset="5%" stopColor="#6b8e23" stopOpacity={0.35}{0}={0.25}/>
+                              <stop offset="95%" stopColor="#6b8e23" stopOpacity={0.35}{0}={0}/>
                             </linearGradient>
                           </defs>
-                          <XAxis dataKey="fy" stroke="var(--border-2)" tick={{ fill:'#888', fontSize:11 }} />
-                          <YAxis stroke="var(--border-2)" tick={{ fill:'#888', fontSize:10 }} tickFormatter={v => '₹'+(v/100000).toFixed(0)+'L'} />
-                          <Tooltip formatter={v => [fmt(v), 'Net Worth']} contentStyle={{ background:'var(--surface)', border:'1px solid #333', borderRadius:8, fontSize:12 }} />
+                          <XAxis dataKey="fy" stroke="var(--border-2)" tick={{ fill:'var(--text-3)', fontSize:11 }} />
+                          <YAxis stroke="var(--border-2)" tick={{ fill:'var(--text-3)', fontSize:10 }} tickFormatter={v => '₹'+(v/100000).toFixed(0)+'L'} />
+                          <Tooltip formatter={v => [fmt(v), 'Net Worth']} contentStyle={{ background:'var(--surface)', border:'1px solid rgba(26,22,18,0.12)', borderRadius:8, fontSize:12 }} />
                           <Area type="monotone" dataKey="value" stroke="#6b8e23" strokeWidth={2} fill="url(#growthGrad)" />
                         </AreaChart>
                       </ResponsiveContainer>
@@ -1416,12 +1416,12 @@ export default function Dashboard() {
                         onClick={e=>{if(e?.activePayload?.[0]?.payload?.fullDate) loadHistoryDetail(e.activePayload[0].payload.fullDate);}}>
                         <defs>
                           <linearGradient id="mktGrad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#6b8e23" stopOpacity={0.25}/>
-                            <stop offset="95%" stopColor="#6b8e23" stopOpacity={0}/>
+                            <stop offset="5%" stopColor="#6b8e23" stopOpacity={0.35}{0}={0.25}/>
+                            <stop offset="95%" stopColor="#6b8e23" stopOpacity={0.35}{0}={0}/>
                           </linearGradient>
                           <linearGradient id="costGrad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#5d3b78" stopOpacity={0.12}/>
-                            <stop offset="95%" stopColor="#5d3b78" stopOpacity={0}/>
+                            <stop offset="5%" stopColor="#5d3b78" stopOpacity={0.35}{0}={0.12}/>
+                            <stop offset="95%" stopColor="#5d3b78" stopOpacity={0.35}{0}={0}/>
                           </linearGradient>
                         </defs>
                         <XAxis dataKey="month" stroke="var(--border-2)" tick={{ fontSize:10, fill:'var(--text-3)' }} interval="preserveStartEnd"/>
@@ -1593,7 +1593,7 @@ export default function Dashboard() {
                               {sectorAlloc.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                             </Pie>
                             <Tooltip formatter={v => fmt(v)}
-                              contentStyle={{ background:'var(--surface)', border:'1px solid #333', borderRadius:8, fontSize:12 }} />
+                              contentStyle={{ background:'var(--surface)', border:'1px solid rgba(26,22,18,0.12)', borderRadius:8, fontSize:12 }} />
                           </PieChart>
                         </div>
                         <div style={{ marginTop:8, display:'flex', flexDirection:'column', gap:6 }}>
@@ -1950,7 +1950,7 @@ export default function Dashboard() {
                               {pieData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                             </Pie>
                             <Tooltip formatter={v => fmt(v)}
-                              contentStyle={{ background:'var(--surface)', border:'1px solid #333', borderRadius:8, fontSize:11 }} />
+                              contentStyle={{ background:'var(--surface)', border:'1px solid rgba(26,22,18,0.12)', borderRadius:8, fontSize:11 }} />
                           </PieChart>
                         </div>
                         <div style={{ display:'flex', flexDirection:'column', gap:5, marginTop:6 }}>
@@ -2075,7 +2075,7 @@ export default function Dashboard() {
                                               </>
                                             ) : '—'}
                                           </td>
-                                          <td style={{fontSize:10,color:'var(--text-3)'}}>{h.folio_number ? <span>📁 {h.folio_number}</span> : h.isin ? <span style={{color:'var(--border-2)',fontFamily:'monospace'}}>{h.isin}</span> : '—'}</td>
+                                          <td style={{fontSize:10,color:'var(--text-3)'}}>{h.folio_number ? <span>📁 {h.folio_number}</span> : h.isin ? <span style={{color:'var(--border-2)',fontFamily:'var(--font-mono)'}}>{h.isin}</span> : '—'}</td>
                                           <td style={{fontSize:11,color:'var(--text-3)',whiteSpace:'nowrap'}}>
                                             {(h.cas_mail_date||h.statement_date) ? new Date((h.cas_mail_date||h.statement_date)+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) : '—'}
                                           </td>
@@ -2710,8 +2710,8 @@ export default function Dashboard() {
                         <AreaChart data={mthData} margin={{top:5,right:10,left:0,bottom:0}}>
                           <defs>
                             <linearGradient id="incGrad" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#6b8e23" stopOpacity={0.3}/>
-                              <stop offset="95%" stopColor="#6b8e23" stopOpacity={0}/>
+                              <stop offset="5%" stopColor="#6b8e23" stopOpacity={0.35}{0}={0.15}/>
+                              <stop offset="95%" stopColor="#6b8e23" stopOpacity={0.35}{0}={0}/>
                             </linearGradient>
                           </defs>
                           <XAxis dataKey="month" stroke="var(--text-4)" tick={{fill:'var(--text-3)',fontSize:11}}/>
@@ -3133,8 +3133,8 @@ export default function Dashboard() {
                           }))}>
                             <defs>
                               <linearGradient id="npsGradTab" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%"  stopColor="#5d3b78" stopOpacity={0.3}/>
-                                <stop offset="95%" stopColor="#5d3b78" stopOpacity={0}/>
+                                <stop offset="5%"  stopColor="#5d3b78" stopOpacity={0.35}{0}={0.15}/>
+                                <stop offset="95%" stopColor="#5d3b78" stopOpacity={0.35}{0}={0}/>
                               </linearGradient>
                             </defs>
                             <XAxis dataKey="month" stroke="var(--border-2)" tick={{fontSize:10,fill:'var(--text-3)'}} interval="preserveStartEnd"/>
@@ -3232,12 +3232,12 @@ export default function Dashboard() {
                         alert('NPS API Response:\ncount: ' + r.data.count + '\nlatest: ' + JSON.stringify(r.data.latest)?.slice(0,200));
                         if (r.data.count > 0) loadNPS();
                       } catch(e) { alert('NPS API Error: ' + e.message); }
-                    }} style={{background:'rgba(93,59,120,0.10)',border:'1px solid rgba(93,59,120,0.25)',color:'#5d3b78',borderRadius:8,padding:'8px 16px',cursor:'pointer',fontSize:12,marginBottom:16}}>
+                    }} style={{background:'rgba(93,59,120,0.10)',border:'1px solid rgba(52,72,122,0.25)',color:'var(--indigo)',borderRadius:8,padding:'8px 16px',cursor:'pointer',fontSize:12,marginBottom:16}}>
                       🔍 Debug: Check API Response
                     </button>
                     <div style={{display:'flex',gap:12,justifyContent:'center'}}>
                       <button onClick={syncNPS} disabled={npsSyncing}
-                        style={{background:'#5d3b78',border:'none',color:'#fff',borderRadius:8,padding:'10px 20px',cursor:'pointer',fontSize:13,fontWeight:700}}>
+                        style={{background:'var(--indigo)',border:'none',color:'#fff',borderRadius:8,padding:'10px 20px',cursor:'pointer',fontSize:13,fontWeight:700}}>
                         {npsSyncing?'⟳ Scanning…':'⟳ Sync from Gmail'}
                       </button>
                       <button onClick={()=>{setNpsForm({statement_to:'',total_value:'',total_contributions:'',notional_gain:'',xirr:'',scheme_e_value:'',scheme_e_pct:'75',scheme_c_value:'',scheme_c_pct:'15',scheme_g_value:'',scheme_g_pct:'10',goal_id:'',goal_earmark_pct:'100'});setShowNpsForm(true);}}
@@ -3648,10 +3648,10 @@ export default function Dashboard() {
                 <div style={{position:'absolute',inset:0,background:'linear-gradient(to bottom,transparent,rgba(239,232,215,0.95))',borderRadius:'20px 20px 0 0'}}/>
                 <div style={{position:'absolute',bottom:16,left:24,right:24,display:'flex',justifyContent:'space-between',alignItems:'flex-end'}}>
                   <div>
-                    <div style={{color:'#fff',fontSize:20,fontWeight:700}}>{goalDetail.name}</div>
+                    <div style={{color:'var(--text)',fontSize:20,fontWeight:700}}>{goalDetail.name}</div>
                     <div style={{color:'rgba(255,255,255,0.6)',fontSize:12}}>{goalDetail.description}</div>
                   </div>
-                  <button onClick={()=>setGoalDetail(null)} style={{background:'var(--border-2)',border:'1px solid rgba(255,255,255,0.2)',color:'#fff',borderRadius:8,padding:'6px 12px',cursor:'pointer',fontSize:12,backdropFilter:'blur(8px)'}}>✕ Close</button>
+                  <button onClick={()=>setGoalDetail(null)} style={{background:'var(--border-2)',border:'1px solid var(--border-2)',color:'var(--text)',borderRadius:8,padding:'6px 12px',cursor:'pointer',fontSize:12,background:'var(--surface)'}}>✕ Close</button>
                 </div>
               </div>
             ) : (
@@ -3692,7 +3692,7 @@ export default function Dashboard() {
                   <div style={{color:'var(--text)',fontWeight:700,fontSize:13}}>Linked Assets</div>
                   <div style={{display:'flex',gap:6}}>
                     <button onClick={()=>{setGoalDetail(null);loadTab('holdings');}}
-                      style={{background:'rgba(93,59,120,0.10)',border:'1px solid rgba(93,59,120,0.25)',color:'#5d3b78',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:11}}>
+                      style={{background:'rgba(93,59,120,0.10)',border:'1px solid rgba(52,72,122,0.25)',color:'var(--indigo)',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:11}}>
                       + Stock
                     </button>
                     <button onClick={()=>{setGoalDetail(null);loadTab('mutualfunds');}}
@@ -3751,7 +3751,7 @@ export default function Dashboard() {
               {/* Actions */}
               <div style={{display:'flex',gap:10}}>
                 <button onClick={()=>{setEditingGoal(goalDetail);setGoalForm({name:goalDetail.name,description:goalDetail.description||'',target_value:String(goalDetail.target_value),duration_type:goalDetail.duration_type,target_date:goalDetail.target_date||'',is_recurring:goalDetail.is_recurring,recurrence:goalDetail.recurrence||'monthly',recurrence_day:String(goalDetail.recurrence_day||1),recurrence_month:String(goalDetail.recurrence_month||'')});setGoalDetail(null);setShowGoalForm(true);}}
-                  style={{flex:1,background:'rgba(93,59,120,0.10)',border:'1px solid rgba(93,59,120,0.25)',color:'#5d3b78',borderRadius:8,padding:'10px',cursor:'pointer',fontSize:13,fontWeight:600}}>✎ Edit</button>
+                  style={{flex:1,background:'rgba(93,59,120,0.10)',border:'1px solid rgba(52,72,122,0.25)',color:'var(--indigo)',borderRadius:8,padding:'10px',cursor:'pointer',fontSize:13,fontWeight:600}}>✎ Edit</button>
                 <button onClick={()=>{const f=new FormData();document.getElementById(`goal-pic-${goalDetail.id}`)?.click();}} style={{flex:1,background:'rgba(52,72,122,0.10)',border:'1px solid rgba(14,165,233,0.3)',color:'#34487a',borderRadius:8,padding:'10px',cursor:'pointer',fontSize:13,fontWeight:600}}>
                   📷 Upload Picture
                   <input id={`goal-pic-${goalDetail.id}`} type="file" accept="image/*" style={{display:'none'}} onChange={e=>{uploadGoalPic(goalDetail.id,e.target.files[0]);}} />
@@ -3988,7 +3988,7 @@ export default function Dashboard() {
 
               {npsError && <div style={{color:'#a82c2c',fontSize:12,marginBottom:10,padding:'7px 10px',background:'rgba(168,44,44,0.08)',borderRadius:6}}>⚠ {npsError}</div>}
               <button onClick={saveNpsManual} disabled={npsSaving||!npsForm.statement_to||!npsForm.total_value}
-                style={{width:'100%',background:'#5d3b78',border:'none',color:'#fff',borderRadius:8,padding:'12px',fontWeight:700,fontSize:14,cursor:'pointer'}}>
+                className='k-btn-primary' style={{width:'100%',padding:'13px',fontSize:14,borderRadius:8}}>
                 {npsSaving?'⟳ Saving…':'Save NPS Entry'}
               </button>
             </div>
@@ -4148,14 +4148,14 @@ export default function Dashboard() {
 
               {/* Live preview */}
               {fdPreview && (
-                <div style={{background:'rgba(93,59,120,0.06)',border:'1px solid rgba(93,59,120,0.20)',borderRadius:10,padding:14,marginBottom:14}}>
-                  <div style={{fontSize:11,color:'#5d3b78',fontWeight:700,marginBottom:8,letterSpacing:0.5}}>LIVE PREVIEW</div>
+                <div style={{background:'var(--indigo-soft)',border:'1px solid rgba(52,72,122,0.18)',borderRadius:10,padding:14,marginBottom:14}}>
+                  <div style={{fontSize:11,color:'var(--indigo)',fontWeight:700,marginBottom:8,letterSpacing:0.5}}>LIVE PREVIEW</div>
                   <div style={{display:'flex',gap:20,flexWrap:'wrap'}}>
                     {[
                       {label:'Maturity Amount', val:`₹${Number(fdPreview.maturity).toLocaleString('en-IN')}`, color:'#6b8e23'},
                       {label:'Interest Earned',  val:`₹${Number(fdPreview.interest).toLocaleString('en-IN')}`, color:'#a8741a'},
                       {label:'Net After TDS',    val:`₹${Number(fdPreview.net).toLocaleString('en-IN')}`, color:'#6b8e23'},
-                      {label:'Maturity Date',    val:fdPreview.matDate, color:'#5d3b78'},
+                      {label:'Maturity Date',    val:fdPreview.matDate, color:'var(--indigo)'},
                     ].map(p=>(
                       <div key={p.label}>
                         <div style={{fontSize:10,color:'var(--text-3)'}}>{p.label}</div>
@@ -4167,7 +4167,7 @@ export default function Dashboard() {
               )}
 
               {fdError && <div style={{color:'#a82c2c',fontSize:12,marginBottom:10,padding:'7px 10px',background:'rgba(168,44,44,0.08)',borderRadius:6}}>⚠ {fdError}</div>}
-              <button onClick={saveFd} disabled={fdSaving} style={{width:'100%',background:'#5d3b78',border:'none',color:'#fff',borderRadius:8,padding:'12px',fontWeight:700,fontSize:14,cursor:'pointer'}}>
+              <button onClick={saveFd} disabled={fdSaving} className='k-btn-primary' style={{width:'100%',padding:'13px',fontSize:14,borderRadius:8}}>
                 {fdSaving?'⟳ Saving…':(editingFd?'Update FD':'Add Fixed Deposit')}
               </button>
             </div>
@@ -4281,15 +4281,15 @@ export default function Dashboard() {
 
               {/* Live preview */}
               {rdPreview && (
-                <div style={{background:'rgba(93,59,120,0.06)',border:'1px solid rgba(93,59,120,0.15)',borderRadius:10,padding:14,marginBottom:14}}>
-                  <div style={{fontSize:11,color:'#5d3b78',fontWeight:700,marginBottom:8,letterSpacing:0.5}}>LIVE PREVIEW</div>
+                <div style={{background:'var(--indigo-soft)',border:'1px solid rgba(52,72,122,0.18)',borderRadius:10,padding:14,marginBottom:14}}>
+                  <div style={{fontSize:11,color:'var(--indigo)',fontWeight:700,marginBottom:8,letterSpacing:0.5}}>LIVE PREVIEW</div>
                   <div style={{display:'flex',gap:20,flexWrap:'wrap'}}>
                     {[
                       {label:'Total Investment',  val:`₹${Number(rdPreview.totalInvest).toLocaleString('en-IN')}`, color:'var(--text-3)'},
                       {label:'Maturity Amount',   val:`₹${Number(rdPreview.maturity).toLocaleString('en-IN')}`,    color:'#6b8e23'},
                       {label:'Interest Earned',   val:`₹${Number(rdPreview.interest).toLocaleString('en-IN')}`,    color:'#a8741a'},
                       {label:'Net After TDS',     val:`₹${Number(rdPreview.net).toLocaleString('en-IN')}`,         color:'#6b8e23'},
-                      {label:'Maturity Date',     val:rdPreview.matDate,                                           color:'#5d3b78'},
+                      {label:'Maturity Date',     val:rdPreview.matDate,                                           color:'var(--indigo)'},
                     ].map(p=>(
                       <div key={p.label}>
                         <div style={{fontSize:10,color:'var(--text-3)'}}>{p.label}</div>
@@ -4301,7 +4301,7 @@ export default function Dashboard() {
               )}
 
               {rdError && <div style={{color:'#a82c2c',fontSize:12,marginBottom:10,padding:'7px 10px',background:'rgba(168,44,44,0.08)',borderRadius:6}}>⚠ {rdError}</div>}
-              <button onClick={saveRd} disabled={rdSaving} style={{width:'100%',background:'#5d3b78',border:'none',color:'#fff',borderRadius:8,padding:'12px',fontWeight:700,fontSize:14,cursor:'pointer'}}>
+              <button onClick={saveRd} disabled={rdSaving} className='k-btn-primary' style={{width:'100%',padding:'13px',fontSize:14,borderRadius:8}}>
                 {rdSaving?'⟳ Saving…':(editingRd?'Update RD':'Add Recurring Deposit')}
               </button>
             </div>
@@ -4312,7 +4312,7 @@ export default function Dashboard() {
       {/* ── SETTINGS MODAL ── */}
       {showSettings && (
         <div className="db-modal-overlay" onClick={e=>{if(e.target===e.currentTarget){setShowSettings(false);setShowRuleForm(false);}}}>
-          <div style={{background:'var(--surface)',border:'1px solid var(--border-2)',borderRadius:14,width:720,maxWidth:'95vw',maxHeight:'92vh',overflowY:'auto',boxShadow:'0 20px 60px rgba(0,0,0,0.6)',display:'flex',flexDirection:'column'}}>
+          <div style={{background:'var(--surface)',border:'1px solid var(--border-2)',borderRadius:14,width:720,maxWidth:'95vw',maxHeight:'92vh',overflowY:'auto',boxShadow:'var(--shadow-3)',display:'flex',flexDirection:'column'}}>
             <div style={{display:'flex',flex:1,minHeight:0}}>
               {/* Left nav */}
               <div style={{width:190,borderRight:'1px solid var(--border-2)',padding:'20px 0',flexShrink:0}}>
@@ -4413,7 +4413,7 @@ export default function Dashboard() {
                         value={inviteEmail} onChange={e=>setInviteEmail(e.target.value)}
                         onKeyDown={e=>e.key==='Enter'&&sendInvite()} />
                       <button onClick={sendInvite} disabled={!inviteEmail.trim()||inviteSending}
-                        style={{background:'#5d3b78',border:'none',color:'#fff',borderRadius:8,padding:'9px 16px',cursor:'pointer',fontWeight:700,fontSize:13,whiteSpace:'nowrap'}}>
+                        style={{background:'var(--indigo)',border:'none',color:'#fff',borderRadius:8,padding:'9px 16px',cursor:'pointer',fontWeight:700,fontSize:13,whiteSpace:'nowrap'}}>
                         {inviteSending?'⟳':'Send Invite'}
                       </button>
                     </div>
@@ -4493,7 +4493,7 @@ export default function Dashboard() {
                       <input type="date" value={npsFromDate} onChange={e=>setNpsFromDate(e.target.value)} placeholder="From date (optional)"
                         style={{flex:1,background:'var(--surface)',border:'1px solid var(--border-2)',borderRadius:8,padding:'8px 12px',color:'var(--text)',fontSize:12,outline:'none'}}/>
                       <button onClick={syncNPS} disabled={npsSyncing}
-                        style={{background:'#5d3b78',border:'none',color:'#fff',borderRadius:8,padding:'8px 16px',fontWeight:700,fontSize:12,cursor:'pointer',whiteSpace:'nowrap'}}>
+                        style={{background:'var(--indigo)',border:'none',color:'#fff',borderRadius:8,padding:'8px 16px',fontWeight:700,fontSize:12,cursor:'pointer',whiteSpace:'nowrap'}}>
                         {npsSyncing?'⟳ Scanning…':'Sync NPS'}
                       </button>
                     </div>

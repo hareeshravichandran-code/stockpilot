@@ -278,3 +278,11 @@ select.db-input { cursor:pointer; }
 
 /* Modal body — content controls its own spacing */
 .db-modal-body { /* intentionally unstyled */ }
+
+/* ── Override recharts for cream background ───────────────────────── */
+.recharts-text tspan { fill: var(--text-3); }
+.recharts-cartesian-axis-tick-value tspan { fill: var(--text-3); }
+.recharts-legend-item-text { color: var(--text-2) !important; }
+.recharts-default-tooltip { background: var(--surface) !important; border-color: rgba(26,22,18,0.12) !important; color: var(--text) !important; }
+.recharts-tooltip-label   { color: var(--text) !important; }
+.recharts-tooltip-item    { color: var(--text-2) !important; }
