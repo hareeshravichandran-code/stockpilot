@@ -1301,7 +1301,7 @@ export default function Dashboard() {
                         className={refreshing ? 'kv-loading' : 'kv-refresh'}
                         style={{ background:'var(--surface)', borderRadius:12, padding:'16px 14px', border:'1px solid var(--border)', cursor:'default', transition:'opacity 0.3s', boxShadow:'var(--shadow-1)' }}>
                         <div style={{ fontSize:20, marginBottom:6 }}>{t.icon}</div>
-                        <div style={{ fontSize:11, color:'#888', marginBottom:4 }}>{t.label}</div>
+                        <div style={{ fontSize:11, color:'var(--text-3)', marginBottom:4 }}>{t.label}</div>
                         <div style={{ fontSize:20, fontWeight:700, color:t.color }}>{t.val}</div>
                         <div style={{ fontSize:11, color:'#555', marginTop:4 }}>{t.sub}</div>
                       </div>
@@ -1317,7 +1317,7 @@ export default function Dashboard() {
                   <div style={{ display:'grid', gridTemplateColumns:'1fr 1.8fr', gap:16, marginBottom:20 }}>
                     {/* Pie Chart */}
                     <div style={{ background:'var(--surface)', borderRadius:12, padding:20, border:'1px solid var(--border)' }}>
-                      <div style={{ fontWeight:600, color:'#aaa', fontSize:13, marginBottom:12 }}>📊 Asset Allocation</div>
+                      <div style={{ fontWeight:600, color:'var(--text-3)', fontSize:13, marginBottom:12 }}>📊 Asset Allocation</div>
                       {pieData.length > 0 ? (
                         <>
                           <PieChart width={200} height={180}>
@@ -1330,7 +1330,7 @@ export default function Dashboard() {
                             {pieData.map(d => (
                               <div key={d.name} style={{ display:'flex', alignItems:'center', gap:5, fontSize:11 }}>
                                 <div style={{ width:8, height:8, borderRadius:'50%', background:d.color }} />
-                                <span style={{ color:'#aaa' }}>{d.name}</span>
+                                <span style={{ color:'var(--text-3)' }}>{d.name}</span>
                                 <span style={{ color:'#666' }}>{totalNetWorth > 0 ? ((d.value/totalNetWorth)*100).toFixed(0)+'%' : '-'}</span>
                               </div>
                             ))}
@@ -1343,13 +1343,13 @@ export default function Dashboard() {
 
                     {/* Growth Chart */}
                     <div style={{ background:'var(--surface)', borderRadius:12, padding:20, border:'1px solid var(--border)' }}>
-                      <div style={{ fontWeight:600, color:'#aaa', fontSize:13, marginBottom:12 }}>📈 Portfolio Growth (Yearly)</div>
+                      <div style={{ fontWeight:600, color:'var(--text-3)', fontSize:13, marginBottom:12 }}>📈 Portfolio Growth (Yearly)</div>
                       <ResponsiveContainer width="100%" height={200}>
                         <AreaChart data={growthData} margin={{ top:5, right:10, left:0, bottom:0 }}>
                           <defs>
                             <linearGradient id="growthGrad" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#6b8e23" stopOpacity={0.35}{0}={0.25}/>
-                              <stop offset="95%" stopColor="#6b8e23" stopOpacity={0.35}{0}={0}/>
+                              <stop offset="5%" stopColor="#6b8e23" stopOpacity={}/>
+                              <stop offset="95%" stopColor="#6b8e23" stopOpacity={}/>
                             </linearGradient>
                           </defs>
                           <XAxis dataKey="fy" stroke="var(--border-2)" tick={{ fill:'var(--text-3)', fontSize:11 }} />
@@ -1416,12 +1416,12 @@ export default function Dashboard() {
                         onClick={e=>{if(e?.activePayload?.[0]?.payload?.fullDate) loadHistoryDetail(e.activePayload[0].payload.fullDate);}}>
                         <defs>
                           <linearGradient id="mktGrad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#6b8e23" stopOpacity={0.35}{0}={0.25}/>
-                            <stop offset="95%" stopColor="#6b8e23" stopOpacity={0.35}{0}={0}/>
+                            <stop offset="5%" stopColor="#6b8e23" stopOpacity={}/>
+                            <stop offset="95%" stopColor="#6b8e23" stopOpacity={}/>
                           </linearGradient>
                           <linearGradient id="costGrad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#5d3b78" stopOpacity={0.35}{0}={0.12}/>
-                            <stop offset="95%" stopColor="#5d3b78" stopOpacity={0.35}{0}={0}/>
+                            <stop offset="5%" stopColor="#5d3b78" stopOpacity={}/>
+                            <stop offset="95%" stopColor="#5d3b78" stopOpacity={}/>
                           </linearGradient>
                         </defs>
                         <XAxis dataKey="month" stroke="var(--border-2)" tick={{ fontSize:10, fill:'var(--text-3)' }} interval="preserveStartEnd"/>
@@ -2710,8 +2710,8 @@ export default function Dashboard() {
                         <AreaChart data={mthData} margin={{top:5,right:10,left:0,bottom:0}}>
                           <defs>
                             <linearGradient id="incGrad" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#6b8e23" stopOpacity={0.35}{0}={0.15}/>
-                              <stop offset="95%" stopColor="#6b8e23" stopOpacity={0.35}{0}={0}/>
+                              <stop offset="5%" stopColor="#6b8e23" stopOpacity={}/>
+                              <stop offset="95%" stopColor="#6b8e23" stopOpacity={}/>
                             </linearGradient>
                           </defs>
                           <XAxis dataKey="month" stroke="var(--text-4)" tick={{fill:'var(--text-3)',fontSize:11}}/>
@@ -3133,8 +3133,8 @@ export default function Dashboard() {
                           }))}>
                             <defs>
                               <linearGradient id="npsGradTab" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%"  stopColor="#5d3b78" stopOpacity={0.35}{0}={0.15}/>
-                                <stop offset="95%" stopColor="#5d3b78" stopOpacity={0.35}{0}={0}/>
+                                <stop offset="5%"  stopColor="#5d3b78" stopOpacity={}/>
+                                <stop offset="95%" stopColor="#5d3b78" stopOpacity={}/>
                               </linearGradient>
                             </defs>
                             <XAxis dataKey="month" stroke="var(--border-2)" tick={{fontSize:10,fill:'var(--text-3)'}} interval="preserveStartEnd"/>
@@ -3304,7 +3304,7 @@ export default function Dashboard() {
               <button className="db-modal-close" onClick={() => setShowAssetModal(false)}>✕</button>
             </div>
             <div className="db-modal-body">
-              <p style={{color:'#888',fontSize:13,marginBottom:16}}>Enter your current balances. These are saved to your account.</p>
+              <p style={{color:'var(--text-3)',fontSize:13,marginBottom:16}}>Enter your current balances. These are saved to your account.</p>
 
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
                 {[
@@ -3318,7 +3318,7 @@ export default function Dashboard() {
                   {key:'creditCard',label:'Credit Card Outstanding'},
                 ].map(f => (
                   <div key={f.key} className="form-group" style={{margin:0}}>
-                    <label style={{fontSize:12,color:'#888'}}>{f.label}</label>
+                    <label style={{fontSize:12,color:'var(--text-3)'}}>{f.label}</label>
                     <input
                       type="number"
                       placeholder="₹ 0"
