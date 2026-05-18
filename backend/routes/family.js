@@ -415,3 +415,288 @@ router.get('/combined/goals', requireAuth, async (req, res) => {
 });
 
 module.exports = router;
+
+// ═══════════════════════════════════════════════════════════════════
+// ANDROID APP ENDPOINTS — used by Kanalyst Android client
+// These use a simpler bilateral invite model (inviter ↔ invitee)
+// stored in family_connections table, not the group model above.
+// ═══════════════════════════════════════════════════════════════════
+
+// ── Helper: ensure family_connections table exists ────────────────
+// We use a simple bilateral table: user_id + partner_id + status
+// instead of the group model, matching the Android app's data model.
+
+// ── GET /api/family/members ───────────────────────────────────────
+// Returns all connections for the current user (both directions)
+router.get('/members', requireAuth, async (req, res) => {
+  const uid = req.user.id;
+  try {
+    // Find connections where I'm the initiator or the partner
+    const { data: asInitiator } = await supabase
+      .from('family_connections')
+      .select('id, partner_id, status, created_at')
+      .eq('user_id', uid);
+
+    const { data: asPartner } = await supabase
+      .from('family_connections')
+      .select('id, user_id, status, created_at')
+      .eq('partner_id', uid);
+
+    const allConnections = [];
+
+    // Enrich: get names for partner IDs
+    const partnerIds = [
+      ...(asInitiator || []).map(c => c.partner_id),
+      ...(asPartner   || []).map(c => c.user_id),
+    ].filter(Boolean);
+
+    let nameMap = {};
+    if (partnerIds.length > 0) {
+      const { data: users } = await supabase
+        .from('users').select('id, name, email').in('id', partnerIds);
+      (users || []).forEach(u => { nameMap[u.id] = u; });
+    }
+
+    (asInitiator || []).forEach(c => {
+      const partner = nameMap[c.partner_id] || {};
+      allConnections.push({
+        id:             c.id,
+        familyUserId:   c.partner_id,
+        familyUserEmail: partner.email || '',
+        familyUserName: partner.name  || partner.email || 'Unknown',
+        status:         c.status,
+        canViewExpenses: true,
+      });
+    });
+
+    (asPartner || []).forEach(c => {
+      const user = nameMap[c.user_id] || {};
+      allConnections.push({
+        id:             c.id,
+        familyUserId:   c.user_id,
+        familyUserEmail: user.email || '',
+        familyUserName: user.name  || user.email || 'Unknown',
+        status:         c.status,
+        canViewExpenses: true,
+      });
+    });
+
+    res.json(allConnections);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/family/invite (Android) ────────────────────────────
+// Body: { email: string }
+// Returns a FamilyMemberDto
+router.post('/invite', requireAuth, async (req, res) => {
+  // Only handle the Android JSON invite — the form-based web invite
+  // is handled by /invite above if body has no email field.
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: 'email required' });
+
+  const uid = req.user.id;
+  try {
+    const { data: partner } = await supabase
+      .from('users').select('id, name, email').eq('email', email.toLowerCase().trim()).maybeSingle();
+
+    if (!partner) return res.status(404).json({ error: 'No Kanalyst account found with that email' });
+    if (partner.id === uid) return res.status(400).json({ error: 'Cannot invite yourself' });
+
+    // Check existing connection
+    const { data: existing } = await supabase
+      .from('family_connections')
+      .select('id, status')
+      .or(`and(user_id.eq.${uid},partner_id.eq.${partner.id}),and(user_id.eq.${partner.id},partner_id.eq.${uid})`)
+      .maybeSingle();
+
+    if (existing) {
+      return res.status(409).json({
+        error: existing.status === 'ACCEPTED'
+          ? 'Already connected'
+          : 'Invite already sent'
+      });
+    }
+
+    const { data: conn, error } = await supabase
+      .from('family_connections')
+      .insert({
+        user_id:    uid,
+        partner_id: partner.id,
+        status:     'PENDING',
+        created_at: new Date().toISOString(),
+      })
+      .select().single();
+
+    if (error) throw error;
+
+    res.status(201).json({
+      id:             conn.id,
+      familyUserId:   partner.id,
+      familyUserEmail: partner.email,
+      familyUserName: partner.name,
+      status:         'PENDING',
+      canViewExpenses: true,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── DELETE /api/family/members/:userId (Android) ─────────────────
+router.delete('/members/:partnerId', requireAuth, async (req, res) => {
+  const uid = req.user.id;
+  const { partnerId } = req.params;
+  try {
+    await supabase
+      .from('family_connections')
+      .delete()
+      .or(`and(user_id.eq.${uid},partner_id.eq.${partnerId}),and(user_id.eq.${partnerId},partner_id.eq.${uid})`);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/family/transactions/:partnerId ───────────────────────
+// Returns partner's expense_transactions for a given month
+// Query param: ?month=YYYYMM  e.g. ?month=202605
+router.get('/transactions/:partnerId', requireAuth, async (req, res) => {
+  const uid = req.user.id;
+  const { partnerId } = req.params;
+  const monthParam = req.query.month; // e.g. 202605
+
+  try {
+    // Verify connection exists and is ACCEPTED
+    const { data: conn } = await supabase
+      .from('family_connections')
+      .select('id, status')
+      .or(`and(user_id.eq.${uid},partner_id.eq.${partnerId}),and(user_id.eq.${partnerId},partner_id.eq.${uid})`)
+      .eq('status', 'ACCEPTED')
+      .maybeSingle();
+
+    if (!conn) return res.status(403).json({ error: 'Not connected with this user' });
+
+    let query = supabase
+      .from('expense_transactions')
+      .select('*')
+      .eq('user_id', partnerId)
+      .eq('is_deleted', false)
+      .order('transaction_date', { ascending: false });
+
+    // Filter by month if provided
+    if (monthParam && monthParam.length === 6) {
+      const year  = parseInt(monthParam.slice(0, 4));
+      const month = parseInt(monthParam.slice(4, 6));
+      const from  = new Date(year, month - 1, 1).toISOString().split('T')[0];
+      const to    = new Date(year, month, 0).toISOString().split('T')[0];
+      query = query.gte('transaction_date', from).lte('transaction_date', to);
+    }
+
+    const { data: txns, error } = await query.limit(200);
+    if (error) throw error;
+
+    // Map to Android TransactionDto format
+    const transactions = (txns || []).map(t => ({
+      id:          t.id,
+      amount:      parseFloat(t.amount),
+      type:        t.transaction_type === 'CREDIT' ? 'CREDIT' : 'DEBIT',
+      merchant:    t.merchant_name || t.description,
+      description: t.description,
+      note:        t.notes,
+      dateTime:    new Date(t.transaction_date + 'T' + (t.transaction_time || '00:00:00')).getTime(),
+      source:      t.source || 'SMS',
+      bankName:    t.bank_name,
+      accountLast4: t.account_last4,
+      referenceNo: t.reference_number,
+      category:    t.category,
+    }));
+
+    res.json({ transactions });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/family/master-sync ─────────────────────────────────
+// Pull partner's SMS rules and custom fields into caller's account
+// Body: { partnerUserId, syncRules, syncFields, syncSheets, syncCategories }
+router.post('/master-sync', requireAuth, async (req, res) => {
+  const uid = req.user.id;
+  const { partnerUserId, syncRules = true, syncFields = true } = req.body;
+
+  if (!partnerUserId) return res.status(400).json({ error: 'partnerUserId required' });
+
+  try {
+    // Verify connection
+    const { data: conn } = await supabase
+      .from('family_connections')
+      .select('id')
+      .or(`and(user_id.eq.${uid},partner_id.eq.${partnerUserId}),and(user_id.eq.${partnerUserId},partner_id.eq.${uid})`)
+      .maybeSingle();
+
+    if (!conn) return res.status(403).json({ error: 'Not connected with this user' });
+
+    let smsRules   = [];
+    let customFields = [];
+
+    if (syncRules) {
+      const { data: rules } = await supabase
+        .from('sms_rules')
+        .select('*')
+        .eq('user_id', partnerUserId)
+        .eq('is_active', true);
+      smsRules = (rules || []).map(r => ({
+        id:              r.id,
+        merchantPattern: r.sender_pattern || r.merchant_pattern || '',
+        categoryId:      r.category_id,
+        matchCount:      r.match_count || 1,
+        userConfirmed:   true,
+        isIgnored:       r.is_ignored || false,
+      }));
+    }
+
+    if (syncFields) {
+      const { data: fields } = await supabase
+        .from('custom_fields')
+        .select('*')
+        .eq('user_id', partnerUserId)
+        .eq('is_deleted', false);
+      customFields = (fields || []).map(f => ({
+        id:           f.id,
+        userId:       f.user_id,
+        name:         f.name,
+        fieldType:    f.field_type,
+        options:      f.options || [],
+        autoFillRules: f.auto_fill_rules || {},
+        isRequired:   f.is_required || false,
+        displayOrder: f.display_order || 0,
+        isDeleted:    false,
+      }));
+    }
+
+    res.json({
+      smsRules,
+      customFields,
+      message: `Synced ${smsRules.length} rules, ${customFields.length} fields`,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/family/connections/accept ──────────────────────────
+// Accept a pending connection request
+router.post('/connections/accept', requireAuth, async (req, res) => {
+  const uid = req.user.id;
+  const { fromUserId } = req.body;
+  if (!fromUserId) return res.status(400).json({ error: 'fromUserId required' });
+  try {
+    await supabase
+      .from('family_connections')
+      .update({ status: 'ACCEPTED', updated_at: new Date().toISOString() })
+      .eq('user_id', fromUserId).eq('partner_id', uid).eq('status', 'PENDING');
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
