@@ -115,7 +115,21 @@ router.get('/entries', requireAuth, async (req, res) => {
 
   const { data, error } = await q;
   if (error) return res.status(500).json({ error: error.message });
-  res.json((data || []).map(toWebEntry));
+
+  // Deduplicate in memory — same amount+date_time+type within 60s window
+  // This handles any duplicates that slipped through before the DB constraint was added
+  const seen = new Map();
+  const deduped = (data || []).filter(row => {
+    // Key: reference_no if present, otherwise amount+type+rounded_time(60s)+merchant
+    const key = row.reference_no
+      ? `ref:${row.reference_no}`
+      : `nref:${row.amount}:${row.type}:${Math.floor((row.date_time||0)/60000)}:${(row.merchant||'').toLowerCase().slice(0,20)}`;
+    if (seen.has(key)) return false;
+    seen.set(key, true);
+    return true;
+  });
+
+  res.json(deduped.map(toWebEntry));
 });
 
 // POST /api/expense/entries  — manual add

@@ -166,16 +166,51 @@ router.post('/transactions/bulk', authMiddleware, async (req, res) => {
       updated_at:   Date.now()
     }));
 
-    const { data, error } = await supabase
-      .from('expense_transactions')
-      .upsert(rows, {
-        onConflict: 'user_id,reference_no',  // skip duplicates gracefully
-        ignoreDuplicates: true
-      })
-      .select();
+    // Split rows: those with a reference_no vs those without
+    const withRef    = rows.filter(r => r.reference_no);
+    const withoutRef = rows.filter(r => !r.reference_no);
 
-    if (error) throw error;
-    res.status(201).json({ created: data.length, failed: 0 });
+    let created = 0;
+
+    // Rows WITH reference_no — upsert on user_id+reference_no (safe, always unique)
+    if (withRef.length > 0) {
+      const { data: d1, error: e1 } = await supabase
+        .from('expense_transactions')
+        .upsert(withRef, { onConflict: 'user_id,reference_no', ignoreDuplicates: true })
+        .select('id');
+      if (e1) console.warn('[bulk] withRef upsert warn:', e1.message);
+      else created += (d1||[]).length;
+    }
+
+    // Rows WITHOUT reference_no — manually check for duplicates before insert
+    // Match on: user_id + amount + date_time + type + merchant (within 60s window)
+    for (const row of withoutRef) {
+      try {
+        const windowMs = 60 * 1000; // 60 second window for same SMS
+        const { data: existing } = await supabase
+          .from('expense_transactions')
+          .select('id')
+          .eq('user_id', row.user_id)
+          .eq('amount',  row.amount)
+          .eq('type',    row.type)
+          .gte('date_time', row.date_time - windowMs)
+          .lte('date_time', row.date_time + windowMs)
+          .eq('is_deleted', false)
+          .maybeSingle();
+
+        if (!existing) {
+          const { error: e2 } = await supabase
+            .from('expense_transactions')
+            .insert(row);
+          if (!e2) created++;
+          else if (!e2.message.includes('duplicate')) console.warn('[bulk] insert warn:', e2.message);
+        }
+      } catch(rowErr) {
+        console.warn('[bulk] row error:', rowErr.message);
+      }
+    }
+
+    res.status(201).json({ created, failed: 0 });
   } catch (err) {
     console.error('[expense/transactions/bulk POST]', err.message);
     res.status(500).json({ error: err.message });
