@@ -302,7 +302,17 @@ export default function Dashboard() {
       const res = familyMode
         ? await familyAPI.combinedExpenses()
         : await api.get('/api/expense/entries');
-      const entries = Array.isArray(res.data) ? res.data : (res.data?.entries || []);
+      const rawEntries = Array.isArray(res.data) ? res.data : (res.data?.entries || []);
+      // Deduplicate client-side — defence against any DB duplicates that remain
+      const seenKeys = new Set();
+      const entries = rawEntries.filter(e => {
+        const key = e.reference_no
+          ? `ref:${e.reference_no}`
+          : `nref:${e.amount}:${e.type}:${Math.floor((e.date_time||new Date(e.expense_date).getTime())/60000)}:${(e.merchant_name||'').toLowerCase().slice(0,20)}`;
+        if (seenKeys.has(key)) return false;
+        seenKeys.add(key);
+        return true;
+      });
       setExpenseEntries(entries);
       // Compute summary client-side from raw entries
       const now          = new Date();
