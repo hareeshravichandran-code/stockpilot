@@ -189,6 +189,7 @@ router.get('/google/callback', async (req, res) => {
         .select('id, name, email').single();
       if (createErr) {
         console.error('[GOOGLE-CB] create user error:', createErr.message);
+        console.error('[GOOGLE-CB] create user error CAUSE:', createErr.cause || createErr.originalError || JSON.stringify(createErr));
         return res.redirect(`${frontendOrigin}/login?error=create_failed`);
       }
       user = newUser;
@@ -285,6 +286,7 @@ router.post('/google-mobile', async (req, res) => {
     });
   } catch (err) {
     console.error('[google-mobile]', err.message);
+    console.error('[google-mobile] CAUSE:', err.cause || err.originalError || JSON.stringify(err));
     return res.status(500).json({ error: 'Authentication failed' });
   }
 });
