@@ -108,7 +108,18 @@ router.post('/sync', requireAuth, async (req, res) => {
   // ── Async background processing ──────────────────────────────────
   (async () => {
     const { fetchEmails } = require('../services/gmail');
+    const SyncLogger = require('../services/logger');
+    const logger = new SyncLogger(userId);
     let saved = 0, parsed = 0, errors = 0, emailsFound = 0;
+
+    // Create a tracked session
+    await supabase.from('sync_sessions').insert({
+      user_id:    userId,
+      started_at: new Date().toISOString(),
+      status:     'running',
+      sync_type:  'nps_backfill',
+      summary:    { queries: searchAttempts.length, passwords: npsPasswords.length, fromDate },
+    }).select('id').single().then(({ data }) => { if (data) logger.sessionId = data.id; });
 
     for (const query of searchAttempts) {
       try {
@@ -231,9 +242,11 @@ router.post('/sync', requireAuth, async (req, res) => {
 
             if (dbErr) {
               console.error(JSON.stringify({ event: 'NPS_DB_ERROR', error: dbErr.message }));
+              await logger.logFailure({ phase: 'nps', emailId: email.id, subject: email.subject, from: email.from, date: email.date, hasPdf: email.hasPdf, errorType: 'DB_ERROR', errorMessage: dbErr.message });
               errors++;
             } else {
               saved++;
+              await logger.logSuccess({ phase: 'nps', emailId: email.id, subject: email.subject, from: email.from, date: email.date, hasPdf: email.hasPdf, itemsFound: 1, parsedData: [{ date: parsed_data.statement_to, value: parsed_data.total_value }] });
               console.log(JSON.stringify({ event: 'NPS_SAVED', date: parsed_data.statement_to, value: parsed_data.total_value }));
             }
             parsed++;
@@ -253,6 +266,7 @@ router.post('/sync', requireAuth, async (req, res) => {
     }
 
     console.log(JSON.stringify({ event: 'NPS_SYNC_COMPLETE', emailsFound, parsed, saved, errors }));
+    await logger.finishSession({ emailsFound, parsed, saved, errors });
   })();
 });
 

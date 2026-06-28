@@ -1,42 +1,42 @@
 /**
  * Kanalyst — Portfolio History Routes
  *
- * GET  /api/portfolio/history          — monthly snapshots for chart (default 5y)
- * GET  /api/portfolio/history/detail/:date — full holdings on a specific date
- * POST /api/portfolio/history/snapshot — save current state as snapshot (called by sync)
- * POST /api/portfolio/history/backfill — scan old CAS emails and build history
+ * GET  /api/portfolio/history                 — monthly snapshots for chart (default 5y)
+ * GET  /api/portfolio/history/detail/:date    — full holdings on a specific date
+ * POST /api/portfolio/history/snapshot        — save current state as snapshot (called by sync)
+ * POST /api/portfolio/history/backfill        — scan old CAS emails and build history
+ * GET  /api/portfolio/history/backfill/status — poll last-run status from sync_sessions
  */
 const router      = require('express').Router();
 const requireAuth = require('../middleware/requireAuth');
 const supabase    = require('../services/supabase');
+const SyncLogger  = require('../services/logger');
+const { decrypt } = require('../services/tokenCrypto');
 
 // ── Shared helper: save a snapshot ────────────────────────────────
 async function saveSnapshot(userId, { source = 'auto_sync', casType = 'UNKNOWN', snapshotDate } = {}) {
   try {
-    // Load current equity holdings
     const { data: holdings } = await supabase
       .from('holdings')
       .select('isin, symbol, company, quantity, last_price, market_value, avg_cost, cas_statement_date')
       .eq('user_id', userId);
 
-    // Load current MF holdings
     const { data: mfHoldings } = await supabase
       .from('mf_holdings')
       .select('isin, folio_number, fund_name, units, nav, current_value, invested_value, statement_date')
       .eq('user_id', userId);
 
-    const h   = holdings   || [];
-    const mf  = mfHoldings || [];
+    const h  = holdings   || [];
+    const mf = mfHoldings || [];
 
-    const equityVal  = h.reduce((s, x) => s + parseFloat(x.market_value || (x.quantity * x.last_price) || 0), 0);
-    const mfVal      = mf.reduce((s, x) => s + parseFloat(x.current_value || 0), 0);
-    const totalVal   = equityVal + mfVal;
-    const totalInvest= h.reduce((s, x) => s + parseFloat((x.quantity || 0) * (x.avg_cost || 0)), 0)
-                     + mf.reduce((s, x) => s + parseFloat(x.invested_value || 0), 0);
+    const equityVal   = h.reduce((s, x) => s + parseFloat(x.market_value || (x.quantity * x.last_price) || 0), 0);
+    const mfVal       = mf.reduce((s, x) => s + parseFloat(x.current_value || 0), 0);
+    const totalVal    = equityVal + mfVal;
+    const totalInvest = h.reduce((s, x) => s + parseFloat((x.quantity || 0) * (x.avg_cost || 0)), 0)
+                      + mf.reduce((s, x) => s + parseFloat(x.invested_value || 0), 0);
 
     const date = snapshotDate || new Date().toISOString().split('T')[0];
 
-    // Compact snapshot — only what we need for chart drill-down
     const holdingsJson = h.map(x => ({
       isin: x.isin, symbol: x.symbol, company: x.company,
       qty: x.quantity, mv: parseFloat(x.market_value || 0), lp: parseFloat(x.last_price || 0)
@@ -89,18 +89,14 @@ router.get('/', requireAuth, async (req, res) => {
 
   if (error) return res.status(500).json({ error: error.message });
 
-  // Deduplicate to one per month (keep latest in that month)
   const byMonth = {};
   for (const row of (data || [])) {
-    const month = row.snapshot_date.slice(0, 7); // YYYY-MM
+    const month = row.snapshot_date.slice(0, 7);
     byMonth[month] = row;
   }
-
-  const monthly = Object.values(byMonth).sort((a, b) => a.snapshot_date.localeCompare(b.snapshot_date));
-
-  // Summary
-  const latest  = monthly[monthly.length - 1] || null;
-  const oldest  = monthly[0] || null;
+  const monthly  = Object.values(byMonth).sort((a, b) => a.snapshot_date.localeCompare(b.snapshot_date));
+  const latest   = monthly[monthly.length - 1] || null;
+  const oldest   = monthly[0] || null;
   const growthPct = oldest && oldest.total_value > 0
     ? (((latest.total_value - oldest.total_value) / oldest.total_value) * 100).toFixed(2)
     : null;
@@ -108,12 +104,12 @@ router.get('/', requireAuth, async (req, res) => {
   res.json({
     snapshots: monthly,
     summary: {
-      count:      monthly.length,
-      dateRange:  oldest ? { from: oldest.snapshot_date, to: latest?.snapshot_date } : null,
+      count:       monthly.length,
+      dateRange:   oldest ? { from: oldest.snapshot_date, to: latest?.snapshot_date } : null,
       latestValue: latest?.total_value || 0,
       oldestValue: oldest?.total_value || 0,
       growthPct,
-      growthAbs:  latest && oldest ? parseFloat((latest.total_value - oldest.total_value).toFixed(2)) : 0,
+      growthAbs:   latest && oldest ? parseFloat((latest.total_value - oldest.total_value).toFixed(2)) : 0,
     }
   });
 });
@@ -139,25 +135,84 @@ router.post('/snapshot', requireAuth, async (req, res) => {
   res.json({ success: true, ...result });
 });
 
-// ── POST /backfill — scan ALL old CAS emails and build history ────
+// ── GET /backfill/status — last backfill run status ───────────────
+// Fetches the most recent backfill sync_session for this user and its logs.
+// The frontend polls this while a run is in progress.
+router.get('/backfill/status', requireAuth, async (req, res) => {
+  try {
+    // Most recent backfill session
+    const { data: session } = await supabase
+      .from('sync_sessions')
+      .select('*')
+      .eq('user_id', req.user.id)
+      .eq('sync_type', 'backfill')
+      .order('started_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (!session) return res.json({ session: null, logs: [] });
+
+    // All log rows for this session
+    const { data: logs } = await supabase
+      .from('sync_logs')
+      .select('*')
+      .eq('session_id', session.id)
+      .eq('user_id', req.user.id)
+      .order('logged_at', { ascending: true });
+
+    res.json({ session, logs: logs || [] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── GET /nps/status — last NPS sync status ────────────────────────
+router.get('/nps/status', requireAuth, async (req, res) => {
+  try {
+    const { data: session } = await supabase
+      .from('sync_sessions')
+      .select('*')
+      .eq('user_id', req.user.id)
+      .eq('sync_type', 'nps_backfill')
+      .order('started_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (!session) return res.json({ session: null, logs: [] });
+
+    const { data: logs } = await supabase
+      .from('sync_logs')
+      .select('*')
+      .eq('session_id', session.id)
+      .eq('user_id', req.user.id)
+      .order('logged_at', { ascending: true });
+
+    res.json({ session, logs: logs || [] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── POST /backfill — scan ALL old CAS emails and build history ─────
 router.post('/backfill', requireAuth, async (req, res) => {
   const userId = req.user.id;
   const { fromDate, toDate } = req.body; // YYYY-MM-DD strings
 
-  // Load Gmail connection
   const { data: conn } = await supabase
     .from('email_connections').select('*')
     .eq('user_id', userId).eq('provider', 'gmail').single();
   if (!conn) return res.status(400).json({ error: 'No Gmail account connected' });
 
-  // Load user profile for PDF passwords
   const { data: userProfile } = await supabase
     .from('users').select('pan, dob').eq('id', userId).single();
 
-  // Build Gmail query with date range
   const { fetchEmails } = require('../services/gmail');
   const casParser       = require('../services/casParser');
   const { saveCASHoldings } = require('./email');
+
+  // ── FIX: decrypt tokens before passing to fetchEmails (was a bug — raw encrypted token was sent)
+  const accessToken  = decrypt(conn.access_token);
+  const refreshToken = decrypt(conn.refresh_token);
 
   let queryParts = ['from:(cdslstatement.com OR nsdl.co.in OR nsdlindia.com OR cvlindia.com)'];
   if (fromDate) queryParts.push(`after:${fromDate.replace(/-/g, '/')}`);
@@ -165,69 +220,158 @@ router.post('/backfill', requireAuth, async (req, res) => {
   queryParts.push('has:attachment');
   const query = queryParts.join(' ');
 
-  console.log(JSON.stringify({ event: 'BACKFILL_START', query, userId }));
+  console.log(JSON.stringify({ event: 'BACKFILL_START', query, userId, fromDate, toDate }));
 
-  // Send immediate response — backfill runs async
+  // Respond immediately — backfill runs async in the background
   res.json({
     success: true,
-    message: 'Backfill started — this may take a few minutes. Check the history chart when done.',
+    message: 'Backfill started — scanning all CAS emails. Watch the status panel for live results.',
     query,
   });
 
-  // ── Async processing ─────────────────────────────────────────
+  // ── Async background processing with full SyncLogger tracking ────
   (async () => {
-    try {
-      // Fetch ALL matching emails (up to 50 for backfill)
-      const emails = await fetchEmails(
-        conn.access_token, conn.refresh_token,
-        query, userProfile || {},
-        { maxResults: 50 }  // override default of 5
-      );
+    const logger = new SyncLogger(userId);
+    logger.syncType = 'backfill'; // used by startSession below
 
-      console.log(JSON.stringify({ event: 'BACKFILL_EMAILS_FOUND', count: emails.length }));
+    try {
+      // Start a tracked session — writes a row to sync_sessions
+      await supabase.from('sync_sessions').insert({
+        user_id:    userId,
+        started_at: new Date().toISOString(),
+        status:     'running',
+        sync_type:  'backfill',
+        summary:    { query, fromDate, toDate },
+      }).select('id').single().then(({ data }) => {
+        if (data) logger.sessionId = data.id;
+      });
+
+      console.log(JSON.stringify({ event: 'BACKFILL_SESSION_STARTED', sessionId: logger.sessionId }));
+
+      // Fetch emails — now with decrypted token
+      const emails = await fetchEmails(accessToken, refreshToken, query, userProfile || {}, { maxResults: 100 });
+
+      console.log(JSON.stringify({ event: 'BACKFILL_EMAILS_FOUND', count: emails.length, query }));
+
+      if (emails.length === 0) {
+        await logger.logFailure({
+          phase: 'search', errorType: 'NO_EMAILS',
+          errorMessage: `Gmail query returned 0 emails: ${query}`,
+        });
+        await logger.finishSession({ query, reason: 'no_emails_found' });
+        return;
+      }
 
       let processed = 0, snapshots = 0;
 
       for (const email of emails) {
+        const emailMeta = {
+          emailId:    email.id,
+          subject:    email.subject,
+          from:       email.from,
+          date:       email.date,
+          hasPdf:     !!email.pdfBuffer || email.hasPdf,
+          pdfFailed:  email.pdfFailed,
+        };
+
         try {
           const textToParse = email.text || email.body || '';
-          if (!textToParse && !email.pdfBuffer) continue;
 
-          const { holdings = [], mfHoldings = [], summary = {} } =
-            casParser.parse(textToParse, email.pdfBuffer) || {};
+          // Skip if no content and no PDF buffer
+          if (!textToParse && !email.pdfBuffer) {
+            await logger.logSkipped({
+              ...emailMeta, phase: 'cas',
+              reason: 'NO_CONTENT',
+              detail: 'Email has neither text body nor PDF buffer',
+            });
+            continue;
+          }
 
-          if (!holdings.length && !mfHoldings.length) continue;
+          // Log PDF status explicitly
+          if (email.pdfFailed) {
+            console.log(JSON.stringify({
+              event: 'BACKFILL_PDF_FAILED',
+              subject: email.subject,
+              date: email.date,
+              pdfFilename: email.pdfFilename,
+              reason: 'PDF password could not be resolved or PDF was unreadable',
+            }));
+          }
+
+          const parseResult = casParser.parse(textToParse, email.pdfBuffer) || {};
+          const { holdings = [], mfHoldings = [], summary = {} } = parseResult;
+
+          if (!holdings.length && !mfHoldings.length) {
+            await logger.logFailure({
+              ...emailMeta, phase: 'cas',
+              errorType: 'NO_ISIN',
+              errorMessage: `CAS parsed but 0 equity and 0 MF holdings found. PDF failed: ${email.pdfFailed}. Text length: ${textToParse.length}`,
+              rawText: textToParse.slice(0, 500),
+            });
+            continue;
+          }
 
           const casDate = summary?.statementDate || email.date?.split('T')[0] || null;
-          if (!casDate) continue;
+          if (!casDate) {
+            await logger.logFailure({
+              ...emailMeta, phase: 'cas',
+              errorType: 'NO_DATE',
+              errorMessage: 'Could not determine CAS statement date from email or parsed content',
+            });
+            continue;
+          }
 
           // Save holdings to main tables
           await saveCASHoldings(userId, holdings, mfHoldings, casDate);
 
           // Save snapshot for this date
           await saveSnapshot(userId, {
-            source:      'backfill',
-            casType:     summary?.casType || 'UNKNOWN',
+            source:       'backfill',
+            casType:      summary?.casType || 'UNKNOWN',
             snapshotDate: casDate,
+          });
+
+          await logger.logSuccess({
+            ...emailMeta, phase: 'cas',
+            itemsFound:  holdings.length + mfHoldings.length,
+            parsedData:  [{ casDate, equityCount: holdings.length, mfCount: mfHoldings.length, casType: summary?.casType }],
+            rawText:     textToParse.slice(0, 200),
           });
 
           processed++;
           snapshots++;
-          console.log(JSON.stringify({ event: 'BACKFILL_DATE_DONE', casDate, equityCount: holdings.length, mfCount: mfHoldings.length }));
+          console.log(JSON.stringify({
+            event: 'BACKFILL_DATE_DONE', casDate,
+            equityCount: holdings.length, mfCount: mfHoldings.length,
+            casType: summary?.casType,
+          }));
+
         } catch (e) {
-          console.error(JSON.stringify({ event: 'BACKFILL_EMAIL_ERROR', error: e.message }));
+          console.error(JSON.stringify({ event: 'BACKFILL_EMAIL_ERROR', subject: email.subject, error: e.message, stack: e.stack?.slice(0, 300) }));
+          await logger.logFailure({
+            ...emailMeta, phase: 'cas',
+            errorType:    'PARSE_FAILED',
+            errorMessage: e.message,
+            errorStack:   e.stack?.slice(0, 300),
+          });
         }
       }
 
-      console.log(JSON.stringify({ event: 'BACKFILL_COMPLETE', processed, snapshots }));
+      console.log(JSON.stringify({ event: 'BACKFILL_COMPLETE', processed, snapshots, totalEmails: emails.length }));
 
-      // Update the user's backfill status in DB
+      await logger.finishSession({ processed, snapshots, totalEmails: emails.length, query });
+
       await supabase.from('email_connections')
         .update({ backfill_done: true, backfill_at: new Date().toISOString() })
         .eq('id', conn.id);
 
     } catch (e) {
-      console.error(JSON.stringify({ event: 'BACKFILL_FATAL', error: e.message }));
+      console.error(JSON.stringify({ event: 'BACKFILL_FATAL', error: e.message, stack: e.stack?.slice(0, 300) }));
+      await logger.logFailure({
+        phase: 'backfill_fatal', errorType: 'FATAL',
+        errorMessage: e.message, errorStack: e.stack?.slice(0, 300),
+      });
+      await logger.finishSession({ error: e.message });
     }
   })();
 });
