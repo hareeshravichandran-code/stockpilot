@@ -157,7 +157,6 @@ export const portfolioHistoryAPI = {
   backfillStatus:()                => api.get('/api/portfolio/history/backfill/status'),
   npsStatus:     ()                => api.get('/api/portfolio/history/nps/status'),
 };
-};
 
 export const npsAPI = {
   get:    ()         => api.get('/api/nps'),
