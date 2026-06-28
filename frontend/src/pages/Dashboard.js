@@ -163,6 +163,9 @@ export default function Dashboard() {
   const [backfillToDate, setBackfillToDate]   = useState('');
   const [backfilling, setBackfilling]         = useState(false);
   const [backfillResult, setBackfillResult]   = useState(null);
+  const [backfillStatus, setBackfillStatus]   = useState(null); // { session, logs }
+  const [npsStatus, setNpsStatus]             = useState(null); // { session, logs }
+  const [syncStatusPolling, setSyncStatusPolling] = useState(null); // 'cas' | 'nps' | null
   const [historyDetailDate, setHistoryDetailDate] = useState(null);
   const [historyDetail, setHistoryDetail]     = useState(null);
 
@@ -709,15 +712,38 @@ export default function Dashboard() {
   };
 
   const startBackfill = async () => {
-    setBackfilling(true); setBackfillResult(null);
+    setBackfilling(true); setBackfillResult(null); setBackfillStatus(null); setSyncStatusPolling('cas');
     try {
       const r = await portfolioHistoryAPI.backfill(backfillFromDate || null, backfillToDate || null);
       setBackfillResult({ success: true, message: r.data.message });
-      // Poll for completion - reload history after 30s
-      setTimeout(() => loadHistory(historyYears), 30000);
+      // Poll for live status every 4 seconds
+      let polls = 0;
+      const poller = setInterval(async () => {
+        polls++;
+        try {
+          const s = await portfolioHistoryAPI.backfillStatus();
+          setBackfillStatus(s.data);
+          // Stop polling once session is done or after 90s (23 polls)
+          if (s.data?.session?.status === 'completed' || s.data?.session?.status === 'failed' || polls >= 23) {
+            clearInterval(poller);
+            setSyncStatusPolling(null);
+            setBackfilling(false);
+            if (s.data?.session?.status === 'completed') loadHistory(historyYears);
+          }
+        } catch(e) { /* keep polling */ }
+      }, 4000);
     } catch(e) {
       setBackfillResult({ success: false, message: e.response?.data?.error || 'Backfill failed' });
-    } finally { setBackfilling(false); }
+      setBackfilling(false); setSyncStatusPolling(null);
+    }
+  };
+
+  const loadBackfillStatus = async () => {
+    try {
+      const [cas, nps] = await Promise.all([portfolioHistoryAPI.backfillStatus(), portfolioHistoryAPI.npsStatus()]);
+      if (cas.data?.session) setBackfillStatus(cas.data);
+      if (nps.data?.session) setNpsStatus(nps.data);
+    } catch(e) { /* ignore */ }
   };
 
   // ── NPS handlers ─────────────────────────────────────────────────
@@ -736,14 +762,28 @@ export default function Dashboard() {
   };
 
   const syncNPS = async () => {
-    setNpsSyncing(true); setNpsSyncResult(null);
+    setNpsSyncing(true); setNpsSyncResult(null); setNpsStatus(null); setSyncStatusPolling('nps');
     try {
       const r = await npsAPI.sync(npsFromDate || null);
       setNpsSyncResult({ success: true, message: r.data.message });
-      setTimeout(() => loadNPS(), 25000); // reload after async processing
+      let polls = 0;
+      const poller = setInterval(async () => {
+        polls++;
+        try {
+          const s = await portfolioHistoryAPI.npsStatus();
+          setNpsStatus(s.data);
+          if (s.data?.session?.status === 'completed' || s.data?.session?.status === 'failed' || polls >= 20) {
+            clearInterval(poller);
+            setSyncStatusPolling(null);
+            setNpsSyncing(false);
+            if (s.data?.session?.status === 'completed') loadNPS();
+          }
+        } catch(e) { /* keep polling */ }
+      }, 4000);
     } catch(e) {
       setNpsSyncResult({ success: false, message: e.response?.data?.error || 'Sync failed' });
-    } finally { setNpsSyncing(false); }
+      setNpsSyncing(false); setSyncStatusPolling(null);
+    }
   };
 
   const saveNpsManual = async () => {
@@ -4452,6 +4492,8 @@ export default function Dashboard() {
 
               {settingsSection==='history' && (
                 <div>
+                  {/* Auto-load status of previous runs on panel open */}
+                  {React.useEffect(() => { loadBackfillStatus(); }, [])}
                   <div style={{color:'var(--text)',fontSize:14,fontWeight:700,marginBottom:4}}>📊 Historical Sync</div>
                   <div style={{color:'var(--text-3)',fontSize:12,marginBottom:16}}>
                     Scan all your old NSDL &amp; CDSL CAS emails to build a complete portfolio history. Each CAS email becomes a monthly snapshot used for the growth chart.
@@ -4493,10 +4535,16 @@ export default function Dashboard() {
                         <div style={{fontSize:10,color:'var(--text-4)',marginTop:2}}>Leave blank for today</div>
                       </div>
                     </div>
-                    <button onClick={startBackfill} disabled={backfilling}
-                      style={{width:'100%',background:backfilling?'var(--surface-3)':'#5d3b78',border:'none',color:backfilling?'var(--text-3)':'#fff',borderRadius:8,padding:'11px',fontWeight:700,fontSize:13,cursor:backfilling?'not-allowed':'pointer'}}>
-                      {backfilling ? '⟳ Scanning CAS emails — this may take a few minutes…' : '⟳ Start Historical Sync'}
-                    </button>
+                    <div style={{display:'flex',gap:8}}>
+                      <button onClick={startBackfill} disabled={backfilling}
+                        style={{flex:1,background:backfilling?'var(--surface-3)':'#5d3b78',border:'none',color:backfilling?'var(--text-3)':'#fff',borderRadius:8,padding:'11px',fontWeight:700,fontSize:13,cursor:backfilling?'not-allowed':'pointer'}}>
+                        {backfilling ? '⟳ Scanning CAS emails…' : '⟳ Start Historical Sync'}
+                      </button>
+                      <button onClick={loadBackfillStatus}
+                        style={{background:'var(--surface)',border:'1px solid var(--border-2)',color:'var(--text-3)',borderRadius:8,padding:'11px 14px',fontSize:12,cursor:'pointer'}}>
+                        ↻ Refresh status
+                      </button>
+                    </div>
                     {backfillResult && (
                       <div style={{marginTop:10,padding:'8px 12px',borderRadius:8,fontSize:12,
                         background:backfillResult.success?'rgba(107,142,35,0.06)':'rgba(168,44,44,0.06)',
@@ -4506,6 +4554,92 @@ export default function Dashboard() {
                       </div>
                     )}
                   </div>
+
+                  {/* CAS Sync Status Panel */}
+                  {backfillStatus?.session && (() => {
+                    const sess = backfillStatus.session;
+                    const logs = backfillStatus.logs || [];
+                    const statusColor = sess.status === 'completed' ? '#6b8e23' : sess.status === 'failed' ? '#a82c2c' : '#a8741a';
+                    return (
+                      <div style={{background:'var(--surface-2)',border:'1px solid var(--border-2)',borderRadius:10,padding:16,marginBottom:14}}>
+                        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
+                          <div style={{fontWeight:700,fontSize:13,color:'var(--text)'}}>📋 Last Run — CDSL &amp; NSDL</div>
+                          <span style={{fontSize:11,fontWeight:700,padding:'3px 10px',borderRadius:20,background:`${statusColor}18`,color:statusColor,border:`1px solid ${statusColor}40`}}>
+                            {syncStatusPolling === 'cas' ? '⟳ RUNNING' : sess.status?.toUpperCase()}
+                          </span>
+                        </div>
+                        <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8,marginBottom:12}}>
+                          {[
+                            {label:'Emails scanned', val: sess.emails_scanned ?? logs.length, color:'var(--indigo)'},
+                            {label:'Parsed OK',       val: sess.emails_parsed  ?? logs.filter(l=>l.status==='success').length, color:'#6b8e23'},
+                            {label:'Failed / Skipped',val: (sess.emails_failed ?? logs.filter(l=>l.status!=='success').length), color:'#a82c2c'},
+                            {label:'Snapshots saved', val: sess.holdings_found ?? logs.filter(l=>l.status==='success').length, color:'#a8741a'},
+                          ].map(s=>(
+                            <div key={s.label} style={{background:'var(--surface)',borderRadius:8,padding:'8px 10px',border:'1px solid var(--border)',textAlign:'center'}}>
+                              <div style={{fontFamily:'var(--font-mono)',fontSize:20,fontWeight:700,color:s.color}}>{s.val ?? '—'}</div>
+                              <div style={{fontSize:10,color:'var(--text-3)',marginTop:2}}>{s.label}</div>
+                            </div>
+                          ))}
+                        </div>
+                        <div style={{fontSize:11,color:'var(--text-4)',marginBottom:10}}>
+                          Started: {sess.started_at ? new Date(sess.started_at).toLocaleString('en-IN') : '—'}
+                          {sess.finished_at && ` · Finished: ${new Date(sess.finished_at).toLocaleString('en-IN')}`}
+                        </div>
+                        {logs.length > 0 && (
+                          <div style={{maxHeight:280,overflowY:'auto',borderRadius:8,border:'1px solid var(--border)',background:'var(--surface)'}}>
+                            {logs.map((log, i) => {
+                              const isOk = log.status === 'success';
+                              const isSkip = log.status === 'skipped';
+                              const rowColor = isOk ? '#6b8e23' : isSkip ? '#a8741a' : '#a82c2c';
+                              return (
+                                <div key={i} style={{borderBottom:'1px solid var(--border)',padding:'9px 12px',display:'flex',gap:10,alignItems:'flex-start'}}>
+                                  <span style={{fontSize:14,marginTop:1}}>{isOk ? '✅' : isSkip ? '⚠️' : '❌'}</span>
+                                  <div style={{flex:1,minWidth:0}}>
+                                    <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                                      <span style={{fontSize:12,fontWeight:600,color:'var(--text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:280}}>
+                                        {log.email_subject || '(no subject)'}
+                                      </span>
+                                      <span style={{fontSize:10,color:'var(--text-4)',whiteSpace:'nowrap'}}>
+                                        {log.email_date ? new Date(log.email_date).toLocaleDateString('en-IN') : ''}
+                                      </span>
+                                      {log.items_found > 0 && (
+                                        <span style={{fontSize:10,fontFamily:'var(--font-mono)',color:'#6b8e23',background:'rgba(107,142,35,0.10)',padding:'1px 6px',borderRadius:4}}>
+                                          {log.items_found} holdings
+                                        </span>
+                                      )}
+                                      {log.has_pdf && (
+                                        <span style={{fontSize:10,color:'var(--text-3)',background:'var(--surface-2)',padding:'1px 5px',borderRadius:4}}>PDF</span>
+                                      )}
+                                    </div>
+                                    {!isOk && log.error_message && (
+                                      <div style={{fontSize:11,color:rowColor,marginTop:3,fontFamily:'var(--font-mono)'}}>
+                                        {log.error_type && <span style={{fontWeight:700,marginRight:6}}>[{log.error_type}]</span>}
+                                        {log.error_message}
+                                      </div>
+                                    )}
+                                    {log.pdf_filename && (
+                                      <div style={{fontSize:10,color:'var(--text-4)',marginTop:2}}>PDF: {log.pdf_filename} · Unlocked: {log.pdf_unlocked ? '✅' : '❌'}</div>
+                                    )}
+                                    {log.raw_text_snippet && !isOk && (
+                                      <details style={{marginTop:4}}>
+                                        <summary style={{fontSize:10,color:'var(--text-4)',cursor:'pointer'}}>Raw text snippet</summary>
+                                        <pre style={{fontSize:10,color:'var(--text-3)',background:'var(--surface-2)',padding:8,borderRadius:6,marginTop:4,whiteSpace:'pre-wrap',wordBreak:'break-all',maxHeight:120,overflow:'auto'}}>
+                                          {log.raw_text_snippet}
+                                        </pre>
+                                      </details>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {logs.length === 0 && syncStatusPolling === 'cas' && (
+                          <div style={{textAlign:'center',padding:'20px',color:'var(--text-3)',fontSize:12}}>⟳ Waiting for first email to process…</div>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {/* NPS sync */}
                   <div style={{background:'var(--surface-2)',border:'1px solid var(--border-2)',borderRadius:10,padding:16,marginBottom:14}}>
@@ -4519,7 +4653,68 @@ export default function Dashboard() {
                         {npsSyncing?'⟳ Scanning…':'Sync NPS'}
                       </button>
                     </div>
-                    {npsSyncResult && <div style={{fontSize:11,padding:'6px 10px',borderRadius:6,background:npsSyncResult.success?'rgba(179,157,219,0.06)':'rgba(168,44,44,0.06)',color:npsSyncResult.success?'#5d3b78':'#a82c2c'}}>{npsSyncResult.message}</div>}
+                    {npsSyncResult && <div style={{fontSize:11,padding:'6px 10px',borderRadius:6,background:npsSyncResult.success?'rgba(179,157,219,0.06)':'rgba(168,44,44,0.06)',color:npsSyncResult.success?'#5d3b78':'#a82c2c',marginBottom:npsSyncResult&&npsStatus?10:0}}>{npsSyncResult.message}</div>}
+
+                    {/* NPS Status Panel */}
+                    {npsStatus?.session && (() => {
+                      const sess = npsStatus.session;
+                      const logs = npsStatus.logs || [];
+                      const statusColor = sess.status === 'completed' ? '#6b8e23' : sess.status === 'failed' ? '#a82c2c' : '#a8741a';
+                      return (
+                        <div style={{marginTop:10}}>
+                          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
+                            <div style={{fontWeight:600,fontSize:12,color:'var(--text)'}}>Last NPS run</div>
+                            <span style={{fontSize:11,fontWeight:700,padding:'2px 8px',borderRadius:20,background:`${statusColor}18`,color:statusColor,border:`1px solid ${statusColor}40`}}>
+                              {syncStatusPolling === 'nps' ? '⟳ RUNNING' : sess.status?.toUpperCase()}
+                            </span>
+                          </div>
+                          <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:10}}>
+                            {[
+                              {label:'Emails found',  val:sess.emails_scanned ?? logs.length,                          color:'var(--indigo)'},
+                              {label:'Parsed OK',      val:sess.emails_parsed  ?? logs.filter(l=>l.status==='success').length, color:'#6b8e23'},
+                              {label:'Failed',         val:sess.emails_failed  ?? logs.filter(l=>l.status!=='success').length, color:'#a82c2c'},
+                            ].map(s=>(
+                              <div key={s.label} style={{background:'var(--surface)',borderRadius:8,padding:'7px 10px',border:'1px solid var(--border)',textAlign:'center'}}>
+                                <div style={{fontFamily:'var(--font-mono)',fontSize:18,fontWeight:700,color:s.color}}>{s.val ?? '—'}</div>
+                                <div style={{fontSize:10,color:'var(--text-3)',marginTop:1}}>{s.label}</div>
+                              </div>
+                            ))}
+                          </div>
+                          {logs.length > 0 && (
+                            <div style={{maxHeight:220,overflowY:'auto',borderRadius:8,border:'1px solid var(--border)',background:'var(--surface)'}}>
+                              {logs.map((log, i) => {
+                                const isOk = log.status === 'success';
+                                const rowColor = isOk ? '#6b8e23' : '#a82c2c';
+                                return (
+                                  <div key={i} style={{borderBottom:'1px solid var(--border)',padding:'8px 12px',display:'flex',gap:8,alignItems:'flex-start'}}>
+                                    <span style={{fontSize:13}}>{isOk ? '✅' : '❌'}</span>
+                                    <div style={{flex:1,minWidth:0}}>
+                                      <div style={{fontSize:11,fontWeight:600,color:'var(--text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                                        {log.email_subject || '(no subject)'}
+                                      </div>
+                                      {!isOk && log.error_message && (
+                                        <div style={{fontSize:10,color:rowColor,marginTop:2,fontFamily:'var(--font-mono)'}}>
+                                          {log.error_type && <span style={{fontWeight:700,marginRight:4}}>[{log.error_type}]</span>}
+                                          {log.error_message}
+                                        </div>
+                                      )}
+                                      {log.raw_text_snippet && !isOk && (
+                                        <details style={{marginTop:3}}>
+                                          <summary style={{fontSize:10,color:'var(--text-4)',cursor:'pointer'}}>Raw text snippet</summary>
+                                          <pre style={{fontSize:10,color:'var(--text-3)',background:'var(--surface-2)',padding:6,borderRadius:6,marginTop:3,whiteSpace:'pre-wrap',wordBreak:'break-all',maxHeight:100,overflow:'auto'}}>
+                                            {log.raw_text_snippet}
+                                          </pre>
+                                        </details>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* Manual snapshot */}
