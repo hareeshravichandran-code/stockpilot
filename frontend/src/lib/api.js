@@ -150,10 +150,13 @@ export const familyAPI = {
 };
 
 export const portfolioHistoryAPI = {
-  get:        (years)          => api.get('/api/portfolio/history', { params: { years } }),
-  detail:     (date)           => api.get(`/api/portfolio/history/detail/${date}`),
-  snapshot:   ()               => api.post('/api/portfolio/history/snapshot'),
-  backfill:   (fromDate,toDate)=> api.post('/api/portfolio/history/backfill', { fromDate, toDate }),
+  get:           (years)           => api.get('/api/portfolio/history', { params: { years } }),
+  detail:        (date)            => api.get(`/api/portfolio/history/detail/${date}`),
+  snapshot:      ()                => api.post('/api/portfolio/history/snapshot'),
+  backfill:      (fromDate,toDate) => api.post('/api/portfolio/history/backfill', { fromDate, toDate }),
+  backfillStatus:()                => api.get('/api/portfolio/history/backfill/status'),
+  npsStatus:     ()                => api.get('/api/portfolio/history/nps/status'),
+};
 };
 
 export const npsAPI = {
