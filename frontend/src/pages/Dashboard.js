@@ -6,6 +6,7 @@ import api, { portfolioAPI, emailAPI, authAPI, incomeAPI, mfAPI, goalsAPI, famil
 import AdminPanel from './AdminPanel';
 import Dividends from './Dividends';
 import ManageExpense from './ManageExpense';
+import RetirementPlanner from './RetirementPlanner';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import './Dashboard.css';
 
@@ -1110,6 +1111,7 @@ export default function Dashboard() {
             {id:'income',  icon:'₹', label:'Income'},
             {id:'expenses',icon:'↕', label:'Expenses'},
             {id:'goals',   icon:'◎', label:'Goals'},
+            {id:'retirement', icon:'◐', label:'Retirement'},
           ].map(item => (
             <div key={item.id} className={`db-nav-item ${tab===item.id?'active':''}`} onClick={()=>loadTab(item.id)}>
               <span className="nav-icon">{item.icon}</span>
@@ -2159,6 +2161,13 @@ export default function Dashboard() {
           {tab === 'dividends' && (
             <div className="fade-in">
               <Dividends />
+            </div>
+          )}
+
+          {/* RETIREMENT MAGIC NUMBER */}
+          {tab === 'retirement' && (
+            <div className="fade-in">
+              <RetirementPlanner />
             </div>
           )}
 
@@ -3273,7 +3282,7 @@ export default function Dashboard() {
                   <div className="db-stat-sub">Tax @20%: {fmtFull(tax.stcgTax)}</div>
                 </div>
                 <div className="db-stat-card green">
-                  <div className="db-stat-label">LTCG (> 1 Year)</div>
+                  <div className="db-stat-label">LTCG (&gt; 1 Year)</div>
                   <div className="db-stat-val green">{fmtFull(tax.ltcg)}</div>
                   <div className="db-stat-sub">Exempt up to ₹1.25L</div>
                 </div>
