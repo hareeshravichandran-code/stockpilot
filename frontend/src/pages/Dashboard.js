@@ -4380,7 +4380,7 @@ export default function Dashboard() {
               <div style={{width:190,borderRight:'1px solid var(--border-2)',padding:'20px 0',flexShrink:0}}>
                 <div style={{color:'var(--text-3)',fontSize:10,fontWeight:700,letterSpacing:2,padding:'0 16px 12px',textTransform:'uppercase'}}>Settings</div>
                 {[{id:'family',icon:'👨‍👩‍👧‍👦',label:'Family'},{id:'history',icon:'📊',label:'Historical Sync'},{id:'privacy',icon:'👁',label:'Privacy'},{id:'income',icon:'₹',label:'Income Tracking'},{id:'expense',icon:'💸',label:'Expense Tracking'},{id:'expensesettings',icon:'⚙',label:'Expense Rules'}].map(s=>(
-                  <div key={s.id} onClick={()=>setSettingsSection(s.id)}
+                  <div key={s.id} onClick={()=>{ setSettingsSection(s.id); if(s.id==='history') loadBackfillStatus(); }}
                     style={{padding:'11px 16px',cursor:'pointer',display:'flex',alignItems:'center',gap:10,fontSize:13,
                       background:settingsSection===s.id?'var(--lime-soft)':'transparent',
                       color:settingsSection===s.id?'var(--lime)':'var(--text-3)',
@@ -4492,8 +4492,6 @@ export default function Dashboard() {
 
               {settingsSection==='history' && (
                 <div>
-                  {/* Auto-load status of previous runs on panel open */}
-                  {React.useEffect(() => { loadBackfillStatus(); }, [])}
                   <div style={{color:'var(--text)',fontSize:14,fontWeight:700,marginBottom:4}}>📊 Historical Sync</div>
                   <div style={{color:'var(--text-3)',fontSize:12,marginBottom:16}}>
                     Scan all your old NSDL &amp; CDSL CAS emails to build a complete portfolio history. Each CAS email becomes a monthly snapshot used for the growth chart.
