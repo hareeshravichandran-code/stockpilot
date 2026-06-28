@@ -207,7 +207,7 @@ router.post('/backfill', requireAuth, async (req, res) => {
     .from('users').select('pan, dob').eq('id', userId).single();
 
   const { fetchEmails } = require('../services/gmail');
-  const casParser       = require('../services/casParser');
+  const { parseCAS }    = require('../services/casParser');
   const { saveCASHoldings } = require('./email');
 
   // ── FIX: decrypt tokens before passing to fetchEmails (was a bug — raw encrypted token was sent)
@@ -298,8 +298,8 @@ router.post('/backfill', requireAuth, async (req, res) => {
             }));
           }
 
-          const parseResult = casParser.parse(textToParse, email.pdfBuffer) || {};
-          const { holdings = [], mfHoldings = [], summary = {} } = parseResult;
+          const parseResult = parseCAS(textToParse) || {};
+          const { type: casType = 'UNKNOWN', holdings = [], mfHoldings = [], summary = {} } = parseResult;
 
           if (!holdings.length && !mfHoldings.length) {
             await logger.logFailure({
@@ -327,14 +327,14 @@ router.post('/backfill', requireAuth, async (req, res) => {
           // Save snapshot for this date
           await saveSnapshot(userId, {
             source:       'backfill',
-            casType:      summary?.casType || 'UNKNOWN',
+            casType:      casType || 'UNKNOWN',
             snapshotDate: casDate,
           });
 
           await logger.logSuccess({
             ...emailMeta, phase: 'cas',
             itemsFound:  holdings.length + mfHoldings.length,
-            parsedData:  [{ casDate, equityCount: holdings.length, mfCount: mfHoldings.length, casType: summary?.casType }],
+            parsedData:  [{ casDate, equityCount: holdings.length, mfCount: mfHoldings.length, casType: casType }],
             rawText:     textToParse.slice(0, 200),
           });
 
@@ -343,7 +343,7 @@ router.post('/backfill', requireAuth, async (req, res) => {
           console.log(JSON.stringify({
             event: 'BACKFILL_DATE_DONE', casDate,
             equityCount: holdings.length, mfCount: mfHoldings.length,
-            casType: summary?.casType,
+            casType: casType,
           }));
 
         } catch (e) {
