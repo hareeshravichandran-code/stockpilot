@@ -307,10 +307,20 @@ export default function Blueprint() {
     notify('Plan box created — rename it and adjust layers on the right');
   });
 
+  const addLayer = (board, position) => guard(async () => {
+    await blueprintAPI.createLayer({ board_id: board.id, label: 'New layer', period: 'year', position });
+    await reload();
+    setSel({ type: 'board', id: board.id });
+    notify('Layer added — rename it and set its period on the right');
+  });
+
   const addGoalAt = (board, layer, rel) => guard(async () => {
+    const sibs = data.buckets.filter(b => b.layer_id === layer.id && (showCompleted || b.status !== 'completed'))
+      .map(b => ({ x: num(b.x), y: num(b.y), w: num(b.w) || BUCKET_W, h: num(b.h) || BUCKET_H }));
+    const spot = avoidOverlap({ x: Math.round(rel?.x ?? GUTTER_W + 20), y: Math.round(rel?.y ?? 18) }, BUCKET_W, BUCKET_H, sibs, num(board.w));
     const r = await blueprintAPI.createBucket({
       kind: 'goal', name: 'New goal', board_id: board.id, layer_id: layer.id,
-      x: Math.round(rel?.x ?? GUTTER_W + 20), y: Math.round(rel?.y ?? 18), w: BUCKET_W, h: BUCKET_H,
+      x: spot.x, y: spot.y, w: BUCKET_W, h: BUCKET_H,
       recurrence: layer.period === 'week' ? 'weekly' : layer.period === 'month' ? 'monthly' : 'none',
     });
     await reload();
@@ -485,6 +495,7 @@ export default function Blueprint() {
                 onResizeW={(e) => startBoardW(e, bd)}
                 onResizeLayer={(e, l) => startLayer(e, bd, l)}
                 onAddGoal={(l, rel) => addGoalAt(bd, l, rel)}
+                onAddLayer={(pos) => addLayer(bd, pos)}
                 toWorld={toWorld}
                 onOpen={() => setSel({ type: 'board', id: bd.id })}
               />
@@ -567,7 +578,7 @@ export default function Blueprint() {
             <div className="bp-legend-row">
               <span className="ln lt-funds" />Funds<span className="ln lt-backup" />Backup<span className="ln lt-related" />Related
             </div>
-            <div className="bp-legend-hint">Drag buckets between layers · drag ● to link · double-click a layer to add a goal · ⌘/Ctrl + scroll to zoom</div>
+            <div className="bp-legend-hint">“+ Add goal” in a layer adds a goal · “+ Add layer” below a box adds a layer · drag buckets between layers · drag ● to link · ⌘/Ctrl + scroll to zoom</div>
           </div>
         )}
 
@@ -602,7 +613,7 @@ export default function Blueprint() {
 // ═══════════════════════════════════════════════════════════════════
 //  Board (plan box)
 // ═══════════════════════════════════════════════════════════════════
-function Board({ board, L, buckets, selected, dropLayer, linkTarget, onHeaderDown, onResizeW, onResizeLayer, onAddGoal, toWorld, onOpen }) {
+function Board({ board, L, buckets, selected, dropLayer, linkTarget, onHeaderDown, onResizeW, onResizeLayer, onAddGoal, onAddLayer, toWorld, onOpen }) {
   if (!L) return null;
   const inside = buckets.filter(b => b.board_id === board.id && b.kind === 'goal' && b.status !== 'completed');
   const target = inside.reduce((s, b) => s + num(b.target_amount), 0);
@@ -632,7 +643,8 @@ function Board({ board, L, buckets, selected, dropLayer, linkTarget, onHeaderDow
           <span className="mono">{fmtINR(funded)} / {fmtINR(target)}</span>
           <span className="bp-mini-bar"><span style={{ width: `${Math.min(100, pct)}%` }} /></span>
           <span className="mono">{pct}%</span>
-          <button className="bp-icon-btn sm" onClick={onOpen} aria-label="Plan box settings">⋯</button>
+          <button className="bp-head-btn" onClick={() => onAddLayer('top')} title="Add a layer at the top of this box">+ Layer on top</button>
+          <button className="bp-icon-btn sm" onClick={onOpen} aria-label="Plan box settings" title="Box settings & layers">⋯</button>
         </div>
       </div>
 
@@ -643,12 +655,14 @@ function Board({ board, L, buckets, selected, dropLayer, linkTarget, onHeaderDow
           <div className="bp-gutter" style={{ width: GUTTER_W }}>
             <span className={`bp-period p-${l.period}`}>{periodShort(l.period)}</span>
             <span className="bp-layer-label">{l.label}</span>
-            <button className="bp-add-goal" onPointerDown={e => e.stopPropagation()} onClick={() => onAddGoal(l)}>+ Goal</button>
+            <button className="bp-add-goal" onPointerDown={e => e.stopPropagation()} onClick={() => onAddGoal(l)} title={`Add a goal to ${l.label}`}>+ Add goal</button>
           </div>
           <div className="bp-layer-resize" onPointerDown={(e) => onResizeLayer(e, l)} title="Drag to resize layer" />
         </div>
       ))}
       <div className="bp-board-resize" onPointerDown={onResizeW} title="Drag to resize width" />
+      <button className="bp-add-layer-strip" style={{ top: L.totalH + 6 }}
+        onPointerDown={e => e.stopPropagation()} onClick={() => onAddLayer('bottom')}>+ Add layer</button>
     </div>
   );
 }

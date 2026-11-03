@@ -127,11 +127,23 @@
 .bp-add-goal {
   margin-top: auto; align-self: flex-start;
   font: inherit; font-size: 12px; color: var(--text-3);
-  background: none; border: 1px dashed var(--border-3); border-radius: 6px; padding: 3px 8px; cursor: pointer;
-  opacity: 0; transition: opacity .15s var(--ease-quick);
+  background: var(--surface); border: 1px dashed var(--border-3); border-radius: 6px; padding: 3px 8px; cursor: pointer;
 }
-.bp-layer:hover .bp-add-goal, .bp-add-goal:focus-visible { opacity: 1; }
-.bp-add-goal:hover { color: var(--lime); border-color: var(--lime); }
+.bp-add-goal:hover { color: #4f6b17; border-color: var(--lime); background: var(--lime-soft); }
+.bp-board { overflow: visible; }
+.bp-board > .bp-board-head { border-radius: 14px 14px 0 0; }
+.bp-board > .bp-layer:last-of-type { border-radius: 0 0 14px 14px; }
+.bp-head-btn {
+  font: inherit; font-size: 12px; color: var(--text-2); cursor: pointer; white-space: nowrap;
+  background: var(--surface); border: 1px solid var(--border-2); border-radius: 6px; padding: 3px 9px;
+}
+.bp-head-btn:hover { color: var(--text); border-color: var(--lime); background: var(--lime-soft); }
+.bp-add-layer-strip {
+  position: absolute; left: 0; right: 0; height: 34px; cursor: pointer;
+  font: inherit; font-size: 13px; color: var(--text-3);
+  background: transparent; border: 1.5px dashed var(--border-3); border-radius: 10px;
+}
+.bp-add-layer-strip:hover { color: #4f6b17; border-color: var(--lime); background: var(--lime-soft); }
 .bp-layer-resize {
   position: absolute; left: 0; right: 0; bottom: -4px; height: 8px; cursor: row-resize; z-index: 2;
 }
