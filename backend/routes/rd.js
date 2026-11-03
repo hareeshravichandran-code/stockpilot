@@ -181,3 +181,4 @@ router.delete('/:id', requireAuth, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.computeRD = computeRD;

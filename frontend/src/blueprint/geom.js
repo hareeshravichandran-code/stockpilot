@@ -1,0 +1,185 @@
+// Kanalyst Blueprint — layout math & formatting helpers (pure functions)
+
+export const HEADER_H    = 58;   // board title bar
+export const GUTTER_W    = 132;  // layer label column on the left of a board
+export const MIN_LAYER_H = 128;
+export const BUCKET_W    = 200;
+export const BUCKET_H    = 112;
+export const INCOME_W    = 210;
+export const INCOME_H    = 78;
+export const MIN_BOARD_W = 520;
+
+export const PERIODS = [
+  { id: 'week',       label: 'Weekly',     short: 'WK' },
+  { id: 'month',      label: 'Monthly',    short: 'MO' },
+  { id: 'year',       label: 'Yearly',     short: 'YR' },
+  { id: 'multi_year', label: 'Multi-year', short: 'YRS' },
+];
+export const periodLabel = (p) => (PERIODS.find(x => x.id === p) || PERIODS[2]).label;
+export const periodShort = (p) => (PERIODS.find(x => x.id === p) || PERIODS[2]).short;
+
+export const RECURRENCE = [
+  { id: 'none',    label: 'One-time' },
+  { id: 'weekly',  label: 'Every week' },
+  { id: 'monthly', label: 'Every month' },
+  { id: 'yearly',  label: 'Every year' },
+];
+
+export const LINK_TYPES = [
+  { id: 'funds',   label: 'Funds',   hint: 'Money flows from the source into the target' },
+  { id: 'backup',  label: 'Backup',  hint: 'Source is the reserve that refills the target (e.g. during a crash)' },
+  { id: 'related', label: 'Related', hint: 'Just connected — no money flow implied' },
+];
+
+export const ASSET_TYPES = [
+  { id: 'all',    label: 'All' },
+  { id: 'broker', label: 'Brokers' },
+  { id: 'stock',  label: 'Stocks' },
+  { id: 'mf',     label: 'Mutual funds' },
+  { id: 'fd',     label: 'FD' },
+  { id: 'rd',     label: 'RD' },
+  { id: 'nps',    label: 'NPS' },
+];
+export const assetTypeLabel = (t) => ({ stock: 'Stock', broker: 'Broker', mf: 'MF', fd: 'FD', rd: 'RD', nps: 'NPS' }[t] || t);
+
+export const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
+export const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+export function fmtINR(v, { compact = true } = {}) {
+  const n = num(v);
+  const sign = n < 0 ? '-' : '';
+  const a = Math.abs(n);
+  if (!compact) return sign + '₹' + Math.round(a).toLocaleString('en-IN');
+  if (a >= 1e7) return `${sign}₹${(a / 1e7).toFixed(a >= 1e8 ? 1 : 2)}Cr`;
+  if (a >= 1e5) return `${sign}₹${(a / 1e5).toFixed(a >= 1e6 ? 1 : 2)}L`;
+  if (a >= 1e3) return `${sign}₹${(a / 1e3).toFixed(1)}K`;
+  return `${sign}₹${Math.round(a)}`;
+}
+
+export function fmtDate(d) {
+  if (!d) return '';
+  const dt = new Date(d);
+  if (Number.isNaN(dt.getTime())) return '';
+  return dt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+// Progress → tone. Returned value is a CSS variable name from kanalyst-tokens.css
+export function progressTone(bucket) {
+  if (bucket.status === 'completed') return 'mint';
+  const p = num(bucket.progress);
+  if (num(bucket.target_amount) <= 0) return 'muted';
+  if (p >= 100) return 'mint';
+  if (p >= 60)  return 'lime';
+  if (p >= 25)  return 'gold';
+  return 'coral';
+}
+
+export function isOverdue(bucket) {
+  if (!bucket.target_date || bucket.status === 'completed') return false;
+  return new Date(bucket.target_date) < new Date(new Date().toDateString()) && num(bucket.progress) < 100;
+}
+
+// ── Board layout ────────────────────────────────────────────────────
+// Layer heights grow automatically to fit the buckets inside them.
+export function computeLayout(boards, buckets) {
+  const out = {};
+  for (const bd of boards) {
+    const heights = bd.layers.map(l => {
+      let h = Math.max(MIN_LAYER_H, num(l.height));
+      for (const b of buckets) {
+        if (b.board_id === bd.id && b.layer_id === l.id && !b.__hidden) {
+          h = Math.max(h, num(b.y) + num(b.h || BUCKET_H) + 14);
+        }
+      }
+      return h;
+    });
+    const tops = [];
+    let t = 0;
+    for (const h of heights) { tops.push(t); t += h; }
+    out[bd.id] = { heights, tops, bodyH: t, totalH: HEADER_H + t };
+  }
+  return out;
+}
+
+export function bucketRect(b, boardsById, layout) {
+  const w = num(b.w) || (b.kind === 'income' ? INCOME_W : BUCKET_W);
+  const h = b.kind === 'income' ? INCOME_H : (num(b.h) || BUCKET_H);
+  if (!b.board_id || !boardsById[b.board_id]) return { x: num(b.x), y: num(b.y), w, h };
+  const bd = boardsById[b.board_id];
+  const L = layout[bd.id];
+  let i = bd.layers.findIndex(l => l.id === b.layer_id);
+  if (i < 0) i = 0;
+  return { x: num(bd.x) + num(b.x), y: num(bd.y) + HEADER_H + (L?.tops[i] || 0) + num(b.y), w, h };
+}
+
+// Where does a bucket land if its top-left is at world (wx, wy)?
+export function dropTarget(wx, wy, w, h, boards, layout) {
+  const cx = wx + w / 2;
+  const cy = wy + h / 2;
+  for (let k = boards.length - 1; k >= 0; k--) {
+    const bd = boards[k];
+    const L = layout[bd.id];
+    if (!L || !bd.layers.length) continue;
+    const bx = num(bd.x), by = num(bd.y) + HEADER_H, bw = num(bd.w);
+    if (cx < bx || cx > bx + bw || cy < by || cy > by + L.bodyH) continue;
+    const relY = cy - by;
+    let i = L.tops.findIndex((t, idx) => relY >= t && relY < t + L.heights[idx]);
+    if (i < 0) i = bd.layers.length - 1;
+    return {
+      board_id: bd.id,
+      layer_id: bd.layers[i].id,
+      x: Math.round(clamp(wx - bx, GUTTER_W + 8, Math.max(GUTTER_W + 8, bw - w - 10))),
+      y: Math.round(clamp(wy - (by + L.tops[i]), 10, Math.max(10, L.heights[i] - h - 10))),
+    };
+  }
+  return { board_id: null, layer_id: null, x: Math.round(wx), y: Math.round(wy) };
+}
+
+// Anchor points + curved path between two rects
+function anchors(a, b) {
+  const ac = { x: a.x + a.w / 2, y: a.y + a.h / 2 };
+  const bc = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+  const dx = bc.x - ac.x, dy = bc.y - ac.y;
+  if (Math.abs(dx) * 0.7 > Math.abs(dy)) {
+    const s = dx > 0 ? 1 : -1;
+    return { p1: { x: s > 0 ? a.x + a.w : a.x, y: ac.y }, p2: { x: s > 0 ? b.x : b.x + b.w, y: bc.y }, horiz: true };
+  }
+  const s = dy > 0 ? 1 : -1;
+  return { p1: { x: ac.x, y: s > 0 ? a.y + a.h : a.y }, p2: { x: bc.x, y: s > 0 ? b.y : b.y + b.h }, horiz: false };
+}
+
+export function linkPath(a, b) {
+  const { p1, p2, horiz } = anchors(a, b);
+  const k = 0.45;
+  const c1 = horiz ? { x: p1.x + (p2.x - p1.x) * k, y: p1.y } : { x: p1.x, y: p1.y + (p2.y - p1.y) * k };
+  const c2 = horiz ? { x: p2.x - (p2.x - p1.x) * k, y: p2.y } : { x: p2.x, y: p2.y - (p2.y - p1.y) * k };
+  return {
+    d: `M ${p1.x} ${p1.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${p2.x} ${p2.y}`,
+    mid: { x: (p1.x + 3 * c1.x + 3 * c2.x + p2.x) / 8, y: (p1.y + 3 * c1.y + 3 * c2.y + p2.y) / 8 },
+  };
+}
+
+export function contentBounds(boards, rects) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  const add = (r) => { minX = Math.min(minX, r.x); minY = Math.min(minY, r.y); maxX = Math.max(maxX, r.x + r.w); maxY = Math.max(maxY, r.y + r.h); };
+  boards.forEach(add);
+  rects.forEach(add);
+  if (!Number.isFinite(minX)) return null;
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
+// Nudge a dropped bucket so it doesn't sit on top of a sibling in the same layer.
+// Tries the drop spot first, then slides right, then wraps to a new row below.
+export function avoidOverlap(pos, w, h, siblings, boardW) {
+  const hit = (x, y) => siblings.some(s => x < s.x + s.w + 8 && x + w + 8 > s.x && y < s.y + s.h + 8 && y + h + 8 > s.y);
+  if (!hit(pos.x, pos.y)) return pos;
+  const maxX = Math.max(GUTTER_W + 8, boardW - w - 10);
+  for (let row = 0; row < 8; row++) {
+    const y = row === 0 ? pos.y : 10 + row * (h + 14);
+    const xs = [];
+    for (let x = GUTTER_W + 8; x <= maxX; x += 12) xs.push(x);
+    xs.sort((a, b) => Math.abs(a - pos.x) - Math.abs(b - pos.x)); // nearest free slot first
+    for (const x of xs) if (!hit(x, y)) return { ...pos, x: Math.round(x), y: Math.round(y) };
+  }
+  return pos;
+}

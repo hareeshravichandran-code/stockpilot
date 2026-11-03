@@ -5,6 +5,7 @@ import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Dashboard from './pages/Dashboard';
 import Dividends from './pages/Dividends';
+import Blueprint from './pages/Blueprint';
 
 function PrivateRoute({ children }) {
   const { user, loading } = useAuth();
@@ -16,6 +17,8 @@ function PrivateRoute({ children }) {
   );
   if (!user) {
     const params = window.location.search;
+    // Remember where the user was heading (e.g. /blueprint) so Login can return there
+    try { if (window.location.pathname !== '/dashboard') sessionStorage.setItem('sp_next', window.location.pathname); } catch (e) {}
     return <Navigate to={`/login${params}`} replace />;
   }
   return children;
@@ -41,6 +44,7 @@ export default function App() {
           <Route path="/signup" element={<PublicRoute><Signup /></PublicRoute>} />
           <Route path="/dashboard" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
           <Route path="/dividends" element={<PrivateRoute><Dividends /></PrivateRoute>} />
+          <Route path="/blueprint" element={<PrivateRoute><Blueprint /></PrivateRoute>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

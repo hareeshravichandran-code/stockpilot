@@ -1119,6 +1119,10 @@ export default function Dashboard() {
               <span className="nav-label">{item.label}</span>
             </div>
           ))}
+          <div className="db-nav-item" onClick={()=>nav('/blueprint')} title="Open Blueprint — visual goal planner">
+            <span className="nav-icon">▦</span>
+            <span className="nav-label">Blueprint ↗</span>
+          </div>
           <div className="db-nav-label" style={{marginTop:12}}>Analytics</div>
           {[
             {id:'tax',   icon:'⊞', label:'Tax Summary'},

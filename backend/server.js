@@ -18,6 +18,7 @@ const portfolioHistoryRoutes = require('./routes/portfolioHistory');
 const npsRoutes      = require('./routes/nps');
 const fdRoutes       = require('./routes/fd');
 const rdRoutes       = require('./routes/rd');
+const blueprintRoutes = require('./routes/blueprint');
 
 const app = express();
 
@@ -64,6 +65,7 @@ app.use('/api/portfolio/history', portfolioHistoryRoutes);
 app.use('/api/nps',      npsRoutes);
 app.use('/api/fd',       fdRoutes);
 app.use('/api/rd',       rdRoutes);
+app.use('/api/blueprint', blueprintRoutes);
 
 // ── Health check ──
 // Debug endpoint - check PDF tools

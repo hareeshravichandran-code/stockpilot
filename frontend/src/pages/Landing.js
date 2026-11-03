@@ -8,6 +8,7 @@ export default function Landing() {
       <nav className="land-nav">
         <div className="land-logo">StockPilot</div>
         <div className="land-nav-links">
+          <span onClick={() => nav('/blueprint')}>Blueprint</span>
           <span onClick={() => nav('/login')}>Log in</span>
           <button className="btn-primary" onClick={() => nav('/signup')}>Get Started Free</button>
         </div>
@@ -44,8 +45,9 @@ export default function Landing() {
           { icon:'📊', title:'Live Portfolio', desc:'Real-time NSE/BSE prices. Instant P&L, sector allocation, and performance charts.' },
           { icon:'💰', title:'Dividend Tracker', desc:'Every dividend, auto-logged from email alerts. Know exactly what you\'ll earn.' },
           { icon:'🧾', title:'Tax Summary', desc:'STCG, LTCG, and TDS summary ready for your CA. One-click export.' },
+          { icon:'▦', title:'Blueprint', desc:'Draw your goals as buckets on a time-layered plan, map the stocks, folios, FDs and RDs that fund each one, and link your backup funds.', to:'/blueprint' },
         ].map(f => (
-          <div className="feature-card" key={f.title}>
+          <div className="feature-card" key={f.title} onClick={f.to ? () => nav(f.to) : undefined} style={f.to ? { cursor: 'pointer' } : undefined}>
             <div className="feature-icon">{f.icon}</div>
             <div className="feature-title">{f.title}</div>
             <div className="feature-desc">{f.desc}</div>

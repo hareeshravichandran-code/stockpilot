@@ -5,6 +5,16 @@ import './Auth.css';
 
 const API = process.env.REACT_APP_API_URL || 'http://localhost:4000';
 
+// Return to the page that sent the user to login (set by PrivateRoute)
+function takeNextPath() {
+  try {
+    const next = sessionStorage.getItem('sp_next');
+    sessionStorage.removeItem('sp_next');
+    if (next && next.startsWith('/') && !next.startsWith('//')) return next;
+  } catch (e) {}
+  return '/dashboard';
+}
+
 export default function Login() {
   const [mode, setMode] = useState('login'); // 'login' | 'forgot' | 'reset'
   const [form, setForm] = useState({ email: '', password: '', otp: '', newPassword: '', confirmPassword: '' });
@@ -26,7 +36,7 @@ export default function Login() {
       // Use loginWithToken so AuthContext is updated in-memory before navigation.
       // This avoids the race where PrivateRoute sees user=null and bounces back.
       loginWithToken(token, name ? { name: decodeURIComponent(name) } : null);
-      nav('/dashboard', { replace: true });
+      nav(takeNextPath(), { replace: true });
       return;
     }
 
@@ -43,7 +53,7 @@ export default function Login() {
     e.preventDefault(); setError(''); setLoading(true);
     try {
       await login(form.email, form.password);
-      nav('/dashboard');
+      nav(takeNextPath());
     } catch (err) {
       setError(err.response?.data?.error || 'Login failed. Check your credentials.');
     } finally { setLoading(false); }

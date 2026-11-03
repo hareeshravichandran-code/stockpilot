@@ -181,4 +181,33 @@ export const rdAPI = {
   delete:  (id)       => api.delete(`/api/rd/${id}`),
 };
 
+export const blueprintAPI = {
+  get:           ()             => api.get('/api/blueprint'),
+  assets:        ()             => api.get('/api/blueprint/assets'),
+  saveLayout:    (data)         => api.post('/api/blueprint/layout', data),
+  createBoard:   (data)         => api.post('/api/blueprint/boards', data),
+  updateBoard:   (id, data)     => api.put(`/api/blueprint/boards/${id}`, data),
+  deleteBoard:   (id)           => api.delete(`/api/blueprint/boards/${id}`),
+  createLayer:   (data)         => api.post('/api/blueprint/layers', data),
+  updateLayer:   (id, data)     => api.put(`/api/blueprint/layers/${id}`, data),
+  deleteLayer:   (id)           => api.delete(`/api/blueprint/layers/${id}`),
+  createBucket:  (data)         => api.post('/api/blueprint/buckets', data),
+  updateBucket:  (id, data)     => api.put(`/api/blueprint/buckets/${id}`, data),
+  deleteBucket:  (id)           => api.delete(`/api/blueprint/buckets/${id}`),
+  complete:      (id)           => api.post(`/api/blueprint/buckets/${id}/complete`),
+  reopen:        (id)           => api.post(`/api/blueprint/buckets/${id}/reopen`),
+  closeCycle:    (id, data)     => api.post(`/api/blueprint/buckets/${id}/cycle`, data),
+  mapAsset:      (id, data)     => api.post(`/api/blueprint/buckets/${id}/assets`, data),
+  unmapAsset:    (id, assetId)  => api.delete(`/api/blueprint/buckets/${id}/assets/${assetId}`),
+  createLink:    (data)         => api.post('/api/blueprint/links', data),
+  updateLink:    (id, data)     => api.put(`/api/blueprint/links/${id}`, data),
+  deleteLink:    (id)           => api.delete(`/api/blueprint/links/${id}`),
+  notes:         (id)           => api.get(`/api/blueprint/buckets/${id}/notes`),
+  addComment:    (id, body)     => api.post(`/api/blueprint/buckets/${id}/comments`, { body }),
+  deleteComment: (id)           => api.delete(`/api/blueprint/comments/${id}`),
+  upload:        (id, form)     => api.post(`/api/blueprint/buckets/${id}/attachments`, form, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 60000 }),
+  fileUrl:       (id)           => api.get(`/api/blueprint/attachments/${id}/url`),
+  deleteFile:    (id)           => api.delete(`/api/blueprint/attachments/${id}`),
+};
+
 export default api;
