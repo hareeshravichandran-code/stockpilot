@@ -158,9 +158,16 @@ async function incomeInflows(userId, incomeBuckets) {
     entries = data || [];
   }
   if (needDiv) {
-    const { data } = await supabase.from('dividends').select('total_amount, credit_date')
-      .eq('user_id', userId).gte('credit_date', since365);
-    divs = data || [];
+    // Kanalyst stores dividends in dividend_income (per ex-date); the older
+    // dividends table (email-parsed credits) is used only as a fallback.
+    const { data: di } = await supabase.from('dividend_income').select('total_dividend, ex_date')
+      .eq('user_id', userId).gte('ex_date', since365).lte('ex_date', new Date().toISOString().split('T')[0]);
+    divs = (di || []).map(d => ({ total_amount: d.total_dividend }));
+    if (!divs.length) {
+      const { data } = await supabase.from('dividends').select('total_amount, credit_date')
+        .eq('user_id', userId).gte('credit_date', since365);
+      divs = data || [];
+    }
   }
 
   for (const b of incomeBuckets) {
