@@ -286,7 +286,16 @@ function goalPeriod(b) {
   return d <= 7 ? 'week' : d <= 31 ? 'month' : d <= 366 ? 'year' : 'multi_year';
 }
 export function layerHorizon(layer, goals) {
+  const win = laneWindow(layer);
   const dates = goals.map(dueDate).filter(Boolean).sort((a, z) => a - z);
+  if (win) {
+    const soon = dates.find(d => daysUntil(d) >= 0) || dates[0];
+    return {
+      chip: periodShort(win.period), period: win.period, range: laneWindowText(win),
+      rel: dates.length ? `Soonest goal ${relTime(daysUntil(soon))}` : (goals.length ? 'Add target dates' : 'No open goals'),
+      count: goals.length, fromLane: true,
+    };
+  }
   if (!dates.length) return { chip: periodShort(layer.period), period: layer.period, range: null, rel: null, count: goals.length };
   const period = goals.map(goalPeriod).filter(Boolean).sort((a, z) => RANK.indexOf(z) - RANK.indexOf(a))[0] || layer.period;
   const first = dates[0], last = dates[dates.length - 1];
@@ -304,4 +313,90 @@ export function layerHorizon(layer, goals) {
     rel: dates.length > 1 ? `Soonest ${soonest}` : soonest.charAt(0).toUpperCase() + soonest.slice(1),
     count: goals.length,
   };
+}
+
+// ── Lanes: each lane covers a time window, top = soonest ─────────────
+const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const parseYmd = (v) => { if (!v) return null; const [y, m, d] = String(v).slice(0, 10).split('-').map(Number); return y ? new Date(y, (m || 1) - 1, d || 1) : null; };
+
+export const LANE_PRESETS = [
+  { id: 'this_week',  label: 'This week' },
+  { id: 'this_month', label: 'This month' },
+  { id: 'this_year',  label: 'This year' },
+  { id: 'next_year',  label: 'Next year' },
+  { id: 'year_2',     label: 'In 2 years' },
+  { id: 'year_3',     label: 'In 3 years' },
+  { id: 'year_4',     label: 'In 4 years' },
+  { id: 'year_5',     label: 'In 5 years' },
+  { id: 'years_1_5',  label: '1 – 5 years' },
+  { id: 'years_2_5',  label: '2 – 5 years' },
+  { id: 'beyond_5',   label: '5+ years' },
+];
+export const DEFAULT_LANES = ['this_month', 'this_year', 'next_year', 'years_2_5', 'beyond_5'];
+
+// Resolve a lane to real dates. Rolling presets move with today's date.
+export function laneWindow(layer, now = new Date()) {
+  const t = startOfDay(now), Y = t.getFullYear();
+  const yr = (y) => [new Date(y, 0, 1), new Date(y, 11, 31)];
+  let from = null, to = null;
+  switch (layer.horizon) {
+    case 'this_week': { from = t; to = new Date(t); to.setDate(t.getDate() + (6 - t.getDay())); break; }
+    case 'this_month': from = t; to = new Date(Y, t.getMonth() + 1, 0); break;
+    case 'this_year': from = t; to = new Date(Y, 11, 31); break;
+    case 'next_year': [from, to] = yr(Y + 1); break;
+    case 'year_2': [from, to] = yr(Y + 2); break;
+    case 'year_3': [from, to] = yr(Y + 3); break;
+    case 'year_4': [from, to] = yr(Y + 4); break;
+    case 'year_5': [from, to] = yr(Y + 5); break;
+    case 'years_1_5': from = new Date(Y + 1, 0, 1); to = new Date(Y + 5, 11, 31); break;
+    case 'years_2_5': from = new Date(Y + 2, 0, 1); to = new Date(Y + 5, 11, 31); break;
+    case 'beyond_5': from = new Date(Y + 6, 0, 1); to = null; break;
+    case 'custom': from = parseYmd(layer.horizon_from); to = parseYmd(layer.horizon_to); break;
+    default: return null;
+  }
+  if (!from && !to) return null;
+  const span = (to && from) ? (to - from) / 864e5 : Infinity;
+  const period = span <= 7 ? 'week' : span <= 31 ? 'month' : span <= 366 ? 'year' : 'multi_year';
+  return { from, to, period };
+}
+
+export function laneWindowText(win) {
+  if (!win) return null;
+  const m = (d) => d.toLocaleDateString('en-IN', { month: 'short' });
+  const { from, to } = win;
+  if (from && !to) return `From ${m(from)} ${from.getFullYear()}`;
+  if (!from && to) return `Until ${m(to)} ${to.getFullYear()}`;
+  const fullYear = from.getMonth() === 0 && from.getDate() === 1 && to.getMonth() === 11 && to.getDate() === 31;
+  if (fullYear) return from.getFullYear() === to.getFullYear() ? `${from.getFullYear()}` : `${from.getFullYear()} – ${to.getFullYear()}`;
+  if (from.getFullYear() === to.getFullYear()) return from.getMonth() === to.getMonth() ? `${m(from)} ${from.getFullYear()}` : `${m(from)} – ${m(to)} ${to.getFullYear()}`;
+  return `${m(from)} ${from.getFullYear()} – ${m(to)} ${to.getFullYear()}`;
+}
+
+// Where a new lane belongs so lanes stay in time order (by start, then end)
+export function laneInsertIndex(layers, newLane) {
+  const key = (l) => { const w = laneWindow(l); return w ? [ (w.from || w.to).getTime(), w.to ? w.to.getTime() : Infinity ] : null; };
+  const k = key(newLane);
+  if (!k) return layers.length;
+  for (let i = 0; i < layers.length; i++) {
+    const o = key(layers[i]);
+    if (!o) continue;
+    if (k[0] < o[0] || (k[0] === o[0] && k[1] < o[1])) return i;
+  }
+  return layers.length;
+}
+
+export const laneDates = { ymd };
+
+// Is a goal's date inside its lane's window?
+export function outsideLane(goal, layer) {
+  const win = laneWindow(layer); const d = dueDate(goal);
+  if (!win || !d) return false;
+  return (win.from && d < startOfDay(win.from) && d >= startOfDay(new Date())) || (win.to && d > win.to);
+}
+
+// Next slot at the end of the first row of a lane — no fixed number per row
+export function nextRowSlot(siblings, w = BUCKET_W) {
+  const row = siblings.filter(s => s.y < BUCKET_H);
+  const right = row.reduce((m, s) => Math.max(m, s.x + s.w), GUTTER_W + 4);
+  return { x: Math.round(right + 20), y: 18, needW: Math.round(right + 20 + w + 20) };
 }

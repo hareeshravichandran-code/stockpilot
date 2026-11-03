@@ -313,11 +313,22 @@ router.post('/layout', requireAuth, async (req, res) => {
 //  Boards
 // ═══════════════════════════════════════════════════════════════════
 const DEFAULT_LAYERS = [
-  { label: 'This year', period: 'year' },
-  { label: '1 – 3 years', period: 'multi_year' },
-  { label: '3 – 10 years', period: 'multi_year' },
-  { label: '10+ years', period: 'multi_year' },
+  { label: 'This month',  period: 'month',      horizon: 'this_month' },
+  { label: 'This year',   period: 'year',       horizon: 'this_year' },
+  { label: 'Next year',   period: 'year',       horizon: 'next_year' },
+  { label: '2 – 5 years', period: 'multi_year', horizon: 'years_2_5' },
+  { label: '5+ years',    period: 'multi_year', horizon: 'beyond_5' },
 ];
+const HORIZONS = ['this_week', 'this_month', 'this_year', 'next_year', 'year_2', 'year_3', 'year_4', 'year_5', 'years_1_5', 'years_2_5', 'beyond_5', 'custom'];
+const cleanDate = (v) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+function laneFields(body) {
+  const out = pick(body || {}, ['label', 'period', 'height', 'sort_order', 'horizon', 'horizon_from', 'horizon_to']);
+  if (out.horizon !== undefined && !HORIZONS.includes(out.horizon)) out.horizon = null;
+  if (out.horizon_from !== undefined) out.horizon_from = cleanDate(out.horizon_from);
+  if (out.horizon_to !== undefined) out.horizon_to = cleanDate(out.horizon_to);
+  if (out.horizon && out.horizon !== 'custom') { out.horizon_from = null; out.horizon_to = null; }
+  return out;
+}
 
 router.post('/boards', requireAuth, async (req, res) => {
   const uid = req.user.id;
@@ -331,7 +342,7 @@ router.post('/boards', requireAuth, async (req, res) => {
 
   const layerDefs = Array.isArray(b.layers) && b.layers.length ? b.layers : DEFAULT_LAYERS;
   const { data: layers, error: lErr } = await supabase.from('bp_layers').insert(
-    layerDefs.map((l, i) => ({ user_id: uid, board_id: board.id, label: l.label, period: l.period || 'year', height: 150, sort_order: i }))
+    layerDefs.map((l, i) => ({ user_id: uid, board_id: board.id, ...laneFields(l), label: l.label, period: l.period || 'year', height: 150, sort_order: i }))
   ).select();
   if (lErr) return res.status(500).json({ error: lErr.message });
   res.status(201).json({ ...board, layers: layers.sort((a, z) => a.sort_order - z.sort_order) });
@@ -357,16 +368,20 @@ router.delete('/boards/:id', requireAuth, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════
 router.post('/layers', requireAuth, async (req, res) => {
   const uid = req.user.id;
-  const { board_id, label, period, position } = req.body || {};
+  const { board_id, label, period, position, index } = req.body || {};
   if (!board_id || !label) return res.status(400).json({ error: 'board_id and label are required' });
   const { data: existing } = await supabase.from('bp_layers').select('id, sort_order').eq('board_id', board_id).eq('user_id', uid).order('sort_order');
   const list = existing || [];
-  const at = position === 'top' ? 0 : list.length;
-  if (position === 'top') {
-    await Promise.all(list.map(l => supabase.from('bp_layers').update({ sort_order: l.sort_order + 1 }).eq('id', l.id)));
-  }
+  // index: insert at this position (lanes keep time order); else top / bottom
+  let at = position === 'top' ? 0 : list.length;
+  if (Number.isInteger(index)) at = Math.max(0, Math.min(list.length, index));
+  // Re-number everything after the insertion point so order stays 0..n
+  await Promise.all(list.map((l, i) => {
+    const want = i < at ? i : i + 1;
+    return l.sort_order === want ? null : supabase.from('bp_layers').update({ sort_order: want }).eq('id', l.id);
+  }).filter(Boolean));
   const { data, error } = await supabase.from('bp_layers').insert({
-    user_id: uid, board_id, label, period: period || 'year', height: 150, sort_order: at,
+    user_id: uid, board_id, ...laneFields(req.body), label, period: period || 'year', height: 150, sort_order: at,
   }).select().single();
   if (error) return res.status(500).json({ error: error.message });
   res.status(201).json(data);
@@ -374,7 +389,7 @@ router.post('/layers', requireAuth, async (req, res) => {
 
 router.put('/layers/:id', requireAuth, async (req, res) => {
   const { data, error } = await supabase.from('bp_layers')
-    .update(pick(req.body, ['label', 'period', 'height', 'sort_order']))
+    .update(laneFields(req.body))
     .eq('id', req.params.id).eq('user_id', req.user.id).select().single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);

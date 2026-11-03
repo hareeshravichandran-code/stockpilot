@@ -648,3 +648,74 @@ textarea.bp-input { resize: vertical; line-height: 1.45; }
   .with-panel .bp-fab { display: none; }
   .bp-fab { right: 12px; bottom: 76px; height: 44px; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   v3 — lanes, smooth deletes, toolbar mode switch, collapsible key
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* Smooth removal */
+.bp-bucket.leaving, .bp-board.leaving { opacity: 0 !important; transform: scale(.92) !important; transition: opacity .26s var(--ease), transform .26s var(--ease) !important; pointer-events: none; animation: none !important; }
+.bp-link { transition: opacity .26s var(--ease); }
+.bp-link.leaving { opacity: 0; }
+.bp-link-remove {
+  position: absolute; transform: translate(-50%, 0); z-index: 4;
+  font: inherit; font-size: 12px; font-weight: 500; color: var(--coral); white-space: nowrap; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--coral); border-radius: 14px; padding: 4px 12px;
+  box-shadow: var(--shadow-2);
+}
+.bp-link-remove:hover { background: var(--coral); color: #fff; }
+
+/* In-panel confirm */
+.bp-confirm-box { display: flex; flex-direction: column; gap: 10px; padding: 12px; border-radius: 10px; background: var(--coral-soft); border: 1px solid var(--coral); animation: bp-pop .3s var(--spring) backwards; }
+.bp-confirm-text { font-size: 13px; color: var(--text); line-height: 1.45; }
+.bp-btn-delete { background: var(--coral); color: #fff; border-color: var(--coral); }
+.bp-btn-delete:hover:not(:disabled) { background: #8f2222; }
+
+/* Toolbar: mode switch is the first button */
+.bp-mode {
+  display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 14px 0 6px; margin-right: 4px;
+  font: inherit; font-size: 13.5px; font-weight: 600; color: var(--surface); cursor: pointer;
+  background: var(--text); border: none; border-radius: 10px; transition: background .3s var(--ease), transform .2s var(--spring);
+}
+.bp-mode:hover { transform: translateY(-1px); }
+.bp-mode:focus-visible { outline: 2px solid var(--lime); outline-offset: 2px; }
+.bp-mode.on { background: var(--mint); }
+.bp-mode-icon { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; background: rgba(255,255,255,0.16); transition: transform .45s var(--spring); }
+.bp-mode.on .bp-mode-icon { transform: rotate(360deg); }
+.bp-dock { transition: left .42s var(--ease), transform .3s var(--ease); }
+.with-panel .bp-dock { left: calc((100% - 400px) / 2); }
+.bp-fab { display: none; }
+
+/* Collapsible key */
+.bp-legend { padding: 0; gap: 0; max-width: 380px; transition: box-shadow .3s; }
+.bp-key-btn {
+  display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px;
+  font: inherit; font-size: 12.5px; font-weight: 500; color: var(--text-2); cursor: pointer; background: none; border: none;
+}
+.bp-key-btn:hover { color: var(--text); }
+.bp-key-btn:focus-visible { outline: 2px solid var(--lime); outline-offset: -2px; border-radius: 10px; }
+.bp-key-dots { display: inline-flex; }
+.bp-key-dots i { width: 9px; height: 9px; border-radius: 50%; background: var(--tone); margin-left: -3px; border: 1.5px solid var(--surface); }
+.bp-key-dots i:first-child { margin-left: 0; }
+.bp-legend-body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .38s var(--ease); }
+.bp-legend.open .bp-legend-body { grid-template-rows: 1fr; }
+.bp-legend-inner { overflow: hidden; display: flex; flex-direction: column; gap: 6px; padding: 0 12px; transition: padding .38s var(--ease); }
+.bp-legend.open .bp-legend-inner { padding: 0 12px 10px; }
+
+/* Lane dock + picker under each box */
+.bp-lane-dock { position: absolute; left: 0; right: 0; }
+.bp-lane-dock .bp-add-layer-strip { position: static; width: 100%; }
+.bp-add-layer-strip.on { color: var(--text); border-style: solid; background: var(--surface); }
+.bp-lanepick-wrap { margin-top: 8px; animation: bp-drop .34s var(--ease) backwards; }
+@keyframes bp-drop { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+.bp-lanepick {
+  display: flex; flex-direction: column; gap: 12px; padding: 16px; cursor: default;
+  background: var(--surface); border: 1px solid var(--border-2); border-radius: 12px; box-shadow: var(--shadow-3);
+}
+.bp-lanepick-title { font-family: var(--font-display); font-size: 18px; }
+.bp-lanepick .bp-chip span { margin-left: 2px; }
+.bp-panel .bp-lanepick { box-shadow: none; background: var(--surface-2); }
+
+/* Lane details */
+.bp-layer-read li em { display: block; font-style: normal; font-size: 11.5px; color: var(--text-3); margin-top: 1px; }
+.bp-stray { color: var(--gold); font-weight: 700; }

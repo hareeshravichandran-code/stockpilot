@@ -1,8 +1,9 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { blueprintAPI } from '../lib/api';
 import {
-  PERIODS, LINK_TYPES, ASSET_TYPES, assetTypeLabel, GOAL_COLORS, WEEKDAYS, MONTHS,
+  LINK_TYPES, ASSET_TYPES, assetTypeLabel, GOAL_COLORS, WEEKDAYS, MONTHS,
   fmtINR, fmtDate, num, progressTone, colorHex, nextDue, dueDate, daysUntil, relTime, scheduleText,
+  LANE_PRESETS, laneWindow, laneWindowText, laneInsertIndex,
 } from './geom';
 
 const errMsg = (e) => e?.response?.data?.error || e?.message || 'Something went wrong';
@@ -14,6 +15,26 @@ function Field({ label, children, hint }) {
       {children}
       {hint && <span className="bp-field-hint">{hint}</span>}
     </label>
+  );
+}
+
+// Two-step delete inside the panel — no browser pop-up
+function ConfirmDelete({ label, detail, onConfirm }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={`bp-confirm ${open ? 'open' : ''}`}>
+      {!open
+        ? <button className="bp-btn danger ghost" onClick={() => setOpen(true)}>{label}</button>
+        : (
+          <div className="bp-confirm-box" role="alertdialog" aria-label={label}>
+            <div className="bp-confirm-text">{detail}</div>
+            <div className="bp-row-end">
+              <button className="bp-btn ghost sm" onClick={() => setOpen(false)} autoFocus>Keep it</button>
+              <button className="bp-btn sm bp-btn-delete" onClick={onConfirm}>{label}</button>
+            </div>
+          </div>
+        )}
+    </div>
   );
 }
 
@@ -276,7 +297,7 @@ function BucketDetails({ bucket, onReload, notify, onDelete }) {
       ) : (
         <button className="bp-btn" disabled={busy} onClick={() => run(() => blueprintAPI.reopen(bucket.id), 'Goal reopened')}>Reopen goal</button>
       )}
-      <button className="bp-btn danger ghost" onClick={onDelete}>Delete goal</button>
+      <ConfirmDelete label="Delete goal" detail={`“${bucket.name}” goes, with its links, notes and files. Its mapped funds are released for other goals.`} onConfirm={onDelete} />
     </div>
   );
 }
@@ -611,7 +632,7 @@ export function IncomePanel({ bucket, links, bucketsById, boardsById, onReload, 
         {myLinks.length === 0
           ? <div className="bp-empty-small">Drag the ● handle onto a goal bucket — or onto a plan box's title bar to fund the whole plan.</div>
           : <LinksList bucket={bucket} links={myLinks} bucketsById={bucketsById} boardsById={boardsById} onSelect={onSelect} />}
-        <button className="bp-btn danger ghost" onClick={onDelete}>Delete income source</button>
+        <ConfirmDelete label="Delete income" detail={`“${bucket.name}” and its funding links will be removed.`} onConfirm={onDelete} />
         </>}
       </div>
     </PanelShell>
@@ -624,7 +645,6 @@ export function IncomePanel({ bucket, links, bucketsById, boardsById, onReload, 
 export function BoardPanel({ board, buckets, onReload, onClose, notify, onDelete, editing, onEdit }) {
   const [name, setName] = useState(board.name);
   const [desc, setDesc] = useState(board.description || '');
-  const [newLayer, setNewLayer] = useState({ label: '', period: 'year', position: 'bottom' });
   const [busy, setBusy] = useState(false);
 
   useEffect(() => { setName(board.name); setDesc(board.description || ''); }, [board.id, board.name, board.description]);
@@ -656,9 +676,9 @@ export function BoardPanel({ board, buckets, onReload, onClose, notify, onDelete
       {!editing && (
         <div className="bp-stack">
           {board.description && <p className="bp-desc">{board.description}</p>}
-          <div className="bp-section-title">Layers, top to bottom</div>
+          <div className="bp-section-title">Lanes, soonest on top</div>
           <ul className="bp-layer-read">
-            {board.layers.map(l => <li key={l.id}><span>{l.label}</span><span className="muted">{inside.filter(b => b.layer_id === l.id && b.status !== 'completed').length} goals</span></li>)}
+            {board.layers.map(l => <li key={l.id}><span>{l.label}<em>{laneWindowText(laneWindow(l)) || ''}</em></span><span className="muted">{inside.filter(b => b.layer_id === l.id && b.status !== 'completed').length} goals</span></li>)}
           </ul>
           <button className="bp-btn" onClick={onEdit}>✎ Edit this plan box</button>
         </div>
@@ -672,12 +692,12 @@ export function BoardPanel({ board, buckets, onReload, onClose, notify, onDelete
         </div>
 
         <div className="bp-divider" />
-        <div className="bp-section-title">Layers (time horizon, top → bottom)</div>
+        <div className="bp-section-title">Lanes, soonest on top</div>
         <ul className="bp-layer-list">
           {board.layers.map((l, i) => (
             <LayerRow key={l.id} layer={l} index={i} count={board.layers.length}
               bucketCount={inside.filter(b => b.layer_id === l.id).length}
-              onSave={(data) => run(() => blueprintAPI.updateLayer(l.id, data), 'Layer updated')}
+              onSave={(data) => run(() => blueprintAPI.updateLayer(l.id, data), 'Lane updated')}
               onMove={(dir) => {
                 const j = i + dir;
                 const other = board.layers[j];
@@ -687,28 +707,15 @@ export function BoardPanel({ board, buckets, onReload, onClose, notify, onDelete
                   blueprintAPI.updateLayer(other.id, { sort_order: l.sort_order }),
                 ]));
               }}
-              onDelete={() => run(() => blueprintAPI.deleteLayer(l.id), 'Layer removed')}
+              onDelete={() => run(() => blueprintAPI.deleteLayer(l.id), 'Lane removed')}
             />
           ))}
         </ul>
-        <div className="bp-add-layer">
-          <input className="bp-input" placeholder="New layer, e.g. Next 6 months" value={newLayer.label}
-            onChange={e => setNewLayer(s => ({ ...s, label: e.target.value }))} />
-          <select className="bp-input" value={newLayer.period} onChange={e => setNewLayer(s => ({ ...s, period: e.target.value }))}>
-            {PERIODS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
-          </select>
-          <select className="bp-input" value={newLayer.position} onChange={e => setNewLayer(s => ({ ...s, position: e.target.value }))}>
-            <option value="top">At top</option>
-            <option value="bottom">At bottom</option>
-          </select>
-          <button className="bp-btn" disabled={busy || !newLayer.label.trim()}
-            onClick={() => run(async () => { await blueprintAPI.createLayer({ board_id: board.id, ...newLayer }); setNewLayer(s => ({ ...s, label: '' })); }, 'Layer added')}>
-            Add
-          </button>
-        </div>
+        <LanePicker layers={board.layers} busy={busy}
+          onAdd={(lane) => run(() => blueprintAPI.createLayer({ board_id: board.id, ...lane, index: laneInsertIndex(board.layers, lane) }), 'Lane added')} />
 
         <div className="bp-divider" />
-        <button className="bp-btn danger ghost" onClick={onDelete}>Delete plan box and its {inside.length} goals</button>
+        <ConfirmDelete label="Delete plan box" detail={`“${board.name}” and the ${inside.length} goal(s) inside it will be removed. This can't be undone.`} onConfirm={onDelete} />
       </div>}
     </PanelShell>
   );
@@ -716,22 +723,25 @@ export function BoardPanel({ board, buckets, onReload, onClose, notify, onDelete
 
 function LayerRow({ layer, index, count, bucketCount, onSave, onMove, onDelete }) {
   const [label, setLabel] = useState(layer.label);
-  const [period, setPeriod] = useState(layer.period);
-  useEffect(() => { setLabel(layer.label); setPeriod(layer.period); }, [layer.label, layer.period]);
-  const dirty = label !== layer.label || period !== layer.period;
+  const [horizon, setHorizon] = useState(layer.horizon || '');
+  useEffect(() => { setLabel(layer.label); setHorizon(layer.horizon || ''); }, [layer.label, layer.horizon]);
+  const dirty = label !== layer.label || horizon !== (layer.horizon || '');
+  const win = laneWindow({ ...layer, horizon });
   return (
     <li className="bp-layer-row">
       <div className="bp-layer-move">
         <button className="bp-icon-btn sm" disabled={index === 0} onClick={() => onMove(-1)} aria-label="Move up">↑</button>
         <button className="bp-icon-btn sm" disabled={index === count - 1} onClick={() => onMove(1)} aria-label="Move down">↓</button>
       </div>
-      <input className="bp-input" value={label} onChange={e => setLabel(e.target.value)} />
-      <select className="bp-input" value={period} onChange={e => setPeriod(e.target.value)}>
-        {PERIODS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+      <input className="bp-input" value={label} onChange={e => setLabel(e.target.value)} title={laneWindowText(win) || ''} />
+      <select className="bp-input" value={horizon} onChange={e => setHorizon(e.target.value)}>
+        {!layer.horizon && <option value="">No time window</option>}
+        {LANE_PRESETS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+        {layer.horizon === 'custom' && <option value="custom">Custom: {laneWindowText(laneWindow(layer))}</option>}
       </select>
       {dirty
-        ? <button className="bp-btn sm primary" disabled={!label.trim()} onClick={() => onSave({ label, period })}>Save</button>
-        : <button className="bp-icon-btn sm" disabled={bucketCount > 0} title={bucketCount ? 'Move its buckets out first' : 'Delete layer'} onClick={onDelete} aria-label="Delete layer">🗑</button>}
+        ? <button className="bp-btn sm primary" disabled={!label.trim()} onClick={() => onSave({ label, horizon: horizon || null, period: win?.period || layer.period })}>Save</button>
+        : <button className="bp-icon-btn sm" disabled={bucketCount > 0} title={bucketCount ? 'Move its goals out first' : 'Delete lane'} onClick={onDelete} aria-label="Delete lane">🗑</button>}
     </li>
   );
 }
@@ -739,7 +749,7 @@ function LayerRow({ layer, index, count, bucketCount, onSave, onMove, onDelete }
 // ═══════════════════════════════════════════════════════════════════
 //  Link
 // ═══════════════════════════════════════════════════════════════════
-export function LinkPanel({ link, bucketsById, boardsById, onReload, onClose, notify, editing, onEdit }) {
+export function LinkPanel({ link, bucketsById, boardsById, onReload, onClose, notify, editing, onEdit, onDelete }) {
   const [d, setD] = useState({ link_type: link.link_type, label: link.label || '', amount: link.amount ?? '' });
   const [busy, setBusy] = useState(false);
   useEffect(() => { setD({ link_type: link.link_type, label: link.label || '', amount: link.amount ?? '' }); }, [link.id, link.link_type, link.label, link.amount]);
@@ -781,7 +791,7 @@ export function LinkPanel({ link, bucketsById, boardsById, onReload, onClose, no
           <input className="bp-input mono" type="number" min="0" value={d.amount} onChange={e => setD(s => ({ ...s, amount: e.target.value }))} />
         </Field>
         <div className="bp-row-between">
-          <button className="bp-btn danger ghost" disabled={busy} onClick={() => run(() => blueprintAPI.deleteLink(link.id), 'Link removed', true)}>Remove link</button>
+          <button className="bp-btn danger ghost" disabled={busy} onClick={onDelete}>Remove link</button>
           <button className="bp-btn primary" disabled={busy} onClick={() => run(() => blueprintAPI.updateLink(link.id, d), 'Saved')}>Save</button>
         </div>
       </div>}
@@ -822,5 +832,62 @@ export function CompletedPanel({ buckets, boardsById, onClose, onOpen, onReload,
         ))}
       </ul>
     </PanelShell>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════
+//  Lane picker — presets or a custom month range
+// ═══════════════════════════════════════════════════════════════════
+const monthVal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+export function LanePicker({ layers, onAdd, onCancel, busy }) {
+  const used = new Set(layers.map(l => l.horizon).filter(Boolean));
+  const now = new Date();
+  const [pick, setPick] = useState(() => (LANE_PRESETS.find(p => !used.has(p.id) && p.id !== 'this_week') || LANE_PRESETS[0]).id);
+  const [from, setFrom] = useState(monthVal(new Date(now.getFullYear() + 1, 0, 1)));
+  const [to, setTo] = useState(monthVal(new Date(now.getFullYear() + 2, 11, 1)));
+  const preset = LANE_PRESETS.find(p => p.id === pick);
+  const [name, setName] = useState(preset?.label || '');
+  const [touched, setTouched] = useState(false);
+
+  const lane = (() => {
+    if (pick !== 'custom') return { horizon: pick };
+    const [fy, fm] = from.split('-').map(Number); const [ty, tm] = to.split('-').map(Number);
+    const end = new Date(ty, tm, 0);
+    return { horizon: 'custom', horizon_from: `${from}-01`, horizon_to: `${to}-${String(end.getDate()).padStart(2, '0')}`, _bad: !fy || !ty || new Date(fy, fm - 1, 1) > end };
+  })();
+  const win = laneWindow(lane);
+  const autoName = pick === 'custom' ? (laneWindowText(win) || 'Custom') : preset?.label;
+  const choose = (id) => { setPick(id); if (!touched) setName(id === 'custom' ? '' : (LANE_PRESETS.find(p => p.id === id)?.label || '')); };
+
+  return (
+    <div className="bp-lanepick" onPointerDown={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()}>
+      <div className="bp-lanepick-title">Add a lane</div>
+      <div className="bp-chips">
+        {LANE_PRESETS.map(p => (
+          <button key={p.id} type="button" className={`bp-chip ${pick === p.id ? 'on' : ''}`} onClick={() => choose(p.id)}
+            title={laneWindowText(laneWindow({ horizon: p.id }))}>
+            {p.label}{used.has(p.id) && <span>added</span>}
+          </button>
+        ))}
+        <button type="button" className={`bp-chip ${pick === 'custom' ? 'on' : ''}`} onClick={() => choose('custom')}>Custom range…</button>
+      </div>
+      {pick === 'custom' && (
+        <div className="bp-grid2">
+          <Field label="From"><input className="bp-input" type="month" value={from} onChange={e => setFrom(e.target.value)} /></Field>
+          <Field label="To"><input className="bp-input" type="month" value={to} onChange={e => setTo(e.target.value)} /></Field>
+        </div>
+      )}
+      <Field label="Lane name" hint={win ? `Covers ${laneWindowText(win)}. Lanes stay in time order, soonest on top.` : undefined}>
+        <input className="bp-input" value={name} placeholder={autoName} onChange={e => { setName(e.target.value); setTouched(true); }} maxLength={40} />
+      </Field>
+      <div className="bp-row-end">
+        {onCancel && <button type="button" className="bp-btn ghost" onClick={onCancel}>Cancel</button>}
+        <button type="button" className="bp-btn primary" disabled={busy || lane._bad}
+          onClick={() => onAdd({ label: (name.trim() || autoName), period: win?.period || 'year', horizon: lane.horizon, horizon_from: lane.horizon_from || null, horizon_to: lane.horizon_to || null })}>
+          Add lane
+        </button>
+      </div>
+    </div>
   );
 }
