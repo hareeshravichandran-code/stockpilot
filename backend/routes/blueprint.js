@@ -54,7 +54,38 @@ function pick(obj, keys) {
 // ═══════════════════════════════════════════════════════════════════
 //  Asset universe — every mappable asset with its current value
 // ═══════════════════════════════════════════════════════════════════
+// Family: everyone in my family groups (from the existing Family module)
+async function familyMembers(userId) {
+  const { data: mine } = await supabase.from('family_members').select('group_id').eq('user_id', userId);
+  const groups = (mine || []).map(m => m.group_id);
+  let ids = [userId];
+  if (groups.length) {
+    const { data: members } = await supabase.from('family_members').select('user_id').in('group_id', groups);
+    ids = [...new Set([userId, ...(members || []).map(m => m.user_id)])];
+  }
+  const { data: users } = await supabase.from('users').select('id, name, email').in('id', ids);
+  const name = Object.fromEntries((users || []).map(u => [u.id, (u.name || u.email || 'Member').split(' ')[0]]));
+  return ids.map(id => ({ id, name: id === userId ? 'You' : (name[id] || 'Member'), me: id === userId }));
+}
+
+// A stock's broker key: same owner prefix as the stock ("fam:<id>:" for family members)
+function stockBrokerKey(ref) {
+  const i = ref.lastIndexOf('|');
+  const head = ref.slice(0, i);
+  const prefix = head.startsWith('fam:') ? head.split(':').slice(0, 2).join(':') + ':' : '';
+  return prefix + ref.slice(i + 1);
+}
+
 async function loadUniverse(userId) {
+  const members = await familyMembers(userId);
+  const parts = await Promise.all(members.map(m => loadMemberUniverse(m.id, m.me ? '' : `fam:${m.id}:`, m)));
+  const items = parts.flat();
+  const byKey = {};
+  for (const it of items) byKey[`${it.asset_type}::${it.asset_ref}`] = it;
+  return { items, byKey, members };
+}
+
+async function loadMemberUniverse(userId, prefix, member) {
   const [hRes, mfRes, fdRes, rdRes, npsRes] = await Promise.all([
     supabase.from('holdings').select('*').eq('user_id', userId),
     supabase.from('mf_holdings').select('*').eq('user_id', userId),
@@ -133,9 +164,15 @@ async function loadUniverse(userId) {
     });
   }
 
-  const byKey = {};
-  for (const it of items) byKey[`${it.asset_type}::${it.asset_ref}`] = it;
-  return { items, byKey };
+  for (const it of items) {
+    it.asset_ref = prefix + it.asset_ref;
+    if (it.demat) it.demat = prefix + it.demat;
+    it.owner_id = member.id;
+    it.owner_name = member.name;
+    it.owner_me = member.me;
+    if (!member.me) it.sub = `${member.name} · ${it.sub}`;
+  }
+  return items;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -261,7 +298,7 @@ router.get('/', requireAuth, async (req, res) => {
 router.get('/assets', requireAuth, async (req, res) => {
   try {
     const uid = req.user.id;
-    const [{ items }, { data: links }, { data: buckets }, { data: incomeCats }] = await Promise.all([
+    const [{ items, members }, { data: links }, { data: buckets }, { data: incomeCats }] = await Promise.all([
       loadUniverse(uid),
       supabase.from('bp_bucket_assets').select('bucket_id, asset_type, asset_ref').eq('user_id', uid),
       supabase.from('bp_buckets').select('id, name').eq('user_id', uid),
@@ -281,7 +318,7 @@ router.get('/assets', requireAuth, async (req, res) => {
       return { ...it, owner_bucket_id: ownerId, owner_bucket_name: ownerId ? nameOf[ownerId] : null, owned_via: via };
     });
     const categories = [...new Set((incomeCats || []).map(r => r.category).filter(Boolean))].sort();
-    res.json({ assets: out, incomeCategories: categories });
+    res.json({ assets: out, incomeCategories: categories, members });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -490,9 +527,66 @@ router.post('/buckets/:id/cycle', requireAuth, async (req, res) => {
   const fmt = (v) => '₹' + Math.round(v).toLocaleString('en-IN');
   await systemComment(uid, b.id,
     `Cycle ${b.cycle_start || ''} → ${today()} closed: ${fmt(achieved)} of ${fmt(num(b.target_amount))}${req.body?.note ? ' — ' + req.body.note : ''}`);
+  // EMI: the instalment paid this cycle moves into the loan goal outside the box
+  let loanPaid = null;
+  if (b.is_emi && b.emi_loan_id) {
+    const paid = achieved > 0 ? achieved : num(b.target_amount);
+    const { data: loan } = await supabase.from('bp_buckets').select('id, manual_value, target_amount, name')
+      .eq('id', b.emi_loan_id).eq('user_id', uid).maybeSingle();
+    if (loan && paid > 0) {
+      const total = round2(num(loan.manual_value) + paid);
+      await supabase.from('bp_buckets').update({ manual_value: total, status: 'inprogress', updated_at: nowIso() })
+        .eq('id', loan.id).eq('user_id', uid);
+      await systemComment(uid, loan.id, `EMI ${fmt(paid)} paid from “${b.name}” — total paid ${fmt(total)} of ${fmt(num(loan.target_amount))}`);
+      loanPaid = { loan_id: loan.id, paid, total };
+    }
+  }
   const { data, error: uErr } = await supabase.from('bp_buckets')
     .update({ cycle_start: today(), manual_value: 0, updated_at: nowIso() })
     .eq('id', b.id).eq('user_id', uid).select().single();
+  if (uErr) return res.status(500).json({ error: uErr.message });
+  res.json({ ...data, loanPaid });
+});
+
+// ── EMI on/off: creates (or removes) the loan goal outside the box ──
+router.post('/buckets/:id/emi', requireAuth, async (req, res) => {
+  const uid = req.user.id;
+  const { enabled, loan_amount, loan_name, loan_paid, x, y } = req.body || {};
+  const { data: b } = await supabase.from('bp_buckets').select('*').eq('id', req.params.id).eq('user_id', uid).maybeSingle();
+  if (!b) return res.status(404).json({ error: 'Goal not found' });
+  if (b.kind !== 'goal' || b.is_loan) return res.status(400).json({ error: 'Only a goal can be an EMI' });
+
+  if (!enabled) {
+    if (b.emi_loan_id) await supabase.from('bp_buckets').delete().eq('id', b.emi_loan_id).eq('user_id', uid).eq('is_loan', true);
+    const { data } = await supabase.from('bp_buckets').update({ is_emi: false, emi_loan_id: null, updated_at: nowIso() })
+      .eq('id', b.id).eq('user_id', uid).select().single();
+    return res.json(data);
+  }
+
+  if (!(num(loan_amount) > 0)) return res.status(400).json({ error: 'Enter the total loan amount' });
+  let loanId = b.emi_loan_id;
+  if (loanId) {
+    await supabase.from('bp_buckets').update({
+      name: (loan_name || '').trim() || `${b.name} — loan`, target_amount: num(loan_amount),
+      ...(loan_paid !== undefined && loan_paid !== '' ? { manual_value: num(loan_paid) } : {}), updated_at: nowIso(),
+    }).eq('id', loanId).eq('user_id', uid);
+  } else {
+    const { data: loan, error } = await supabase.from('bp_buckets').insert({
+      user_id: uid, kind: 'goal', is_loan: true, status: 'inprogress', recurrence: 'none',
+      name: (loan_name || '').trim() || `${b.name} — loan`, color: b.color || 'slate',
+      target_amount: num(loan_amount), manual_value: num(loan_paid), target_date: b.target_date || null,
+      board_id: null, layer_id: null, x: Math.round(num(x)), y: Math.round(num(y)), w: 230, h: 112,
+    }).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    loanId = loan.id;
+    await supabase.from('bp_links').insert({ user_id: uid, from_bucket_id: b.id, to_bucket_id: loanId, link_type: 'emi', label: null });
+  }
+  const { data, error: uErr } = await supabase.from('bp_buckets').update({
+    is_emi: true, emi_loan_id: loanId,
+    recurrence: b.recurrence === 'none' ? 'monthly' : b.recurrence,
+    recurrence_day: b.recurrence === 'none' ? (b.recurrence_day || 5) : b.recurrence_day,
+    cycle_start: b.cycle_start || today(), updated_at: nowIso(),
+  }).eq('id', b.id).eq('user_id', uid).select().single();
   if (uErr) return res.status(500).json({ error: uErr.message });
   res.json(data);
 });
@@ -522,7 +616,7 @@ router.post('/buckets/:id/assets', requireAuth, async (req, res) => {
 
   let absorb = [];
   if (asset_type === 'stock') {
-    const demat = asset_ref.split('|')[1];
+    const demat = stockBrokerKey(asset_ref);
     const brokerRow = rows.find(r => r.asset_type === 'broker' && r.asset_ref === demat);
     if (brokerRow) return res.status(409).json({
       error: brokerRow.bucket_id === bucketId
@@ -531,7 +625,7 @@ router.post('/buckets/:id/assets', requireAuth, async (req, res) => {
     });
   }
   if (asset_type === 'broker') {
-    const stockRows = rows.filter(r => r.asset_type === 'stock' && r.asset_ref.split('|')[1] === asset_ref);
+    const stockRows = rows.filter(r => r.asset_type === 'stock' && stockBrokerKey(r.asset_ref) === asset_ref);
     const elsewhere = stockRows.filter(r => r.bucket_id !== bucketId);
     if (elsewhere.length) return res.status(409).json({
       error: `${elsewhere.length} stock(s) from this broker are already mapped to "${nameOf[elsewhere[0].bucket_id] || 'another bucket'}". Unmap them first.`,

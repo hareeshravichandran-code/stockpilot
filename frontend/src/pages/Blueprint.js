@@ -6,7 +6,8 @@ import {
   fmtINR, fmtDate, num, clamp, progressTone, isOverdue,
   computeLayout, bucketRect, dropTarget, linkPath, contentBounds, avoidOverlap,
   colorHex, dueDate, daysUntil, relTime, attention, layerHorizon, scheduleText,
-  LANE_PRESETS, DEFAULT_LANES, laneWindow, laneInsertIndex, nextRowSlot, outsideLane,
+  LANE_PRESETS, DEFAULT_LANES, laneWindow, laneInsertIndex, outsideLane, laneWindowText,
+  nextGridSlot, nearestGridSlot, gridPositions, gridWidth, COLS, laneMoney, ROW_GAP, LANE_PAD_Y,
 } from '../blueprint/geom';
 import { BucketPanel, IncomePanel, BoardPanel, LinkPanel, CompletedPanel, LanePicker } from '../blueprint/Panels';
 import './Blueprint.css';
@@ -37,7 +38,8 @@ export default function Blueprint() {
   const [toast, setToast] = useState(null);
   const [leaving, setLeaving] = useState(() => new Set());   // ids fading out before removal
   const [laneFor, setLaneFor] = useState(null);              // board id with the lane picker open
-  const [keyOpen, setKeyOpen] = useState(false);
+  const [railOn, setRailOn] = useState(() => { try { return localStorage.getItem('bp_rail') !== '0'; } catch (e) { return true; } });
+  const toggleRail = () => { const v = !railOn; setRailOn(v); try { localStorage.setItem('bp_rail', v ? '1' : '0'); } catch (e) {} };
   const [busy, setBusy] = useState(false);
   const [editing, setEditingRaw] = useState(() => { try { return localStorage.getItem('bp_editing') === '1'; } catch (e) { return false; } });
   const setEditing = useCallback((v) => {
@@ -212,13 +214,10 @@ export default function Blueprint() {
         if (patch.layer_id) {
           const sibs = visible.filter(b => b.id !== d.id && b.layer_id === patch.layer_id)
             .map(b => ({ x: num(b.x), y: num(b.y), w: num(b.w) || BUCKET_W, h: num(b.h) || BUCKET_H }));
-          const bw = num(boardsById[patch.board_id]?.w);
-          const tried = avoidOverlap(patch, d.w, d.h, sibs, bw);
-          const clash = sibs.some(o => tried.x < o.x + o.w + 8 && tried.x + d.w + 8 > o.x && tried.y < o.y + o.h + 8 && tried.y + d.h + 8 > o.y);
-          // No room in this row: add it to the end of the row and widen the box
-          patch = (clash || tried.y > patch.y + d.h / 2) ? { ...patch, ...nextRowSlot(sibs, d.w) } : tried;
-          delete patch.needW;
-          if (patch.x + d.w + 20 > bw) growBoard(patch.board_id, patch.x + d.w + 24);
+          // Snap into the nearest free cell — up to 5 goals per row, then the next row
+          const slot = nearestGridSlot(patch.x, patch.y, sibs);
+          patch = { ...patch, x: slot.x, y: slot.y };
+          growBoard(patch.board_id, gridWidth(slot.col + 1));
         }
         setData(s => ({ ...s, buckets: s.buckets.map(b => b.id === d.id ? { ...b, ...patch } : b) }));
         try { await blueprintAPI.saveLayout({ buckets: [{ id: d.id, ...patch }] }); }
@@ -370,10 +369,9 @@ export default function Blueprint() {
   const addGoalAt = (board, layer, rel) => guard(async () => {
     const sibs = data.buckets.filter(b => b.layer_id === layer.id && (showCompleted || b.status !== 'completed'))
       .map(b => ({ x: num(b.x), y: num(b.y), w: num(b.w) || BUCKET_W, h: num(b.h) || BUCKET_H }));
-    // Double-click places it where you clicked; the button adds it to the end of the row
-    let spot = rel ? avoidOverlap({ x: Math.round(rel.x), y: Math.round(rel.y) }, BUCKET_W, BUCKET_H, sibs, num(board.w)) : nextRowSlot(sibs);
-    if (rel && spot.y > rel.y + BUCKET_H / 2) spot = nextRowSlot(sibs);
-    if (spot.x + BUCKET_W + 20 > num(board.w)) growBoard(board.id, spot.x + BUCKET_W + 24);
+    // Fills the row left to right (5 per row), then starts the next row
+    const spot = rel ? nearestGridSlot(rel.x, rel.y, sibs) : nextGridSlot(sibs);
+    growBoard(board.id, gridWidth(spot.col + 1));
     const win = laneWindow(layer);
     const r = await blueprintAPI.createBucket({
       kind: 'goal', name: 'New goal', board_id: board.id, layer_id: layer.id,
@@ -431,6 +429,116 @@ export default function Blueprint() {
   });
 
   // ── Deletion ──────────────────────────────────────────────────────
+  // ── Tidy up: order goals and place incomes / outside goals so links cross less.
+  // Layered-graph approach (Sugiyama-style barycentre ordering): goals keep
+  // their lane, incomes sit above the box over the goals they fund, and goals
+  // outside the box line up beside the goals they connect to.
+  const tidyUp = () => guard(async () => {
+    const goals = data.buckets.filter(b => b.kind === 'goal' && (showCompleted || b.status !== 'completed'));
+    const incomes = data.buckets.filter(b => b.kind === 'income');
+    const nbr = {};
+    for (const l of data.links) {
+      (nbr[l.from_bucket_id] = nbr[l.from_bucket_id] || []).push(l.to_bucket_id || `board:${l.to_board_id}`);
+      if (l.to_bucket_id) (nbr[l.to_bucket_id] = nbr[l.to_bucket_id] || []).push(l.from_bucket_id);
+    }
+    const pos = {};   // new top-left positions (world for externals/incomes, lane-relative for board goals)
+    const world = {}; // world centres used for barycentres
+    const boardsOut = [];
+    const bucketsOut = [];
+    let xRight = -Infinity;
+
+    for (const bd of data.boards) {
+      const due = (b) => { const d = dueDate(b); return d ? d.getTime() : Infinity; };
+      // pass 1: date order
+      const lanes = bd.layers.map(l => goals.filter(g => g.board_id === bd.id && g.layer_id === l.id).sort((a, z) => due(a) - due(z)));
+      const maxCols = Math.min(COLS, Math.max(1, ...lanes.map(x => x.length)));
+      const bw = Math.max(gridWidth(maxCols), 520);
+      const place = () => {
+        let top = num(bd.y) + HEADER_H;
+        lanes.forEach((lane, i) => {
+          const cells = gridPositions(lane.length);
+          lane.forEach((g, k) => {
+            pos[g.id] = { ...cells[k], layer_id: bd.layers[i].id, board_id: bd.id };
+            world[g.id] = { x: num(bd.x) + cells[k].x + BUCKET_W / 2, y: top + cells[k].y + BUCKET_H / 2 };
+          });
+          const rows = Math.max(1, Math.ceil(lane.length / COLS));
+          const h = Math.max(MIN_LAYER_H, num(bd.layers[i].height), LANE_PAD_Y + rows * (BUCKET_H + ROW_GAP) + 4);
+          top += h;
+        });
+        world[`board:${bd.id}`] = { x: num(bd.x) + bw / 2, y: num(bd.y) };
+      };
+      place();
+      // pass 2: goals funded from above follow their income's order; goals linked outward go to the row end
+      const incX = {};
+      incomes.forEach(inc => {
+        const ts = (nbr[inc.id] || []).map(t => world[t]).filter(Boolean);
+        if (ts.length) incX[inc.id] = ts.reduce((s, t) => s + t.x, 0) / ts.length;
+      });
+      lanes.forEach(lane => {
+        const rank = new Map(lane.map((g, i) => [g.id, i]));
+        const score = (g) => {
+          const ns = nbr[g.id] || [];
+          const inc = ns.filter(n => incX[n] !== undefined).map(n => incX[n]);
+          const outward = ns.some(n => { const b = bucketsById[n]; return b && b.kind === 'goal' && !b.board_id; });
+          return (outward ? 1e6 : 0) + (inc.length ? inc.reduce((a, b) => a + b, 0) / inc.length : num(bd.x) + rank.get(g.id) * 10);
+        };
+        lane.sort((a, z) => score(a) - score(z));
+      });
+      place();
+      boardsOut.push({ id: bd.id, w: bw });
+      xRight = Math.max(xRight, num(bd.x) + bw);
+
+      // outside goals beside the box, at the height of what they connect to
+      const outside = goals.filter(g => !g.board_id && (nbr[g.id] || []).some(n => pos[n]?.board_id === bd.id));
+      const want = outside.map(g => {
+        const ys = (nbr[g.id] || []).map(n => world[n]).filter(Boolean);
+        return { g, y: ys.length ? ys.reduce((s, t) => s + t.y, 0) / ys.length - BUCKET_H / 2 : num(bd.y) };
+      }).sort((a, z) => a.y - z.y);
+      let lastY = -Infinity;
+      want.forEach(({ g, y }) => {
+        const yy = Math.max(y, lastY + BUCKET_H + 18);
+        pos[g.id] = { x: Math.round(num(bd.x) + bw + 70), y: Math.round(yy), board_id: null, layer_id: null };
+        world[g.id] = { x: num(bd.x) + bw + 70 + BUCKET_W / 2, y: yy + BUCKET_H / 2 };
+        lastY = yy;
+      });
+
+      // incomes above the box, over the goals they fund
+      const ins = incomes.filter(inc => (nbr[inc.id] || []).some(n => world[n] && (pos[n]?.board_id === bd.id || n === `board:${bd.id}`)))
+        .map(inc => {
+          const ts = (nbr[inc.id] || []).map(t => world[t]).filter(Boolean);
+          return { inc, x: ts.reduce((s, t) => s + t.x, 0) / ts.length - INCOME_W / 2 };
+        }).sort((a, z) => a.x - z.x);
+      let lastX = -Infinity;
+      ins.forEach(({ inc, x }) => {
+        const xx = Math.max(x, lastX + INCOME_W + 40);
+        pos[inc.id] = { x: Math.round(xx), y: Math.round(num(bd.y) - INCOME_H - 90), board_id: null, layer_id: null };
+        lastX = xx;
+      });
+    }
+
+    Object.entries(pos).forEach(([id, p]) => bucketsOut.push({ id, x: Math.round(p.x), y: Math.round(p.y), board_id: p.board_id ?? null, layer_id: p.layer_id ?? null }));
+    if (!bucketsOut.length) { notify('Nothing to tidy yet'); return; }
+    const byId = Object.fromEntries(bucketsOut.map(b => [b.id, b]));
+    const bw = Object.fromEntries(boardsOut.map(b => [b.id, b.w]));
+    setData(st => ({
+      ...st,
+      boards: st.boards.map(b => bw[b.id] ? { ...b, w: bw[b.id] } : b),
+      buckets: st.buckets.map(b => byId[b.id] ? { ...b, ...byId[b.id] } : b),
+    }));
+    await blueprintAPI.saveLayout({ buckets: bucketsOut, boards: boardsOut });
+    setTimeout(fit, 560);
+    notify('Tidied — goals sorted by date, links straightened');
+  });
+
+  // EMI on/off from the goal panel. The loan goal goes just right of the box.
+  const setEmi = async (bucket, payload) => {
+    const r = rects[bucket.id];
+    const bd = bucket.board_id ? boardsById[bucket.board_id] : null;
+    const spot = bd ? { x: num(bd.x) + num(bd.w) + 70, y: r ? r.y : num(bd.y) } : { x: (r?.x || 0) + 260, y: r?.y || 0 };
+    await blueprintAPI.setEmi(bucket.id, { ...payload, ...spot });
+    await reload();
+  };
+
   const fadeOut = (ids, after) => {
     setLeaving(prev => { const n = new Set(prev); ids.forEach(i => n.add(i)); return n; });
     setTimeout(after, LEAVE_MS);
@@ -501,7 +609,7 @@ export default function Blueprint() {
     const { d, mid } = linkPath(a, b);
     const on = sel?.type === 'link' && sel.id === l.id;
     const related = sel?.type === 'bucket' && (l.from_bucket_id === sel.id || l.to_bucket_id === sel.id);
-    const text = l.label || (l.amount ? `${fmtINR(l.amount)}/mo` : l.link_type === 'backup' ? 'backup' : '');
+    const text = l.label || (l.amount ? `${fmtINR(l.amount)}/mo` : l.link_type === 'backup' ? 'backup' : l.link_type === 'emi' ? 'EMI → loan' : '');
     const pick = (e) => { e.stopPropagation(); setSel({ type: 'link', id: l.id }); };
     return {
       id: l.id, link: l, mid, on,
@@ -509,7 +617,14 @@ export default function Blueprint() {
         <g key={l.id} className={`bp-link lt-${l.link_type} ${on ? 'on' : ''} ${related ? 'related' : ''} ${leaving.has(l.id) ? 'leaving' : ''}`}>
           <path d={d} className="bp-link-hit" onPointerDown={pick} />
           <path d={d} className="bp-link-line" markerEnd={`url(#bp-arrow-${l.link_type})`} />
-          {l.link_type !== 'related' && <path d={d} className="bp-link-flow" />}
+          {l.link_type !== 'related' && l.link_type !== 'emi' && <path d={d} className="bp-link-flow" />}
+          {l.link_type === 'emi' && (
+            <g className="bp-coin" aria-hidden="true">
+              <circle r="11" />
+              <text textAnchor="middle" dy="4">₹</text>
+              <animateMotion dur="2.6s" repeatCount="indefinite" path={d} keyPoints="0;1" keyTimes="0;1" calcMode="spline" keySplines="0.45 0 0.25 1" />
+            </g>
+          )}
         </g>
       ),
       label: text ? (
@@ -557,11 +672,20 @@ export default function Blueprint() {
         )}
 
         <div className="bp-top-actions">
-          <label className="bp-toggle">
-            <input type="checkbox" checked={showCompleted} onChange={e => setShowCompleted(e.target.checked)} />
-            <span className="bp-toggle-track" /> Show completed
-          </label>
-          <button className="bp-btn ghost" onClick={() => { setSel(null); setDrawer(true); }}>✓ Completed <span className="bp-count">{stats.completed}</span></button>
+          <div className="bp-viewseg" role="radiogroup" aria-label="Goals shown on the board">
+            <span className="bp-viewseg-label">Show</span>
+            <button role="radio" aria-checked={!showCompleted} className={!showCompleted ? 'on' : ''} onClick={() => setShowCompleted(false)}>
+              Open <b>{stats.open}</b>
+            </button>
+            <button role="radio" aria-checked={showCompleted} className={showCompleted ? 'on' : ''} onClick={() => setShowCompleted(true)}>
+              All <b>{stats.open + stats.completed}</b>
+            </button>
+          </div>
+          <button className="bp-archive" onClick={() => { setSel(null); setDrawer(true); }}>
+            <span className="bp-archive-icon" aria-hidden="true">✓</span>
+            <span>Completed</span>
+            <b>{stats.completed}</b>
+          </button>
         </div>
       </header>
 
@@ -572,6 +696,7 @@ export default function Blueprint() {
 
         {status === 'ready' && !isEmpty && (
           <div className={`bp-world ${glide ? 'glide' : ''}`} style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.z})` }}>
+            {railOn && boards.map(bd => <MoneyRail key={`rail-${bd.id}`} board={bd} L={layout[bd.id]} buckets={visible} />)}
             {boards.map(bd => (
               <Board key={bd.id} board={bd} L={layout[bd.id]} buckets={visible}
                 selected={sel?.type === 'board' && sel.id === bd.id}
@@ -594,7 +719,7 @@ export default function Blueprint() {
 
             <svg className="bp-links" width="1" height="1">
               <defs>
-                {['funds', 'backup', 'related'].map(t => (
+                {['funds', 'backup', 'related', 'emi'].map(t => (
                   <marker key={t} id={`bp-arrow-${t}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                     <path d="M 0 0 L 10 5 L 0 10 z" className={`bp-arrow lt-${t}`} />
                   </marker>
@@ -666,8 +791,11 @@ export default function Blueprint() {
               <button className="bp-dock-btn" tabIndex={editing ? 0 : -1} disabled={busy} onClick={addBoard}><span>▦</span>Plan box</button>
               <button className="bp-dock-btn" tabIndex={editing ? 0 : -1} disabled={busy} onClick={addExternal}><span>▢</span>Goal outside</button>
               <button className="bp-dock-btn" tabIndex={editing ? 0 : -1} disabled={busy} onClick={addIncome}><span>₹</span>Income</button>
+              <button className="bp-dock-btn" tabIndex={editing ? 0 : -1} disabled={busy} onClick={tidyUp} title="Sort goals by date and untangle the links"><span>✦</span>Tidy up</button>
               <div className="bp-dock-sep" />
             </div>
+            <button className={`bp-dock-btn ${railOn ? 'is-on' : ''}`} onClick={toggleRail} aria-pressed={railOn} title="Show the money needed at each milestone"><span>⟟</span>Milestones</button>
+            <div className="bp-dock-sep" />
             <button className="bp-dock-btn icon" onClick={() => zoomBy(1 / 1.2)} aria-label="Zoom out">−</button>
             <button className="bp-dock-zoom" onClick={() => zoomBy(1 / view.z)}>{Math.round(view.z * 100)}%</button>
             <button className="bp-dock-btn icon" onClick={() => zoomBy(1.2)} aria-label="Zoom in">+</button>
@@ -677,30 +805,7 @@ export default function Blueprint() {
 
 
 
-        {status === 'ready' && !isEmpty && (
-          <div className={`bp-legend ${keyOpen ? 'open' : ''}`} onPointerDown={e => e.stopPropagation()}>
-            <button className="bp-key-btn" aria-expanded={keyOpen} onClick={() => setKeyOpen(o => !o)}>
-              <span className="bp-key-dots" aria-hidden="true"><i className="tone-coral" /><i className="tone-gold" /><i className="tone-mint" /></span>
-              {keyOpen ? 'Hide key' : 'Key'}
-            </button>
-            <div className="bp-legend-body">
-              <div className="bp-legend-inner">
-                <div className="bp-legend-row">
-                  <span className="dot tone-coral" />Below 25%<span className="dot tone-gold" />25–60%<span className="dot tone-lime" />60–99%<span className="dot tone-mint" />Reached
-                </div>
-                <div className="bp-legend-row">
-                  <span className="ln lt-funds" />Funds<span className="ln lt-backup" />Backup<span className="ln lt-related" />Related
-                </div>
-                <div className="bp-legend-row">
-                  <span className="pulse-dot soon" />Due in 7 days<span className="pulse-dot overdue" />Overdue<span className="pulse-dot reached" />Target reached
-                </div>
-                <div className="bp-legend-hint">{editing
-                  ? 'Drag goals between lanes. Drag the ● on a goal onto another goal to link them.'
-                  : 'Click any goal to see its details. Press Edit plan to change things.'}</div>
-              </div>
-            </div>
-          </div>
-        )}
+
 
         {toast && <div key={toast.k} className={`bp-toast ${toast.tone}`} role="status">{toast.text}</div>}
       </div>
@@ -709,12 +814,12 @@ export default function Blueprint() {
       {selected && selected.kind === 'goal' && (
         <BucketPanel key={selected.id} bucket={selected} boardsById={boardsById} links={data.links} bucketsById={bucketsById}
           onReload={reload} onClose={() => setSel(null)} notify={notify} onSelect={setSel} onDelete={() => deleteBucket(selected)}
-          editing={editing} onEdit={() => setEditing(true)} />
+          editing={editing} onEdit={() => setEditing(true)} onEmi={(payload) => setEmi(selected, payload)} />
       )}
       {selected && selected.kind === 'income' && (
         <IncomePanel key={selected.id} bucket={selected} links={data.links} bucketsById={bucketsById} boardsById={boardsById}
           onReload={reload} onClose={() => setSel(null)} notify={notify} onSelect={setSel} onDelete={() => deleteBucket(selected)}
-          editing={editing} onEdit={() => setEditing(true)} />
+          editing={editing} onEdit={() => setEditing(true)} onEmi={(payload) => setEmi(selected, payload)} />
       )}
       {selectedBoard && (
         <BoardPanel key={selectedBoard.id} board={selectedBoard} buckets={data.buckets}
@@ -839,13 +944,16 @@ function BucketCard({ bucket: b, rect, selected, dragging, linkTarget, external,
 
   return (
     <div data-bucket-id={b.id}
-      className={`bp-bucket goal tone-${tone} ${leaving ? 'leaving' : ''} ${hex ? 'colored' : ''} ${att ? `att-${att}` : ''} ${selected ? 'selected' : ''} ${dragging ? 'dragging' : ''} ${done ? 'done' : ''} ${external ? 'external' : ''} ${linkTarget ? 'link-target' : ''}`}
+      className={`bp-bucket goal tone-${tone} ${b.is_loan ? 'loan' : ''} ${b.is_emi ? 'emi' : ''} ${leaving ? 'leaving' : ''} ${hex ? 'colored' : ''} ${att ? `att-${att}` : ''} ${selected ? 'selected' : ''} ${dragging ? 'dragging' : ''} ${done ? 'done' : ''} ${external ? 'external' : ''} ${linkTarget ? 'link-target' : ''}`}
       style={style} onPointerDown={onDown}>
       <div className="bp-bucket-top">
         <span className="bp-bucket-name" title={b.name}>{done && '✓ '}{b.name}</span>
-        {b.recurrence !== 'none' && <span className="bp-rec" title={scheduleText(b)}>↻ {b.recurrence === 'weekly' ? 'Wk' : b.recurrence === 'monthly' ? 'Mo' : 'Yr'}</span>}
+        {b.is_loan ? <span className="bp-rec loan">Loan</span>
+          : b.is_emi ? <span className="bp-rec emi" title={scheduleText(b)}>EMI</span>
+          : b.recurrence !== 'none' && <span className="bp-rec" title={scheduleText(b)}>↻ {b.recurrence === 'weekly' ? 'Wk' : b.recurrence === 'monthly' ? 'Mo' : 'Yr'}</span>}
       </div>
       <div className="bp-bucket-amt">
+        {b.is_loan && <span className="muted">Paid</span>}
         <span className="mono strong">{fmtINR(b.current_value)}</span>
         <span className="mono muted">of {num(b.target_amount) > 0 ? fmtINR(b.target_amount) : '—'}</span>
         <span className="bp-pct mono">{num(b.target_amount) > 0 ? `${Math.round(pct)}%` : ''}</span>
@@ -863,6 +971,68 @@ function BucketCard({ bucket: b, rect, selected, dragging, linkTarget, external,
         </span>
       </div>
       {handle}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  Money milestone rail — what each lane needs by its end date
+// ═══════════════════════════════════════════════════════════════════
+const RAIL_W = 236;
+function MoneyRail({ board, L, buckets }) {
+  if (!L) return null;
+  const goals = buckets.filter(b => b.board_id === board.id && b.kind === 'goal' && b.status !== 'completed');
+  const lanes = board.layers.map((l, i) => ({ l, i, ...laneMoney(l, goals.filter(g => g.layer_id === l.id)) }));
+  const total = lanes.reduce((s, x) => ({ need: s.need + x.need, funded: s.funded + x.funded }), { need: 0, funded: 0 });
+  const totalGap = Math.max(0, total.need - total.funded);
+  const pct = total.need > 0 ? Math.round(total.funded / total.need * 100) : 0;
+  const x0 = num(board.x) - RAIL_W - 26;
+  const spineX = RAIL_W + 12;
+  let running = 0;
+
+  return (
+    <div className="bp-rail" style={{ left: x0, top: num(board.y), width: RAIL_W + 26, height: L.totalH }} aria-label={`Money needed for ${board.name}`}>
+      <svg className="bp-rail-spine" width={RAIL_W + 26} height={L.totalH}>
+        <line x1={spineX} y1={HEADER_H / 2} x2={spineX} y2={L.totalH} className="track" />
+        {lanes.map(({ i, need, funded }) => {
+          const y1 = HEADER_H + L.tops[i], h = L.heights[i];
+          const f = need > 0 ? Math.min(1, funded / need) : 1;
+          return (
+            <g key={i}>
+              <line x1={spineX} y1={y1} x2={spineX} y2={y1 + h * f} className="funded" />
+              {f < 1 && <line x1={spineX} y1={y1 + h * f} x2={spineX} y2={y1 + h} className="gap" />}
+              <line x1={spineX - 7} y1={y1 + h} x2={spineX + 26} y2={y1 + h} className="tick" />
+              <circle cx={spineX} cy={y1 + h} r="5" className={`node ${need > funded ? 'short' : 'ok'}`} />
+            </g>
+          );
+        })}
+        <circle cx={spineX} cy={HEADER_H / 2} r="7" className="node top" />
+      </svg>
+
+      <div className="bp-rail-total" style={{ top: 0 }}>
+        <span className="k">Plan needs</span>
+        <span className="v">{fmtINR(total.need)}</span>
+        <span className="bar"><span style={{ width: `${Math.min(100, pct)}%` }} /></span>
+        <span className="s">{fmtINR(total.funded)} funded{totalGap > 0 ? <> · <em>{fmtINR(totalGap)} short</em></> : ' · fully funded'}</span>
+      </div>
+
+      {lanes.map(({ l, i, need, funded, gap, win }) => {
+        running += need;
+        const yEnd = HEADER_H + L.tops[i] + L.heights[i];
+        const by = win?.to ? `By ${fmtDate(win.to)}` : win?.from ? `After ${fmtDate(win.from)}` : l.label;
+        return (
+          <div key={l.id} className={`bp-rail-mark ${need === 0 ? 'empty' : gap > 0 ? 'short' : 'ok'}`} style={{ top: Math.max(HEADER_H + L.tops[i] + 6, yEnd - 74) }}>
+            <span className="k">{by}</span>
+            <span className="v">{need > 0 ? fmtINR(need) : '—'}</span>
+            <span className="s">
+              {need === 0 ? 'No targets in this lane'
+                : gap > 0 ? <><em>{fmtINR(gap)} short</em> · {fmtINR(funded)} in hand</>
+                : 'Fully funded'}
+            </span>
+            {need > 0 && i > 0 && <span className="c">{fmtINR(running)} needed in total by then</span>}
+          </div>
+        );
+      })}
     </div>
   );
 }

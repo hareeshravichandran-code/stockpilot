@@ -197,6 +197,7 @@ export const blueprintAPI = {
   complete:      (id)           => api.post(`/api/blueprint/buckets/${id}/complete`),
   reopen:        (id)           => api.post(`/api/blueprint/buckets/${id}/reopen`),
   closeCycle:    (id, data)     => api.post(`/api/blueprint/buckets/${id}/cycle`, data),
+  setEmi:        (id, data)     => api.post(`/api/blueprint/buckets/${id}/emi`, data),
   mapAsset:      (id, data)     => api.post(`/api/blueprint/buckets/${id}/assets`, data),
   unmapAsset:    (id, assetId)  => api.delete(`/api/blueprint/buckets/${id}/assets/${assetId}`),
   createLink:    (data)         => api.post('/api/blueprint/links', data),

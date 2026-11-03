@@ -70,7 +70,7 @@ function Tabs({ value, onChange, items }) {
 // ═══════════════════════════════════════════════════════════════════
 //  Goal bucket
 // ═══════════════════════════════════════════════════════════════════
-export function BucketPanel({ bucket, boardsById, links, bucketsById, onReload, onClose, notify, onSelect, onDelete, editing, onEdit }) {
+export function BucketPanel({ bucket, boardsById, links, bucketsById, onReload, onClose, notify, onSelect, onDelete, editing, onEdit, onEmi }) {
   const [tab, setTab] = useState('details');
   const board = bucket.board_id ? boardsById[bucket.board_id] : null;
   const layer = board ? board.layers.find(l => l.id === bucket.layer_id) : null;
@@ -111,7 +111,7 @@ export function BucketPanel({ bucket, boardsById, links, bucketsById, onReload, 
       ]} />
 
       {tab === 'details' && (editing
-        ? <BucketDetails key={bucket.id} bucket={bucket} onReload={onReload} notify={notify} onDelete={onDelete} />
+        ? <BucketDetails key={bucket.id} bucket={bucket} loan={bucket.emi_loan_id ? bucketsById[bucket.emi_loan_id] : null} onReload={onReload} notify={notify} onDelete={onDelete} onEmi={onEmi} />
         : <BucketSummary bucket={bucket} onEdit={onEdit} />)}
       {tab === 'assets'  && <AssetsTab bucket={bucket} onReload={onReload} notify={notify} editing={editing} />}
       {tab === 'links'   && <LinksList bucket={bucket} links={myLinks} bucketsById={bucketsById} boardsById={boardsById} onSelect={onSelect} />}
@@ -214,7 +214,70 @@ function ScheduleFields({ d, setD }) {
   );
 }
 
-function BucketDetails({ bucket, onReload, notify, onDelete }) {
+// EMI: monthly goal + a loan goal outside the box that collects every paid instalment
+function EmiFields({ bucket, loan, onEmi, notify }) {
+  const on = !!bucket.is_emi;
+  const [open, setOpen] = useState(on);
+  const [amount, setAmount] = useState(loan?.target_amount ?? '');
+  const [paid, setPaid] = useState(loan ? '' : '');
+  const [name, setName] = useState(loan?.name || '');
+  const [busy, setBusy] = useState(false);
+  const [confirmOff, setConfirmOff] = useState(false);
+  const run = async (payload, ok) => {
+    setBusy(true);
+    try { await onEmi(payload); notify(ok); }
+    catch (e) { notify(errMsg(e), 'error'); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className={`bp-schedule bp-emi ${on ? 'active' : ''}`}>
+      <label className="bp-switch-row">
+        <span>
+          <span className="bp-field-label">This is an EMI</span>
+          <span className="bp-field-hint">{on
+            ? `Each closed month adds its instalment to “${loan?.name || 'the loan'}”.`
+            : 'Turn on for a loan instalment. A loan goal is created outside the box and fills up as you pay.'}</span>
+        </span>
+        <span className="bp-toggle">
+          <input type="checkbox" checked={open} onChange={e => { if (!e.target.checked && on) setConfirmOff(true); else setOpen(e.target.checked); }} />
+          <span className="bp-toggle-track" />
+        </span>
+      </label>
+      <div className={`bp-reveal ${open ? 'open' : ''}`}>
+        <div className="bp-reveal-inner">
+          {on && loan && (
+            <div className="bp-emi-progress">
+              <span>Paid {fmtINR(loan.current_value, { compact: false })} of {fmtINR(loan.target_amount, { compact: false })}</span>
+              <span className="bp-bar"><span className="bp-bar-fill" style={{ width: `${Math.min(100, num(loan.progress))}%` }} /></span>
+            </div>
+          )}
+          <Field label="Loan name"><input className="bp-input" value={name} placeholder={`${bucket.name} — loan`} onChange={e => setName(e.target.value)} /></Field>
+          <div className="bp-grid2">
+            <Field label="Total loan amount (₹)"><input className="bp-input mono" type="number" min="0" value={amount} onChange={e => setAmount(e.target.value)} /></Field>
+            <Field label={on ? 'Correct paid so far (₹)' : 'Already paid (₹)'}><input className="bp-input mono" type="number" min="0" value={paid} placeholder={on ? 'Leave blank to keep' : '0'} onChange={e => setPaid(e.target.value)} /></Field>
+          </div>
+          <div className="bp-row-end">
+            <button className="bp-btn primary sm" disabled={busy || !(num(amount) > 0)}
+              onClick={() => run({ enabled: true, loan_amount: num(amount), loan_name: name, loan_paid: paid === '' ? undefined : num(paid) }, on ? 'Loan updated' : 'EMI on — loan goal created and linked')}>
+              {on ? 'Update loan' : 'Create loan goal'}
+            </button>
+          </div>
+        </div>
+      </div>
+      {confirmOff && (
+        <div className="bp-confirm-box">
+          <div className="bp-confirm-text">Turning EMI off removes the loan goal “{loan?.name || 'loan'}” and its paid history.</div>
+          <div className="bp-row-end">
+            <button className="bp-btn ghost sm" onClick={() => setConfirmOff(false)}>Keep EMI</button>
+            <button className="bp-btn sm bp-btn-delete" disabled={busy} onClick={() => { setConfirmOff(false); setOpen(false); run({ enabled: false }, 'EMI turned off'); }}>Turn off</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BucketDetails({ bucket, loan, onReload, notify, onDelete, onEmi }) {
   const init = () => ({
     name: bucket.name || '',
     target_amount: bucket.target_amount ?? '',
@@ -256,7 +319,9 @@ function BucketDetails({ bucket, onReload, notify, onDelete }) {
           <input className="bp-input" type="date" value={d.target_date} onChange={set('target_date')} />
         </Field>
       </div>
-      <ScheduleFields d={d} setD={setD} />
+      {!bucket.is_loan && <ScheduleFields d={d} setD={setD} />}
+      {!bucket.is_loan && <EmiFields bucket={bucket} loan={loan} onEmi={onEmi} notify={notify} />}
+      {bucket.is_loan && <div className="bp-callout">This is the loan an EMI goal pays into. Each time you close an EMI cycle, the instalment is added here as paid.</div>}
       {d.recurrence !== 'none' && preview && <div className="bp-field-hint">Next due {fmtDate(preview)} ({relTime(daysUntil(preview))}).</div>}
       <Field label="Cash set aside outside Kanalyst (₹)" hint="Added to the mapped funds — savings account money, cash, anything not tracked here.">
         <input className="bp-input mono" type="number" min="0" value={d.manual_value} onChange={set('manual_value')} />
@@ -351,6 +416,8 @@ function AssetsTab({ bucket, onReload, notify, editing }) {
 
 function AssetPicker({ bucket, onDone, onReload, notify }) {
   const [assets, setAssets] = useState(null);
+  const [members, setMembers] = useState([]);
+  const [owner, setOwner] = useState('all');
   const [type, setType] = useState('all');
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState(null);
@@ -358,7 +425,7 @@ function AssetPicker({ bucket, onDone, onReload, notify }) {
 
   useEffect(() => {
     let alive = true;
-    blueprintAPI.assets().then(r => { if (alive) setAssets(r.data.assets || []); })
+    blueprintAPI.assets().then(r => { if (alive) { setAssets(r.data.assets || []); setMembers(r.data.members || []); } })
       .catch(e => { if (alive) { setAssets([]); notify(errMsg(e), 'error'); } });
     inputRef.current?.focus();
     return () => { alive = false; };
@@ -368,10 +435,11 @@ function AssetPicker({ bucket, onDone, onReload, notify }) {
     if (!assets) return [];
     const s = q.trim().toLowerCase();
     return assets
+      .filter(a => owner === 'all' || a.owner_id === owner)
       .filter(a => type === 'all' || a.asset_type === type)
       .filter(a => !s || `${a.label} ${a.sub}`.toLowerCase().includes(s))
       .sort((a, b) => (!!a.owner_bucket_id - !!b.owner_bucket_id) || b.value - a.value);
-  }, [assets, type, q]);
+  }, [assets, type, q, owner]);
 
   const counts = useMemo(() => {
     const c = {};
@@ -396,6 +464,14 @@ function AssetPicker({ bucket, onDone, onReload, notify }) {
         <input ref={inputRef} className="bp-input" placeholder="Search stock, fund, bank…" value={q} onChange={e => setQ(e.target.value)} />
         <button className="bp-btn ghost" onClick={onDone}>Done</button>
       </div>
+      {members.length > 1 && (
+        <div className="bp-owner-seg" role="radiogroup" aria-label="Whose assets">
+          <button role="radio" aria-checked={owner === 'all'} className={owner === 'all' ? 'on' : ''} onClick={() => setOwner('all')}>Family</button>
+          {members.map(m => (
+            <button key={m.id} role="radio" aria-checked={owner === m.id} className={owner === m.id ? 'on' : ''} onClick={() => setOwner(m.id)}>{m.name}</button>
+          ))}
+        </div>
+      )}
       <div className="bp-chips">
         {ASSET_TYPES.filter(t => t.id === 'all' || counts[t.id]).map(t => (
           <button key={t.id} className={`bp-chip ${type === t.id ? 'on' : ''}`} onClick={() => setType(t.id)}>

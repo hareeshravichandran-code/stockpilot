@@ -400,3 +400,74 @@ export function nextRowSlot(siblings, w = BUCKET_W) {
   const right = row.reduce((m, s) => Math.max(m, s.x + s.w), GUTTER_W + 4);
   return { x: Math.round(right + 20), y: 18, needW: Math.round(right + 20 + w + 20) };
 }
+
+// ── Grid inside a lane: up to 5 goals per row, tight rows ───────────
+export const COLS = 5;
+export const COL_GAP = 20;
+export const ROW_GAP = 16;
+export const LANE_PAD_Y = 16;
+const colX = (c) => GUTTER_W + 22 + c * (BUCKET_W + COL_GAP);
+const rowY = (r) => LANE_PAD_Y + r * (BUCKET_H + ROW_GAP);
+export const gridWidth = (cols) => colX(Math.max(1, cols)) - COL_GAP + 22;   // board width that fits `cols` columns
+export const FULL_W = gridWidth(COLS);
+
+function cellOf(s) {
+  return { c: Math.max(0, Math.round((s.x - colX(0)) / (BUCKET_W + COL_GAP))), r: Math.max(0, Math.round((s.y - LANE_PAD_Y) / (BUCKET_H + ROW_GAP))) };
+}
+// First free cell, reading left→right then top→bottom
+export function nextGridSlot(siblings) {
+  const taken = new Set(siblings.map(s => { const k = cellOf(s); return `${k.r}:${k.c}`; }));
+  for (let r = 0; r < 50; r++) for (let c = 0; c < COLS; c++) {
+    if (!taken.has(`${r}:${c}`)) return { x: colX(c), y: rowY(r), col: c };
+  }
+  return { x: colX(0), y: rowY(50), col: 0 };
+}
+// Nearest free cell to a dropped position
+export function nearestGridSlot(x, y, siblings) {
+  const taken = new Set(siblings.map(s => { const k = cellOf(s); return `${k.r}:${k.c}`; }));
+  const want = cellOf({ x, y });
+  let best = null;
+  for (let r = 0; r < 50; r++) for (let c = 0; c < COLS; c++) {
+    if (taken.has(`${r}:${c}`)) continue;
+    const d = Math.abs(r - want.r) * 1.6 + Math.abs(c - Math.min(want.c, COLS - 1));
+    if (!best || d < best.d) best = { d, x: colX(c), y: rowY(r), col: c };
+  }
+  return best || nextGridSlot(siblings);
+}
+// Place an ordered list of goals into the grid
+export const gridPositions = (n) => Array.from({ length: n }, (_, i) => ({ x: colX(i % COLS), y: rowY(Math.floor(i / COLS)) }));
+
+// ── Money needed per lane, for the milestone rail ───────────────────
+function cyclesIn(b, from, to) {
+  if (!to) return 1;
+  let n = 0;
+  const step = (d) => {
+    const x = new Date(d);
+    if (b.recurrence === 'weekly') x.setDate(x.getDate() + 7);
+    else if (b.recurrence === 'monthly') x.setMonth(x.getMonth() + 1);
+    else x.setFullYear(x.getFullYear() + 1);
+    return x;
+  };
+  const start = from > new Date() ? from : new Date();
+  // No day chosen yet: assume one payment per cycle, starting at the lane start
+  let d = nextDue(b, start) || new Date(start);
+  while (d && d <= to && n < 600) { n++; d = step(d); }
+  return Math.max(n, 1);
+}
+export function laneMoney(layer, goals) {
+  const win = laneWindow(layer);
+  let need = 0, funded = 0;
+  for (const g of goals) {
+    const t = num(g.target_amount);
+    if (t <= 0) continue;
+    if (g.recurrence && g.recurrence !== 'none' && win) {
+      const n = cyclesIn(g, win.from || new Date(), win.to);
+      need += t * n;
+      funded += Math.min(num(g.current_value), t);
+    } else {
+      need += t;
+      funded += Math.min(num(g.current_value), t);
+    }
+  }
+  return { need, funded, gap: Math.max(0, need - funded), win };
+}
