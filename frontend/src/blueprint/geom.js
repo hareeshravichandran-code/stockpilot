@@ -471,3 +471,31 @@ export function laneMoney(layer, goals) {
   }
   return { need, funded, gap: Math.max(0, need - funded), win };
 }
+
+// Is the goal on track? Compares money saved with time passed since it started.
+// 'ahead' | 'on' | 'behind' | null (no target, no date, or repeating)
+export function paceOf(b) {
+  const t = num(b.target_amount);
+  if (b.kind !== 'goal' || b.status === 'completed' || t <= 0 || !b.target_date || (b.recurrence && b.recurrence !== 'none')) return null;
+  const start = new Date(b.created_at || Date.now());
+  const end = new Date(b.target_date);
+  const span = end - start;
+  if (!(span > 0)) return null;
+  if (Date.now() - start < 14 * 864e5) return null;   // too new to judge
+  const expected = Math.min(1, Math.max(0, (Date.now() - start) / span));
+  const actual = num(b.current_value) / t;
+  if (actual >= 1) return 'ahead';
+  if (actual >= expected + 0.05) return 'ahead';
+  if (actual >= expected - 0.05) return 'on';
+  return 'behind';
+}
+
+// Compact date for cards: "25 Dec" this year, "Aug 2027" later
+export function fmtShortDate(d) {
+  if (!d) return '';
+  const dt = new Date(d);
+  if (Number.isNaN(dt.getTime())) return '';
+  return dt.getFullYear() === new Date().getFullYear()
+    ? dt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
+    : dt.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+}

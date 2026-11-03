@@ -7,7 +7,7 @@ import {
   computeLayout, bucketRect, dropTarget, linkPath, contentBounds, avoidOverlap,
   colorHex, dueDate, daysUntil, relTime, attention, layerHorizon, scheduleText,
   LANE_PRESETS, DEFAULT_LANES, laneWindow, laneInsertIndex, outsideLane, laneWindowText,
-  nextGridSlot, nearestGridSlot, gridPositions, gridWidth, COLS, laneMoney, ROW_GAP, LANE_PAD_Y,
+  nextGridSlot, nearestGridSlot, gridPositions, gridWidth, COLS, laneMoney, ROW_GAP, LANE_PAD_Y, paceOf, fmtShortDate,
 } from '../blueprint/geom';
 import { BucketPanel, IncomePanel, BoardPanel, LinkPanel, CompletedPanel, LanePicker } from '../blueprint/Panels';
 import './Blueprint.css';
@@ -38,6 +38,8 @@ export default function Blueprint() {
   const [toast, setToast] = useState(null);
   const [leaving, setLeaving] = useState(() => new Set());   // ids fading out before removal
   const [laneFor, setLaneFor] = useState(null);              // board id with the lane picker open
+  const [dockOpen, setDockOpen] = useState(() => { try { return localStorage.getItem('bp_dock') === '1'; } catch (e) { return false; } });
+  const toggleDock = () => { const v = !dockOpen; setDockOpen(v); try { localStorage.setItem('bp_dock', v ? '1' : '0'); } catch (e) {} };
   const [railOn, setRailOn] = useState(() => { try { return localStorage.getItem('bp_rail') !== '0'; } catch (e) { return true; } });
   const toggleRail = () => { const v = !railOn; setRailOn(v); try { localStorage.setItem('bp_rail', v ? '1' : '0'); } catch (e) {} };
   const [busy, setBusy] = useState(false);
@@ -695,7 +697,7 @@ export default function Blueprint() {
         onPointerDown={startPan}>
 
         {status === 'ready' && !isEmpty && (
-          <div className={`bp-world ${glide ? 'glide' : ''}`} style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.z})` }}>
+          <div className={`bp-world ${glide ? 'glide' : ''} ${view.z < 0.62 ? 'zoom-far' : view.z < 0.85 ? 'zoom-mid' : ''}`} style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.z})` }}>
             {railOn && boards.map(bd => <MoneyRail key={`rail-${bd.id}`} board={bd} L={layout[bd.id]} buckets={visible} />)}
             {boards.map(bd => (
               <Board key={bd.id} board={bd} L={layout[bd.id]} buckets={visible}
@@ -781,8 +783,9 @@ export default function Blueprint() {
 
         {/* Toolbar */}
         {status === 'ready' && !isEmpty && (
-          <div className="bp-dock" onPointerDown={e => e.stopPropagation()}>
-            <button className={`bp-mode ${editing ? 'on' : ''}`} aria-pressed={editing}
+          <div className={`bp-dock ${dockOpen ? 'open' : 'closed'} ${editing ? 'editing' : ''}`} onPointerDown={e => e.stopPropagation()}>
+            <div className="bp-dock-tray" aria-hidden={!dockOpen}>
+            <button className={`bp-mode ${editing ? 'on' : ''}`} aria-pressed={editing} tabIndex={dockOpen ? 0 : -1}
               onClick={() => { setEditing(!editing); setLaneFor(null); notify(editing ? 'Plan locked — view mode' : 'Edit mode — drag, add and link freely'); }}>
               <span className="bp-mode-icon" aria-hidden="true">{editing ? '✓' : '✎'}</span>
               {editing ? 'Done' : 'Edit plan'}
@@ -800,6 +803,12 @@ export default function Blueprint() {
             <button className="bp-dock-zoom" onClick={() => zoomBy(1 / view.z)}>{Math.round(view.z * 100)}%</button>
             <button className="bp-dock-btn icon" onClick={() => zoomBy(1.2)} aria-label="Zoom in">+</button>
             <button className="bp-dock-btn" onClick={fit}><span>⤢</span>Fit</button>
+            </div>
+            <button className="bp-dock-handle" onClick={toggleDock} aria-expanded={dockOpen} aria-label={dockOpen ? 'Hide tools' : 'Show tools'}
+              title={dockOpen ? 'Hide tools' : editing ? 'Tools (editing)' : 'Tools'}>
+              <span className="bp-dock-handle-icon" aria-hidden="true">{dockOpen ? '✕' : editing ? '✎' : '⋯'}</span>
+              {!dockOpen && <span className="bp-dock-handle-text">{editing ? 'Editing' : 'Tools'}</span>}
+            </button>
           </div>
         )}
 
@@ -911,6 +920,8 @@ function Board({ board, L, buckets, selected, dropLayer, linkTarget, onHeaderDow
 // ═══════════════════════════════════════════════════════════════════
 //  Bucket card (goal or income)
 // ═══════════════════════════════════════════════════════════════════
+const RING_R = 18;
+const RING_C = 2 * Math.PI * RING_R;
 function BucketCard({ bucket: b, rect, selected, dragging, linkTarget, external, onDown, onLinkDown, editing, leaving, stray }) {
   if (!rect) return null;
   const hex = colorHex(b.color);
@@ -941,6 +952,9 @@ function BucketCard({ bucket: b, rect, selected, dragging, linkTarget, external,
   const due = dueDate(b);
   const days = daysUntil(due);
   const overdue = isOverdue(b) || att === 'overdue';
+  const target = num(b.target_amount);
+  const left = Math.max(0, target - num(b.current_value));
+  const pace = paceOf(b);
 
   return (
     <div data-bucket-id={b.id}
@@ -952,18 +966,28 @@ function BucketCard({ bucket: b, rect, selected, dragging, linkTarget, external,
           : b.is_emi ? <span className="bp-rec emi" title={scheduleText(b)}>EMI</span>
           : b.recurrence !== 'none' && <span className="bp-rec" title={scheduleText(b)}>↻ {b.recurrence === 'weekly' ? 'Wk' : b.recurrence === 'monthly' ? 'Mo' : 'Yr'}</span>}
       </div>
-      <div className="bp-bucket-amt">
-        {b.is_loan && <span className="muted">Paid</span>}
-        <span className="mono strong">{fmtINR(b.current_value)}</span>
-        <span className="mono muted">of {num(b.target_amount) > 0 ? fmtINR(b.target_amount) : '—'}</span>
-        <span className="bp-pct mono">{num(b.target_amount) > 0 ? `${Math.round(pct)}%` : ''}</span>
+      <div className="bp-money">
+        <div className="bp-money-main">
+          {target > 0
+            ? <span className="bp-target" title={`Target ${fmtINR(target, { compact: false })} · ${fmtINR(left, { compact: false })} to go`}>{fmtINR(target)}</span>
+            : <span className="bp-target none">No target yet</span>}
+          <span className="bp-saved">{b.is_loan ? 'Paid' : 'Saved'} <b>{fmtINR(b.current_value)}</b>{target > 0 && left === 0 && <i className="done"> · done</i>}</span>
+        </div>
+        {target > 0 && (
+          <svg className="bp-ring" viewBox="0 0 44 44" role="img" aria-label={`${Math.round(pct)}% funded`}>
+            <circle cx="22" cy="22" r={RING_R} className="bp-ring-track" />
+            <circle cx="22" cy="22" r={RING_R} className="bp-ring-fill"
+              strokeDasharray={RING_C} strokeDashoffset={RING_C * (1 - Math.min(100, pct) / 100)} transform="rotate(-90 22 22)" />
+            <text x="22" y="22" dy="0.35em" textAnchor="middle">{Math.round(Math.min(999, pct))}%</text>
+          </svg>
+        )}
       </div>
-      <div className="bp-bar"><div className="bp-bar-fill" style={{ width: `${Math.min(100, pct)}%` }} /></div>
       <div className="bp-bucket-foot">
         <span className={overdue ? 'overdue' : att === 'soon' ? 'soon' : ''} title={stray ? 'This date is outside the lane it sits in' : undefined}>
           {stray && <span className="bp-stray" aria-label="Date outside this lane">⇅ </span>}
-          {due ? `${b.recurrence !== 'none' ? 'Next ' : ''}${fmtDate(due)}, ${relTime(days)}` : 'No date set'}
+          {due ? <>{b.recurrence !== 'none' ? 'Next ' : ''}{fmtShortDate(due)}<span className="bp-rel">, {relTime(days)}</span></> : 'No date set'}
         </span>
+        {pace && <span className={`bp-pace ${pace}`}>{pace === 'on' ? 'On track' : pace === 'ahead' ? 'Ahead' : 'Behind'}</span>}
         <span className="bp-badges">
           {b.assets.length > 0 && <span title="Mapped assets">◉ {b.assets.length}</span>}
           {b.comment_count > 0 && <span title="Notes">✎ {b.comment_count}</span>}
