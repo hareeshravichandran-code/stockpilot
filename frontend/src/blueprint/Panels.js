@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { blueprintAPI } from '../lib/api';
 import {
-  PERIODS, RECURRENCE, LINK_TYPES, ASSET_TYPES, assetTypeLabel,
-  fmtINR, fmtDate, num, progressTone, isOverdue,
+  PERIODS, LINK_TYPES, ASSET_TYPES, assetTypeLabel, GOAL_COLORS, WEEKDAYS, MONTHS,
+  fmtINR, fmtDate, num, progressTone, colorHex, nextDue, dueDate, daysUntil, relTime, scheduleText,
 } from './geom';
 
 const errMsg = (e) => e?.response?.data?.error || e?.message || 'Something went wrong';
@@ -17,9 +17,9 @@ function Field({ label, children, hint }) {
   );
 }
 
-function PanelShell({ title, eyebrow, onClose, children, footer }) {
+function PanelShell({ title, eyebrow, onClose, children, footer, accent }) {
   return (
-    <aside className="bp-panel" onPointerDown={e => e.stopPropagation()}>
+    <aside className="bp-panel" onPointerDown={e => e.stopPropagation()} style={accent ? { '--accent-c': accent } : undefined}>
       <header className="bp-panel-head">
         <div>
           {eyebrow && <div className="bp-eyebrow">{eyebrow}</div>}
@@ -49,17 +49,21 @@ function Tabs({ value, onChange, items }) {
 // ═══════════════════════════════════════════════════════════════════
 //  Goal bucket
 // ═══════════════════════════════════════════════════════════════════
-export function BucketPanel({ bucket, boardsById, links, bucketsById, onReload, onClose, notify, onSelect, onDelete }) {
+export function BucketPanel({ bucket, boardsById, links, bucketsById, onReload, onClose, notify, onSelect, onDelete, editing, onEdit }) {
   const [tab, setTab] = useState('details');
   const board = bucket.board_id ? boardsById[bucket.board_id] : null;
   const layer = board ? board.layers.find(l => l.id === bucket.layer_id) : null;
   const tone = progressTone(bucket);
   const myLinks = links.filter(l => l.from_bucket_id === bucket.id || l.to_bucket_id === bucket.id);
+  const due = dueDate(bucket);
+  const days = daysUntil(due);
+  const hex = colorHex(bucket.color);
 
   return (
     <PanelShell
-      eyebrow={board ? `${board.name} · ${layer?.label || ''}` : 'External goal'}
+      eyebrow={board ? `${board.name}, ${layer?.label || ''}` : 'Goal outside the plan'}
       title={bucket.name}
+      accent={hex}
       onClose={onClose}
     >
       <div className={`bp-hero tone-${tone}`}>
@@ -72,8 +76,8 @@ export function BucketPanel({ bucket, boardsById, links, bucketsById, onReload, 
         </div>
         <div className="bp-bar"><div className="bp-bar-fill" style={{ width: `${Math.min(100, num(bucket.progress))}%` }} /></div>
         <div className="bp-hero-meta">
-          {bucket.target_date && <span className={isOverdue(bucket) ? 'overdue' : ''}>Target {fmtDate(bucket.target_date)}</span>}
-          {bucket.recurrence !== 'none' && <span>↻ {RECURRENCE.find(r => r.id === bucket.recurrence)?.label}{bucket.cycle_start ? ` · cycle from ${fmtDate(bucket.cycle_start)}` : ''}</span>}
+          {due && <span className={days < 0 && bucket.status !== 'completed' ? 'overdue' : ''}>{bucket.recurrence !== 'none' ? 'Next due' : 'Target'} {fmtDate(due)} ({relTime(days)})</span>}
+          {bucket.recurrence !== 'none' && <span>↻ {scheduleText(bucket)}</span>}
           {bucket.status === 'completed' && <span>✓ Completed {fmtDate(bucket.completed_at)}</span>}
         </div>
       </div>
@@ -85,29 +89,128 @@ export function BucketPanel({ bucket, boardsById, links, bucketsById, onReload, 
         { id: 'notes', label: 'Notes', count: bucket.comment_count + bucket.attachment_count },
       ]} />
 
-      {tab === 'details' && <BucketDetails key={bucket.id} bucket={bucket} onReload={onReload} notify={notify} onDelete={onDelete} />}
-      {tab === 'assets'  && <AssetsTab bucket={bucket} onReload={onReload} notify={notify} />}
+      {tab === 'details' && (editing
+        ? <BucketDetails key={bucket.id} bucket={bucket} onReload={onReload} notify={notify} onDelete={onDelete} />
+        : <BucketSummary bucket={bucket} onEdit={onEdit} />)}
+      {tab === 'assets'  && <AssetsTab bucket={bucket} onReload={onReload} notify={notify} editing={editing} />}
       {tab === 'links'   && <LinksList bucket={bucket} links={myLinks} bucketsById={bucketsById} boardsById={boardsById} onSelect={onSelect} />}
       {tab === 'notes'   && <NotesTab bucket={bucket} onReload={onReload} notify={notify} />}
     </PanelShell>
   );
 }
 
+function BucketSummary({ bucket, onEdit }) {
+  const rows = [
+    ['Target', num(bucket.target_amount) > 0 ? fmtINR(bucket.target_amount, { compact: false }) : 'Not set'],
+    [bucket.recurrence !== 'none' ? 'Runs until' : 'Achieve by', bucket.target_date ? fmtDate(bucket.target_date) : (bucket.recurrence !== 'none' ? 'No end date' : 'Not set')],
+    ['Repeats', bucket.recurrence !== 'none' ? scheduleText(bucket) : 'One-time goal'],
+    ['Set aside outside Kanalyst', num(bucket.manual_value) > 0 ? fmtINR(bucket.manual_value, { compact: false }) : 'Nothing'],
+  ];
+  return (
+    <div className="bp-stack">
+      <dl className="bp-summary">
+        {rows.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}
+      </dl>
+      <button className="bp-btn" onClick={onEdit}>✎ Edit this goal</button>
+    </div>
+  );
+}
+
+function ColorPicker({ value, onChange }) {
+  return (
+    <div className="bp-swatches" role="radiogroup" aria-label="Goal colour">
+      <button type="button" role="radio" aria-checked={!value} className={`bp-swatch none ${!value ? 'on' : ''}`}
+        onClick={() => onChange(null)} title="No colour" aria-label="No colour" />
+      {GOAL_COLORS.map(c => (
+        <button key={c.id} type="button" role="radio" aria-checked={value === c.id}
+          className={`bp-swatch ${value === c.id ? 'on' : ''}`} style={{ '--sw': c.hex }}
+          onClick={() => onChange(c.id)} title={c.label} aria-label={c.label} />
+      ))}
+    </div>
+  );
+}
+
+function ScheduleFields({ d, setD }) {
+  const on = d.recurrence !== 'none';
+  const setRec = (r) => setD(s => ({
+    ...s, recurrence: r,
+    recurrence_day: r === 'weekly' ? (s.recurrence === 'weekly' ? s.recurrence_day : 1) : (s.recurrence === 'weekly' || !s.recurrence_day ? 1 : s.recurrence_day),
+    recurrence_month: r === 'yearly' ? (s.recurrence_month || new Date().getMonth() + 1) : null,
+  }));
+  return (
+    <div className="bp-schedule">
+      <label className="bp-switch-row">
+        <span>
+          <span className="bp-field-label">Repeating goal</span>
+          <span className="bp-field-hint">{on ? 'Resets every cycle — close the cycle when it is paid.' : 'Turn on for fees, premiums, SIPs, bills.'}</span>
+        </span>
+        <span className="bp-toggle">
+          <input type="checkbox" checked={on} onChange={e => setRec(e.target.checked ? 'monthly' : 'none')} />
+          <span className="bp-toggle-track" />
+        </span>
+      </label>
+      <div className={`bp-reveal ${on ? 'open' : ''}`}>
+        <div className="bp-reveal-inner">
+          <div className="bp-seg">
+            {[['weekly', 'Weekly'], ['monthly', 'Monthly'], ['yearly', 'Yearly']].map(([id, lbl]) => (
+              <button key={id} type="button" className={d.recurrence === id ? 'on' : ''} onClick={() => setRec(id)}>{lbl}</button>
+            ))}
+          </div>
+          {d.recurrence === 'weekly' && (
+            <Field label="Day of the week">
+              <div className="bp-days">
+                {WEEKDAYS.map((w, i) => (
+                  <button key={w} type="button" className={Number(d.recurrence_day) === i ? 'on' : ''}
+                    onClick={() => setD(s => ({ ...s, recurrence_day: i }))} aria-label={w}>{w.slice(0, 2)}</button>
+                ))}
+              </div>
+            </Field>
+          )}
+          {d.recurrence === 'monthly' && (
+            <Field label="Day of the month" hint={Number(d.recurrence_day) > 28 ? 'Shorter months use their last day.' : undefined}>
+              <select className="bp-input" value={d.recurrence_day || 1} onChange={e => setD(s => ({ ...s, recurrence_day: Number(e.target.value) }))}>
+                {Array.from({ length: 31 }, (_, i) => i + 1).map(n => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </Field>
+          )}
+          {d.recurrence === 'yearly' && (
+            <div className="bp-grid2">
+              <Field label="Month">
+                <select className="bp-input" value={d.recurrence_month || 1} onChange={e => setD(s => ({ ...s, recurrence_month: Number(e.target.value) }))}>
+                  {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+                </select>
+              </Field>
+              <Field label="Date">
+                <select className="bp-input" value={d.recurrence_day || 1} onChange={e => setD(s => ({ ...s, recurrence_day: Number(e.target.value) }))}>
+                  {Array.from({ length: 31 }, (_, i) => i + 1).map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </Field>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BucketDetails({ bucket, onReload, notify, onDelete }) {
-  const [d, setD] = useState({
+  const init = () => ({
     name: bucket.name || '',
     target_amount: bucket.target_amount ?? '',
     target_date: bucket.target_date || '',
     recurrence: bucket.recurrence || 'none',
+    recurrence_day: bucket.recurrence_day ?? null,
+    recurrence_month: bucket.recurrence_month ?? null,
     manual_value: bucket.manual_value ?? '',
+    color: bucket.color || null,
   });
+  const [d, setD] = useState(init);
+  const [base] = useState(init);
   const [busy, setBusy] = useState(false);
   const [cycleOpen, setCycleOpen] = useState(false);
   const [cycleNote, setCycleNote] = useState('');
   const set = (k) => (e) => setD(s => ({ ...s, [k]: e.target.value }));
-  const dirty = d.name !== (bucket.name || '') || String(d.target_amount) !== String(bucket.target_amount ?? '')
-    || d.target_date !== (bucket.target_date || '') || d.recurrence !== (bucket.recurrence || 'none')
-    || String(d.manual_value) !== String(bucket.manual_value ?? '');
+  const dirty = Object.keys(d).some(k => String(d[k] ?? '') !== String(base[k] ?? ''));
 
   const run = async (fn, ok) => {
     setBusy(true);
@@ -118,30 +221,32 @@ function BucketDetails({ bucket, onReload, notify, onDelete }) {
 
   const save = () => run(() => blueprintAPI.updateBucket(bucket.id, d), 'Saved');
   const reached = num(bucket.target_amount) > 0 && num(bucket.progress) >= 100;
+  const preview = nextDue({ ...bucket, ...d });
 
   return (
     <div className="bp-stack">
       <Field label="Goal name"><input className="bp-input" value={d.name} onChange={set('name')} maxLength={80} /></Field>
+      <Field label="Colour"><ColorPicker value={d.color} onChange={(c) => setD(s => ({ ...s, color: c }))} /></Field>
       <div className="bp-grid2">
-        <Field label={d.recurrence === 'none' ? 'Target amount (₹)' : 'Target per cycle (₹)'}>
+        <Field label={d.recurrence === 'none' ? 'Target amount (₹)' : 'Amount per cycle (₹)'}>
           <input className="bp-input mono" type="number" min="0" value={d.target_amount} onChange={set('target_amount')} />
         </Field>
-        <Field label="Achieve by"><input className="bp-input" type="date" value={d.target_date} onChange={set('target_date')} /></Field>
+        <Field label={d.recurrence === 'none' ? 'Achieve by' : 'Run until (optional)'}>
+          <input className="bp-input" type="date" value={d.target_date} onChange={set('target_date')} />
+        </Field>
       </div>
-      <Field label="Repeats">
-        <div className="bp-seg">
-          {RECURRENCE.map(r => (
-            <button key={r.id} type="button" className={d.recurrence === r.id ? 'on' : ''}
-              onClick={() => setD(s => ({ ...s, recurrence: r.id }))}>{r.label.replace('Every ', '')}</button>
-          ))}
-        </div>
-      </Field>
-      <Field label="Cash / other amount set aside (₹)" hint="Added on top of mapped funds — use for savings-account money or anything not tracked in Kanalyst.">
+      <ScheduleFields d={d} setD={setD} />
+      {d.recurrence !== 'none' && preview && <div className="bp-field-hint">Next due {fmtDate(preview)} ({relTime(daysUntil(preview))}).</div>}
+      <Field label="Cash set aside outside Kanalyst (₹)" hint="Added to the mapped funds — savings account money, cash, anything not tracked here.">
         <input className="bp-input mono" type="number" min="0" value={d.manual_value} onChange={set('manual_value')} />
       </Field>
 
-      <div className="bp-row-end">
-        <button className="bp-btn primary" disabled={!dirty || busy || !d.name.trim()} onClick={save}>Save changes</button>
+      <div className={`bp-savebar ${dirty ? 'show' : ''}`}>
+        <span>Unsaved changes</span>
+        <span className="bp-row-end">
+          <button className="bp-btn ghost sm" onClick={() => setD(base)}>Discard</button>
+          <button className="bp-btn primary sm" disabled={busy || !d.name.trim()} onClick={save}>Save changes</button>
+        </span>
       </div>
 
       <div className="bp-divider" />
@@ -163,7 +268,7 @@ function BucketDetails({ bucket, onReload, notify, onDelete }) {
                 </div>
               </div>
             ) : (
-              <button className="bp-btn" onClick={() => setCycleOpen(true)}>↻ Close current cycle & start next</button>
+              <button className="bp-btn" onClick={() => setCycleOpen(true)}>↻ Close current cycle and start the next</button>
             )
           )}
           <button className="bp-btn good" disabled={busy} onClick={() => run(() => blueprintAPI.complete(bucket.id), 'Moved to completed goals')}>✓ Mark goal completed</button>
@@ -171,13 +276,13 @@ function BucketDetails({ bucket, onReload, notify, onDelete }) {
       ) : (
         <button className="bp-btn" disabled={busy} onClick={() => run(() => blueprintAPI.reopen(bucket.id), 'Goal reopened')}>Reopen goal</button>
       )}
-      <button className="bp-btn danger ghost" onClick={onDelete}>Delete bucket</button>
+      <button className="bp-btn danger ghost" onClick={onDelete}>Delete goal</button>
     </div>
   );
 }
 
 // ── Funding: map stocks / brokers / MF / FD / RD / NPS ─────────────
-function AssetsTab({ bucket, onReload, notify }) {
+function AssetsTab({ bucket, onReload, notify, editing }) {
   const [picking, setPicking] = useState(false);
   const [busyId, setBusyId] = useState(null);
 
@@ -207,7 +312,7 @@ function AssetsTab({ bucket, onReload, notify }) {
                 <div className="bp-asset-sub">{a.sub}</div>
               </div>
               <div className="bp-asset-val">{fmtINR(a.value)}</div>
-              <button className="bp-icon-btn sm" disabled={busyId === a.id} onClick={() => unmap(a)} aria-label={`Unmap ${a.label}`}>✕</button>
+              {editing && <button className="bp-icon-btn sm" disabled={busyId === a.id} onClick={() => unmap(a)} aria-label={`Unmap ${a.label}`}>✕</button>}
             </li>
           ))}
           <li className="bp-asset total">
@@ -216,9 +321,9 @@ function AssetsTab({ bucket, onReload, notify }) {
           </li>
         </ul>
       )}
-      {picking
+      {editing && (picking
         ? <AssetPicker bucket={bucket} onDone={() => setPicking(false)} onReload={onReload} notify={notify} />
-        : <button className="bp-btn primary" onClick={() => setPicking(true)}>+ Map an asset</button>}
+        : <button className="bp-btn primary" onClick={() => setPicking(true)}>+ Map an asset</button>)}
     </div>
   );
 }
@@ -420,7 +525,7 @@ function NotesTab({ bucket, onReload, notify }) {
 // ═══════════════════════════════════════════════════════════════════
 //  Income bucket
 // ═══════════════════════════════════════════════════════════════════
-export function IncomePanel({ bucket, links, bucketsById, boardsById, onReload, onClose, notify, onSelect, onDelete }) {
+export function IncomePanel({ bucket, links, bucketsById, boardsById, onReload, onClose, notify, onSelect, onDelete, editing, onEdit }) {
   const [d, setD] = useState({
     name: bucket.name || '',
     income_source: bucket.income_source || 'manual',
@@ -467,6 +572,18 @@ export function IncomePanel({ bucket, links, bucketsById, boardsById, onReload, 
         )}
       </div>
       <div className="bp-stack">
+        {!editing && (
+          <>
+            <dl className="bp-summary">
+              <div><dt>Source</dt><dd>{{ manual: 'Entered manually', income_category: `Income tracker: ${bucket.income_category || 'no category picked'}`, dividends: 'Your dividends' }[bucket.income_source || 'manual']}</dd></div>
+            </dl>
+            <div className="bp-section-title">Funds</div>
+            {myLinks.length === 0 ? <div className="bp-empty-small">Not funding anything yet.</div>
+              : <LinksList bucket={bucket} links={myLinks} bucketsById={bucketsById} boardsById={boardsById} onSelect={onSelect} />}
+            <button className="bp-btn" onClick={onEdit}>✎ Edit this income</button>
+          </>
+        )}
+        {editing && <>
         <Field label="Name"><input className="bp-input" value={d.name} onChange={set('name')} /></Field>
         <Field label="Where the amount comes from">
           <div className="bp-seg">
@@ -495,6 +612,7 @@ export function IncomePanel({ bucket, links, bucketsById, boardsById, onReload, 
           ? <div className="bp-empty-small">Drag the ● handle onto a goal bucket — or onto a plan box's title bar to fund the whole plan.</div>
           : <LinksList bucket={bucket} links={myLinks} bucketsById={bucketsById} boardsById={boardsById} onSelect={onSelect} />}
         <button className="bp-btn danger ghost" onClick={onDelete}>Delete income source</button>
+        </>}
       </div>
     </PanelShell>
   );
@@ -503,7 +621,7 @@ export function IncomePanel({ bucket, links, bucketsById, boardsById, onReload, 
 // ═══════════════════════════════════════════════════════════════════
 //  Board (plan box) + its layers
 // ═══════════════════════════════════════════════════════════════════
-export function BoardPanel({ board, buckets, onReload, onClose, notify, onDelete }) {
+export function BoardPanel({ board, buckets, onReload, onClose, notify, onDelete, editing, onEdit }) {
   const [name, setName] = useState(board.name);
   const [desc, setDesc] = useState(board.description || '');
   const [newLayer, setNewLayer] = useState({ label: '', period: 'year', position: 'bottom' });
@@ -535,7 +653,17 @@ export function BoardPanel({ board, buckets, onReload, onClose, notify, onDelete
         </div>
         <div className="bp-bar"><div className="bp-bar-fill" style={{ width: `${target > 0 ? Math.min(100, current / target * 100) : 0}%` }} /></div>
       </div>
-      <div className="bp-stack">
+      {!editing && (
+        <div className="bp-stack">
+          {board.description && <p className="bp-desc">{board.description}</p>}
+          <div className="bp-section-title">Layers, top to bottom</div>
+          <ul className="bp-layer-read">
+            {board.layers.map(l => <li key={l.id}><span>{l.label}</span><span className="muted">{inside.filter(b => b.layer_id === l.id && b.status !== 'completed').length} goals</span></li>)}
+          </ul>
+          <button className="bp-btn" onClick={onEdit}>✎ Edit this plan box</button>
+        </div>
+      )}
+      {editing && <div className="bp-stack">
         <Field label="Name"><input className="bp-input" value={name} onChange={e => setName(e.target.value)} /></Field>
         <Field label="Description"><textarea className="bp-input" rows={2} value={desc} onChange={e => setDesc(e.target.value)} /></Field>
         <div className="bp-row-end">
@@ -581,7 +709,7 @@ export function BoardPanel({ board, buckets, onReload, onClose, notify, onDelete
 
         <div className="bp-divider" />
         <button className="bp-btn danger ghost" onClick={onDelete}>Delete plan box and its {inside.length} goals</button>
-      </div>
+      </div>}
     </PanelShell>
   );
 }
@@ -611,7 +739,7 @@ function LayerRow({ layer, index, count, bucketCount, onSave, onMove, onDelete }
 // ═══════════════════════════════════════════════════════════════════
 //  Link
 // ═══════════════════════════════════════════════════════════════════
-export function LinkPanel({ link, bucketsById, boardsById, onReload, onClose, notify }) {
+export function LinkPanel({ link, bucketsById, boardsById, onReload, onClose, notify, editing, onEdit }) {
   const [d, setD] = useState({ link_type: link.link_type, label: link.label || '', amount: link.amount ?? '' });
   const [busy, setBusy] = useState(false);
   useEffect(() => { setD({ link_type: link.link_type, label: link.label || '', amount: link.amount ?? '' }); }, [link.id, link.link_type, link.label, link.amount]);
@@ -627,7 +755,17 @@ export function LinkPanel({ link, bucketsById, boardsById, onReload, onClose, no
 
   return (
     <PanelShell eyebrow="Connection" title={`${from?.name || '?'} → ${to || '?'}`} onClose={onClose}>
-      <div className="bp-stack">
+      {!editing && (
+        <div className="bp-stack">
+          <dl className="bp-summary">
+            <div><dt>Type</dt><dd>{LINK_TYPES.find(t => t.id === link.link_type)?.label}: {LINK_TYPES.find(t => t.id === link.link_type)?.hint}</dd></div>
+            {link.label && <div><dt>Label</dt><dd>{link.label}</dd></div>}
+            {link.amount ? <div><dt>Per month</dt><dd>{fmtINR(link.amount, { compact: false })}</dd></div> : null}
+          </dl>
+          <button className="bp-btn" onClick={onEdit}>✎ Edit this link</button>
+        </div>
+      )}
+      {editing && <div className="bp-stack">
         <Field label="Type">
           <div className="bp-seg">
             {LINK_TYPES.map(t => (
@@ -646,7 +784,7 @@ export function LinkPanel({ link, bucketsById, boardsById, onReload, onClose, no
           <button className="bp-btn danger ghost" disabled={busy} onClick={() => run(() => blueprintAPI.deleteLink(link.id), 'Link removed', true)}>Remove link</button>
           <button className="bp-btn primary" disabled={busy} onClick={() => run(() => blueprintAPI.updateLink(link.id, d), 'Saved')}>Save</button>
         </div>
-      </div>
+      </div>}
     </PanelShell>
   );
 }

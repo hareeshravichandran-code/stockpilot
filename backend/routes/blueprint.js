@@ -393,7 +393,7 @@ router.delete('/layers/:id', requireAuth, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════
 //  Buckets
 // ═══════════════════════════════════════════════════════════════════
-const BUCKET_FIELDS = ['name', 'icon', 'target_amount', 'target_date', 'recurrence', 'cycle_start', 'manual_value',
+const BUCKET_FIELDS = ['name', 'icon', 'color', 'recurrence_day', 'recurrence_month', 'target_amount', 'target_date', 'recurrence', 'cycle_start', 'manual_value',
   'income_source', 'income_category', 'expected_amount', 'x', 'y', 'w', 'h', 'board_id', 'layer_id', 'kind', 'status'];
 
 function cleanBucket(body) {
@@ -401,6 +401,11 @@ function cleanBucket(body) {
   for (const k of ['target_amount', 'manual_value', 'expected_amount']) if (b[k] !== undefined) b[k] = b[k] === '' || b[k] === null ? null : num(b[k]);
   if (b.target_date === '') b.target_date = null;
   if (b.recurrence && !['none', 'weekly', 'monthly', 'yearly'].includes(b.recurrence)) b.recurrence = 'none';
+  const int = (v, lo, hi) => { const n = parseInt(v, 10); return Number.isFinite(n) && n >= lo && n <= hi ? n : null; };
+  if (b.recurrence_day !== undefined) b.recurrence_day = b.recurrence_day === '' ? null : int(b.recurrence_day, 0, 31);
+  if (b.recurrence_month !== undefined) b.recurrence_month = b.recurrence_month === '' ? null : int(b.recurrence_month, 1, 12);
+  if (b.recurrence === 'none') { b.recurrence_day = null; b.recurrence_month = null; }
+  if (b.color !== undefined && b.color !== null && !/^[a-z_]{2,20}$/.test(b.color)) b.color = null;
   if (b.kind && !['goal', 'income'].includes(b.kind)) b.kind = 'goal';
   if (b.kind === 'income') { b.board_id = null; b.layer_id = null; }
   return b;

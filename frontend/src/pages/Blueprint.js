@@ -3,8 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { blueprintAPI } from '../lib/api';
 import {
   HEADER_H, GUTTER_W, MIN_LAYER_H, BUCKET_W, BUCKET_H, INCOME_W, INCOME_H, MIN_BOARD_W,
-  periodShort, fmtINR, fmtDate, num, clamp, progressTone, isOverdue,
+  fmtINR, fmtDate, num, clamp, progressTone, isOverdue,
   computeLayout, bucketRect, dropTarget, linkPath, contentBounds, avoidOverlap,
+  colorHex, dueDate, daysUntil, relTime, attention, layerHorizon, scheduleText,
 } from '../blueprint/geom';
 import { BucketPanel, IncomePanel, BoardPanel, LinkPanel, CompletedPanel } from '../blueprint/Panels';
 import './Blueprint.css';
@@ -34,6 +35,17 @@ export default function Blueprint() {
   const [drag, setDrag] = useState(null);
   const [toast, setToast] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [editing, setEditingRaw] = useState(() => { try { return localStorage.getItem('bp_editing') === '1'; } catch (e) { return false; } });
+  const setEditing = useCallback((v) => {
+    setEditingRaw(v);
+    try { localStorage.setItem('bp_editing', v ? '1' : '0'); } catch (e) {}
+  }, []);
+  const [glide, setGlide] = useState(false);   // smooth camera move for Fit / zoom buttons
+  const glideTo = useCallback((next) => {
+    setGlide(true);
+    setView(next);
+    setTimeout(() => setGlide(false), 520);
+  }, []);
 
   // ── Data ──────────────────────────────────────────────────────────
   const reload = useCallback(async () => {
@@ -109,8 +121,8 @@ export default function Blueprint() {
     if (!bounds) return;
     const W = el.clientWidth, H = el.clientHeight;
     const z = clamp(Math.min((W - 96) / bounds.w, (H - 150) / bounds.h), 0.3, 1.1);
-    setView({ z, x: (W - bounds.w * z) / 2 - bounds.x * z, y: (H - 90 - bounds.h * z) / 2 - bounds.y * z });
-  }, [boards, layout, rects]);
+    glideTo({ z, x: (W - bounds.w * z) / 2 - bounds.x * z, y: (H - 90 - bounds.h * z) / 2 - bounds.y * z });
+  }, [boards, layout, rects, glideTo]);
 
   useEffect(() => {
     if (status === 'ready' && !fittedRef.current && (data.boards.length || data.buckets.length)) {
@@ -144,10 +156,8 @@ export default function Blueprint() {
   const zoomBy = (f) => {
     const el = canvasRef.current;
     const W = el?.clientWidth || 1000, H = el?.clientHeight || 700;
-    setView(v => {
-      const z = clamp(v.z * f, 0.3, 1.8);
-      return { z, x: W / 2 - (W / 2 - v.x) * (z / v.z), y: H / 2 - (H / 2 - v.y) * (z / v.z) };
-    });
+    const z = clamp(view.z * f, 0.3, 1.8);
+    glideTo({ z, x: W / 2 - (W / 2 - view.x) * (z / view.z), y: H / 2 - (H / 2 - view.y) * (z / view.z) });
   };
 
   // ── Drag engine (window-level pointer listeners) ──────────────────
@@ -267,11 +277,13 @@ export default function Blueprint() {
   // ── Drag starters ─────────────────────────────────────────────────
   const startPan = (e) => beginDrag(e, { kind: 'pan', ox: view.x, oy: view.y });
   const startBucket = (e, b) => {
+    if (!editing) { e.stopPropagation(); setSel({ type: 'bucket', id: b.id }); return; }
     const r = rects[b.id];
     beginDrag(e, { kind: 'bucket', id: b.id, isIncome: b.kind === 'income', ox: r.x, oy: r.y, w: r.w, h: r.h, x: r.x, y: r.y });
   };
   const startBoard = (e, bd) => {
     if (e.target.closest('button, input')) { e.stopPropagation(); return; }
+    if (!editing) { e.stopPropagation(); setSel({ type: 'board', id: bd.id }); return; }
     beginDrag(e, { kind: 'board', id: bd.id, ox: num(bd.x), oy: num(bd.y), x: num(bd.x), y: num(bd.y) });
   };
   const startBoardW = (e, bd) => {
@@ -424,6 +436,7 @@ export default function Blueprint() {
         <g key={l.id} className={`bp-link lt-${l.link_type} ${on ? 'on' : ''} ${related ? 'related' : ''}`}>
           <path d={d} className="bp-link-hit" onPointerDown={pick} />
           <path d={d} className="bp-link-line" markerEnd={`url(#bp-arrow-${l.link_type})`} />
+          {l.link_type !== 'related' && <path d={d} className="bp-link-flow" />}
         </g>
       ),
       label: text ? (
@@ -445,7 +458,7 @@ export default function Blueprint() {
   const isEmpty = status === 'ready' && data.boards.length === 0 && data.buckets.length === 0;
 
   return (
-    <div className={`bp-root ${panelOpen ? 'with-panel' : ''}`}>
+    <div className={`bp-root ${panelOpen ? 'with-panel' : ''} ${editing ? 'is-editing' : 'is-viewing'}`}>
       {/* ── Top bar ─────────────────────────────────────────── */}
       <header className="bp-top">
         <div className="bp-brand">
@@ -485,7 +498,7 @@ export default function Blueprint() {
         onPointerDown={startPan}>
 
         {status === 'ready' && !isEmpty && (
-          <div className="bp-world" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.z})` }}>
+          <div className={`bp-world ${glide ? 'glide' : ''}`} style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.z})` }}>
             {boards.map(bd => (
               <Board key={bd.id} board={bd} L={layout[bd.id]} buckets={visible}
                 selected={sel?.type === 'board' && sel.id === bd.id}
@@ -496,6 +509,7 @@ export default function Blueprint() {
                 onResizeLayer={(e, l) => startLayer(e, bd, l)}
                 onAddGoal={(l, rel) => addGoalAt(bd, l, rel)}
                 onAddLayer={(pos) => addLayer(bd, pos)}
+                editing={editing}
                 toWorld={toWorld}
                 onOpen={() => setSel({ type: 'board', id: bd.id })}
               />
@@ -521,6 +535,7 @@ export default function Blueprint() {
                 external={b.kind === 'goal' && !b.board_id}
                 onDown={(e) => startBucket(e, b)}
                 onLinkDown={(e) => startLink(e, b)}
+                editing={editing}
               />
             ))}
 
@@ -559,15 +574,26 @@ export default function Blueprint() {
         {/* Toolbar */}
         {status === 'ready' && !isEmpty && (
           <div className="bp-dock" onPointerDown={e => e.stopPropagation()}>
-            <button className="bp-dock-btn" disabled={busy} onClick={addBoard}><span>▦</span>Plan box</button>
-            <button className="bp-dock-btn" disabled={busy} onClick={addExternal}><span>▢</span>Goal outside</button>
-            <button className="bp-dock-btn" disabled={busy} onClick={addIncome}><span>₹</span>Income</button>
-            <div className="bp-dock-sep" />
+            <div className="bp-dock-edit" aria-hidden={!editing}>
+              <button className="bp-dock-btn" tabIndex={editing ? 0 : -1} disabled={busy} onClick={addBoard}><span>▦</span>Plan box</button>
+              <button className="bp-dock-btn" tabIndex={editing ? 0 : -1} disabled={busy} onClick={addExternal}><span>▢</span>Goal outside</button>
+              <button className="bp-dock-btn" tabIndex={editing ? 0 : -1} disabled={busy} onClick={addIncome}><span>₹</span>Income</button>
+              <div className="bp-dock-sep" />
+            </div>
             <button className="bp-dock-btn icon" onClick={() => zoomBy(1 / 1.2)} aria-label="Zoom out">−</button>
-            <button className="bp-dock-zoom" onClick={() => setView(v => ({ ...v, z: 1 }))}>{Math.round(view.z * 100)}%</button>
+            <button className="bp-dock-zoom" onClick={() => zoomBy(1 / view.z)}>{Math.round(view.z * 100)}%</button>
             <button className="bp-dock-btn icon" onClick={() => zoomBy(1.2)} aria-label="Zoom in">+</button>
             <button className="bp-dock-btn" onClick={fit}><span>⤢</span>Fit</button>
           </div>
+        )}
+
+        {status === 'ready' && !isEmpty && (
+          <button className={`bp-fab ${editing ? 'on' : ''}`} onPointerDown={e => e.stopPropagation()}
+            onClick={() => { setEditing(!editing); notify(editing ? 'View mode — your plan is locked' : 'Edit mode — drag, add and link freely'); }}
+            aria-pressed={editing}>
+            <span className="bp-fab-icon" aria-hidden="true">{editing ? '✓' : '✎'}</span>
+            <span>{editing ? 'Done editing' : 'Edit plan'}</span>
+          </button>
         )}
 
         {status === 'ready' && !isEmpty && (
@@ -578,7 +604,12 @@ export default function Blueprint() {
             <div className="bp-legend-row">
               <span className="ln lt-funds" />Funds<span className="ln lt-backup" />Backup<span className="ln lt-related" />Related
             </div>
-            <div className="bp-legend-hint">“+ Add goal” in a layer adds a goal · “+ Add layer” below a box adds a layer · drag buckets between layers · drag ● to link · ⌘/Ctrl + scroll to zoom</div>
+            <div className="bp-legend-row">
+              <span className="pulse-dot soon" />Due in 7 days<span className="pulse-dot overdue" />Overdue<span className="pulse-dot reached" />Reached
+            </div>
+            <div className="bp-legend-hint">{editing
+              ? 'Drag goals between layers. Drag the ● on a goal onto another goal to link them.'
+              : 'Click any goal to see its details. Press Edit plan to change things.'}</div>
           </div>
         )}
 
@@ -588,19 +619,22 @@ export default function Blueprint() {
       {/* ── Side panel ──────────────────────────────────────── */}
       {selected && selected.kind === 'goal' && (
         <BucketPanel key={selected.id} bucket={selected} boardsById={boardsById} links={data.links} bucketsById={bucketsById}
-          onReload={reload} onClose={() => setSel(null)} notify={notify} onSelect={setSel} onDelete={() => deleteBucket(selected)} />
+          onReload={reload} onClose={() => setSel(null)} notify={notify} onSelect={setSel} onDelete={() => deleteBucket(selected)}
+          editing={editing} onEdit={() => setEditing(true)} />
       )}
       {selected && selected.kind === 'income' && (
         <IncomePanel key={selected.id} bucket={selected} links={data.links} bucketsById={bucketsById} boardsById={boardsById}
-          onReload={reload} onClose={() => setSel(null)} notify={notify} onSelect={setSel} onDelete={() => deleteBucket(selected)} />
+          onReload={reload} onClose={() => setSel(null)} notify={notify} onSelect={setSel} onDelete={() => deleteBucket(selected)}
+          editing={editing} onEdit={() => setEditing(true)} />
       )}
       {selectedBoard && (
         <BoardPanel key={selectedBoard.id} board={selectedBoard} buckets={data.buckets}
-          onReload={reload} onClose={() => setSel(null)} notify={notify} onDelete={() => deleteBoard(selectedBoard)} />
+          onReload={reload} onClose={() => setSel(null)} notify={notify} onDelete={() => deleteBoard(selectedBoard)}
+          editing={editing} onEdit={() => setEditing(true)} />
       )}
       {selectedLink && (
         <LinkPanel key={selectedLink.id} link={selectedLink} bucketsById={bucketsById} boardsById={boardsById}
-          onReload={reload} onClose={() => setSel(null)} notify={notify} />
+          onReload={reload} onClose={() => setSel(null)} notify={notify} editing={editing} onEdit={() => setEditing(true)} />
       )}
       {drawer && !sel && (
         <CompletedPanel buckets={data.buckets} boardsById={boardsById} onClose={() => setDrawer(false)} notify={notify} onReload={reload}
@@ -613,7 +647,7 @@ export default function Blueprint() {
 // ═══════════════════════════════════════════════════════════════════
 //  Board (plan box)
 // ═══════════════════════════════════════════════════════════════════
-function Board({ board, L, buckets, selected, dropLayer, linkTarget, onHeaderDown, onResizeW, onResizeLayer, onAddGoal, onAddLayer, toWorld, onOpen }) {
+function Board({ board, L, buckets, selected, dropLayer, linkTarget, onHeaderDown, onResizeW, onResizeLayer, onAddGoal, onAddLayer, toWorld, onOpen, editing }) {
   if (!L) return null;
   const inside = buckets.filter(b => b.board_id === board.id && b.kind === 'goal' && b.status !== 'completed');
   const target = inside.reduce((s, b) => s + num(b.target_amount), 0);
@@ -621,7 +655,7 @@ function Board({ board, L, buckets, selected, dropLayer, linkTarget, onHeaderDow
   const pct = target > 0 ? Math.round(funded / target * 100) : 0;
 
   const dbl = (e, l, i) => {
-    if (e.target.closest('button')) return;
+    if (!editing || e.target.closest('button')) return;
     const w = toWorld(e.clientX, e.clientY);
     const rel = {
       x: clamp(w.x - num(board.x) - BUCKET_W / 2, GUTTER_W + 8, num(board.w) - BUCKET_W - 10),
@@ -640,29 +674,38 @@ function Board({ board, L, buckets, selected, dropLayer, linkTarget, onHeaderDow
           {board.description && <span className="bp-board-desc">{board.description}</span>}
         </div>
         <div className="bp-board-meta">
-          <span className="mono">{fmtINR(funded)} / {fmtINR(target)}</span>
+          <span className="mono">{fmtINR(funded)} of {fmtINR(target)}</span>
           <span className="bp-mini-bar"><span style={{ width: `${Math.min(100, pct)}%` }} /></span>
-          <span className="mono">{pct}%</span>
-          <button className="bp-head-btn" onClick={() => onAddLayer('top')} title="Add a layer at the top of this box">+ Layer on top</button>
-          <button className="bp-icon-btn sm" onClick={onOpen} aria-label="Plan box settings" title="Box settings & layers">⋯</button>
+          <span className="mono strong">{pct}%</span>
+          {editing && <button className="bp-head-btn bp-pop" onClick={() => onAddLayer('top')}>+ Layer on top</button>}
+          <button className="bp-icon-btn sm" onClick={onOpen} aria-label="Plan box details" title="Plan box details">⋯</button>
         </div>
       </div>
 
-      {board.layers.map((l, i) => (
-        <div key={l.id} className={`bp-layer ${dropLayer === l.id ? 'drop' : ''} ${i % 2 ? 'alt' : ''}`}
-          style={{ top: HEADER_H + L.tops[i], height: L.heights[i] }}
-          onDoubleClick={(e) => dbl(e, l, i)}>
-          <div className="bp-gutter" style={{ width: GUTTER_W }}>
-            <span className={`bp-period p-${l.period}`}>{periodShort(l.period)}</span>
-            <span className="bp-layer-label">{l.label}</span>
-            <button className="bp-add-goal" onPointerDown={e => e.stopPropagation()} onClick={() => onAddGoal(l)} title={`Add a goal to ${l.label}`}>+ Add goal</button>
+      {board.layers.map((l, i) => {
+        const goals = inside.filter(b => b.layer_id === l.id);
+        const hz = layerHorizon(l, goals);
+        return (
+          <div key={l.id} className={`bp-layer ${dropLayer === l.id ? 'drop' : ''} ${i % 2 ? 'alt' : ''}`}
+            style={{ top: HEADER_H + L.tops[i], height: L.heights[i] }}
+            onDoubleClick={(e) => dbl(e, l, i)}>
+            <div className="bp-gutter" style={{ width: GUTTER_W }}>
+              <span className={`bp-period p-${hz.period}`} title={hz.range ? 'Worked out from the goal dates in this layer' : 'Set target dates to work this out'}>{hz.chip}</span>
+              <span className="bp-layer-label">{l.label}</span>
+              {hz.range
+                ? <span className="bp-horizon"><b>{hz.range}</b><span>{hz.rel}</span></span>
+                : <span className="bp-horizon empty">{goals.length ? 'Add target dates to see this timeline' : 'No open goals'}</span>}
+              {editing && <button className="bp-add-goal bp-pop" onPointerDown={e => e.stopPropagation()} onClick={() => onAddGoal(l)} title={`Add a goal to ${l.label}`}>+ Add goal</button>}
+            </div>
+            {editing && <div className="bp-layer-resize" onPointerDown={(e) => onResizeLayer(e, l)} title="Drag to resize layer" />}
           </div>
-          <div className="bp-layer-resize" onPointerDown={(e) => onResizeLayer(e, l)} title="Drag to resize layer" />
-        </div>
-      ))}
-      <div className="bp-board-resize" onPointerDown={onResizeW} title="Drag to resize width" />
-      <button className="bp-add-layer-strip" style={{ top: L.totalH + 6 }}
-        onPointerDown={e => e.stopPropagation()} onClick={() => onAddLayer('bottom')}>+ Add layer</button>
+        );
+      })}
+      {editing && <div className="bp-board-resize" onPointerDown={onResizeW} title="Drag to resize width" />}
+      {editing && (
+        <button className="bp-add-layer-strip bp-pop" style={{ top: L.totalH + 8 }}
+          onPointerDown={e => e.stopPropagation()} onClick={() => onAddLayer('bottom')}>+ Add layer</button>
+      )}
     </div>
   );
 }
@@ -670,12 +713,13 @@ function Board({ board, L, buckets, selected, dropLayer, linkTarget, onHeaderDow
 // ═══════════════════════════════════════════════════════════════════
 //  Bucket card (goal or income)
 // ═══════════════════════════════════════════════════════════════════
-function BucketCard({ bucket: b, rect, selected, dragging, linkTarget, external, onDown, onLinkDown }) {
+function BucketCard({ bucket: b, rect, selected, dragging, linkTarget, external, onDown, onLinkDown, editing }) {
   if (!rect) return null;
-  const style = { left: rect.x, top: rect.y, width: rect.w, height: rect.h };
-  const handle = (
-    <button className="bp-handle" onPointerDown={onLinkDown} aria-label={`Link ${b.name} to another bucket`} title="Drag to link" />
-  );
+  const hex = colorHex(b.color);
+  const style = { left: rect.x, top: rect.y, width: rect.w, height: rect.h, ...(hex ? { '--goal': hex } : {}) };
+  const handle = editing
+    ? <button className="bp-handle" onPointerDown={onLinkDown} aria-label={`Link ${b.name} to another goal`} title="Drag onto another goal to link" />
+    : null;
 
   if (b.kind === 'income') {
     return (
@@ -685,7 +729,7 @@ function BucketCard({ bucket: b, rect, selected, dragging, linkTarget, external,
         <div className="bp-income-main">
           <div className="bp-bucket-name">{b.name}</div>
           <div className="bp-income-val">{fmtINR(b.inflow?.monthly)}<em>/mo</em></div>
-          <div className="bp-income-src">{b.income_source === 'dividends' ? 'Dividends · live' : b.income_source === 'income_category' ? (b.income_category || 'Pick a category') : 'Manual'}</div>
+          <div className="bp-income-src">{b.income_source === 'dividends' ? 'From your dividends' : b.income_source === 'income_category' ? (b.income_category || 'Pick a category') : 'Entered manually'}</div>
         </div>
         {handle}
       </div>
@@ -695,24 +739,29 @@ function BucketCard({ bucket: b, rect, selected, dragging, linkTarget, external,
   const tone = progressTone(b);
   const pct = num(b.progress);
   const done = b.status === 'completed';
-  const overdue = isOverdue(b);
+  const att = attention(b);
+  const due = dueDate(b);
+  const days = daysUntil(due);
+  const overdue = isOverdue(b) || att === 'overdue';
 
   return (
     <div data-bucket-id={b.id}
-      className={`bp-bucket goal tone-${tone} ${selected ? 'selected' : ''} ${dragging ? 'dragging' : ''} ${done ? 'done' : ''} ${external ? 'external' : ''} ${linkTarget ? 'link-target' : ''}`}
+      className={`bp-bucket goal tone-${tone} ${hex ? 'colored' : ''} ${att ? `att-${att}` : ''} ${selected ? 'selected' : ''} ${dragging ? 'dragging' : ''} ${done ? 'done' : ''} ${external ? 'external' : ''} ${linkTarget ? 'link-target' : ''}`}
       style={style} onPointerDown={onDown}>
       <div className="bp-bucket-top">
         <span className="bp-bucket-name" title={b.name}>{done && '✓ '}{b.name}</span>
-        {b.recurrence !== 'none' && <span className="bp-rec" title={`Repeats ${b.recurrence}`}>↻ {b.recurrence[0].toUpperCase()}</span>}
+        {b.recurrence !== 'none' && <span className="bp-rec" title={scheduleText(b)}>↻ {b.recurrence === 'weekly' ? 'Wk' : b.recurrence === 'monthly' ? 'Mo' : 'Yr'}</span>}
       </div>
       <div className="bp-bucket-amt">
         <span className="mono strong">{fmtINR(b.current_value)}</span>
-        <span className="mono muted">/ {num(b.target_amount) > 0 ? fmtINR(b.target_amount) : '—'}</span>
+        <span className="mono muted">of {num(b.target_amount) > 0 ? fmtINR(b.target_amount) : '—'}</span>
         <span className="bp-pct mono">{num(b.target_amount) > 0 ? `${Math.round(pct)}%` : ''}</span>
       </div>
       <div className="bp-bar"><div className="bp-bar-fill" style={{ width: `${Math.min(100, pct)}%` }} /></div>
       <div className="bp-bucket-foot">
-        <span className={overdue ? 'overdue' : ''}>{b.target_date ? fmtDate(b.target_date) : 'No date'}</span>
+        <span className={overdue ? 'overdue' : att === 'soon' ? 'soon' : ''}>
+          {due ? `${b.recurrence !== 'none' ? 'Next ' : ''}${fmtDate(due)}, ${relTime(days)}` : 'No date set'}
+        </span>
         <span className="bp-badges">
           {b.assets.length > 0 && <span title="Mapped assets">◉ {b.assets.length}</span>}
           {b.comment_count > 0 && <span title="Notes">✎ {b.comment_count}</span>}

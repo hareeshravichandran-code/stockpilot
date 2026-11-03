@@ -183,3 +183,125 @@ export function avoidOverlap(pos, w, h, siblings, boardW) {
   }
   return pos;
 }
+
+// ── Goal colours (hues from the Kanalyst token set) ─────────────────
+export const GOAL_COLORS = [
+  { id: 'moss',       label: 'Moss',       hex: '#6b8e23' },
+  { id: 'forest',     label: 'Forest',     hex: '#1f6b4a' },
+  { id: 'teal',       label: 'Teal',       hex: '#2d6b6b' },
+  { id: 'prussian',   label: 'Prussian',   hex: '#34487a' },
+  { id: 'aubergine',  label: 'Aubergine',  hex: '#5d3b78' },
+  { id: 'mulberry',   label: 'Mulberry',   hex: '#964062' },
+  { id: 'madder',     label: 'Madder',     hex: '#a82c2c' },
+  { id: 'terracotta', label: 'Terracotta', hex: '#b8551f' },
+  { id: 'sienna',     label: 'Sienna',     hex: '#a8741a' },
+  { id: 'slate',      label: 'Slate',      hex: '#5b6470' },
+];
+export const colorHex = (id) => (GOAL_COLORS.find(c => c.id === id) || {}).hex || null;
+
+export const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+export const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+const daysInMonth = (y, m) => new Date(y, m + 1, 0).getDate();
+
+// Next date a repeating goal falls due (today counts). null when not scheduled.
+export function nextDue(b, from = new Date()) {
+  const today = startOfDay(from);
+  const day = b.recurrence_day;
+  if (b.recurrence === 'weekly') {
+    if (day === null || day === undefined) return null;
+    const d = new Date(today);
+    d.setDate(d.getDate() + ((Number(day) - d.getDay() + 7) % 7));
+    return d;
+  }
+  if (b.recurrence === 'monthly') {
+    if (!day) return null;
+    let y = today.getFullYear(), m = today.getMonth();
+    let d = new Date(y, m, Math.min(day, daysInMonth(y, m)));
+    if (d < today) { m += 1; if (m > 11) { m = 0; y += 1; } d = new Date(y, m, Math.min(day, daysInMonth(y, m))); }
+    return d;
+  }
+  if (b.recurrence === 'yearly') {
+    if (!day || !b.recurrence_month) return null;
+    const m = b.recurrence_month - 1;
+    let y = today.getFullYear();
+    let d = new Date(y, m, Math.min(day, daysInMonth(y, m)));
+    if (d < today) { y += 1; d = new Date(y, m, Math.min(day, daysInMonth(y, m))); }
+    return d;
+  }
+  return null;
+}
+
+export function scheduleText(b) {
+  if (b.recurrence === 'weekly' && b.recurrence_day !== null && b.recurrence_day !== undefined) return `Every ${WEEKDAYS[b.recurrence_day]}`;
+  if (b.recurrence === 'monthly' && b.recurrence_day) return `Monthly on day ${b.recurrence_day}`;
+  if (b.recurrence === 'yearly' && b.recurrence_day && b.recurrence_month) return `Every ${b.recurrence_day} ${MONTHS[b.recurrence_month - 1].slice(0, 3)}`;
+  return { weekly: 'Every week', monthly: 'Every month', yearly: 'Every year' }[b.recurrence] || '';
+}
+
+// The date that matters for a goal: next due for repeating goals, else the target date
+export function dueDate(b) {
+  if (b.recurrence && b.recurrence !== 'none') return nextDue(b);
+  if (!b.target_date) return null;
+  const d = new Date(b.target_date);
+  return Number.isNaN(d.getTime()) ? null : startOfDay(d);
+}
+
+const DAY = 864e5;
+export function daysUntil(d) { return d ? Math.round((startOfDay(d) - startOfDay(new Date())) / DAY) : null; }
+
+export function relTime(days) {
+  if (days === null) return '';
+  if (days < 0) return `${Math.abs(days)}d overdue`;
+  if (days === 0) return 'today';
+  if (days < 14) return `in ${days}d`;
+  if (days < 60) return `in ${Math.round(days / 7)}w`;
+  if (days < 730) return `in ${Math.round(days / 30.4)} mo`;
+  return `in ${(days / 365).toFixed(days < 3650 ? 1 : 0)} yrs`;
+}
+
+// What needs attention on a goal card: 'reached' | 'overdue' | 'soon' | null
+export function attention(b) {
+  if (b.kind !== 'goal' || b.status === 'completed') return null;
+  if (num(b.target_amount) > 0 && num(b.progress) >= 100) return 'reached';
+  const d = daysUntil(dueDate(b));
+  if (d === null) return null;
+  if (d < 0) return 'overdue';
+  if (d <= 7) return 'soon';
+  return null;
+}
+
+// Layer timeline derived from the due dates of the goals inside it.
+// The chip reflects how long each goal runs: a repeating goal counts by its
+// cycle (a yearly fee due next week is still a yearly goal), a one-time goal
+// by how far away its target date is.
+const RANK = ['week', 'month', 'year', 'multi_year'];
+function goalPeriod(b) {
+  if (b.recurrence === 'weekly') return 'week';
+  if (b.recurrence === 'monthly') return 'month';
+  if (b.recurrence === 'yearly') return 'year';
+  const d = daysUntil(dueDate(b));
+  if (d === null) return null;
+  return d <= 7 ? 'week' : d <= 31 ? 'month' : d <= 366 ? 'year' : 'multi_year';
+}
+export function layerHorizon(layer, goals) {
+  const dates = goals.map(dueDate).filter(Boolean).sort((a, z) => a - z);
+  if (!dates.length) return { chip: periodShort(layer.period), period: layer.period, range: null, rel: null, count: goals.length };
+  const period = goals.map(goalPeriod).filter(Boolean).sort((a, z) => RANK.indexOf(z) - RANK.indexOf(a))[0] || layer.period;
+  const first = dates[0], last = dates[dates.length - 1];
+  const mon = (d) => d.toLocaleDateString('en-IN', { month: 'short' });
+  const sameMonth = first.getMonth() === last.getMonth() && first.getFullYear() === last.getFullYear();
+  const sameYear = first.getFullYear() === last.getFullYear();
+  const range = sameMonth ? `${mon(first)} ${first.getFullYear()}`
+    : sameYear ? `${mon(first)} – ${mon(last)} ${last.getFullYear()}`
+    : `${mon(first)} ${first.getFullYear()} – ${mon(last)} ${last.getFullYear()}`;
+  const soonest = relTime(daysUntil(first));
+  return {
+    period,
+    chip: periodShort(period),
+    range,
+    rel: dates.length > 1 ? `Soonest ${soonest}` : soonest.charAt(0).toUpperCase() + soonest.slice(1),
+    count: goals.length,
+  };
+}
