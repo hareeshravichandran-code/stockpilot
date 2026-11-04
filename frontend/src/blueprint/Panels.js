@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { blueprintAPI } from '../lib/api';
+import { blueprintAPI, retirementAPI } from '../lib/api';
 import {
   LINK_TYPES, ASSET_TYPES, assetTypeLabel, GOAL_COLORS, WEEKDAYS, MONTHS,
   fmtINR, fmtDate, num, progressTone, colorHex, nextDue, dueDate, daysUntil, relTime, scheduleText,
@@ -112,7 +112,7 @@ export function BucketPanel({ bucket, boardsById, links, bucketsById, onReload, 
 
       {tab === 'details' && (editing
         ? <BucketDetails key={bucket.id} bucket={bucket} loan={bucket.emi_loan_id ? bucketsById[bucket.emi_loan_id] : null} onReload={onReload} notify={notify} onDelete={onDelete} onEmi={onEmi} />
-        : <BucketSummary bucket={bucket} onEdit={onEdit} />)}
+        : <BucketSummary bucket={bucket} onEdit={onEdit} onReload={onReload} notify={notify} />)}
       {tab === 'assets'  && <AssetsTab bucket={bucket} onReload={onReload} notify={notify} editing={editing} />}
       {tab === 'links'   && <LinksList bucket={bucket} links={myLinks} bucketsById={bucketsById} boardsById={boardsById} onSelect={onSelect} />}
       {tab === 'notes'   && <NotesTab bucket={bucket} onReload={onReload} notify={notify} />}
@@ -120,7 +120,45 @@ export function BucketPanel({ bucket, boardsById, links, bucketsById, onReload, 
   );
 }
 
-function BucketSummary({ bucket, onEdit }) {
+// "This is my retirement goal" — links the goal to the Retirement plan (one goal at a time)
+function RetirementSwitch({ bucket, onReload, notify }) {
+  const [busy, setBusy] = useState(false);
+  const on = bucket.special_kind === 'retirement';
+  if (bucket.kind !== 'goal' || bucket.is_loan || bucket.is_emi || bucket.status === 'completed') return null;
+  const toggle = async (next) => {
+    setBusy(true);
+    try {
+      if (next) {
+        const r = await retirementAPI.linkGoal({ bucket_id: bucket.id });
+        notify(r.data.goal ? 'Linked. Target now comes from your Retirement plan' : 'Linked. Open the Retirement plan to set the target');
+      } else {
+        await retirementAPI.unlinkGoal();
+        notify('No longer your retirement goal. Target stays as it is');
+      }
+      await onReload();
+    } catch (e) { notify(errMsg(e), 'error'); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className={`bp-schedule bp-ret-switch ${on ? 'on' : ''}`}>
+      <label className="bp-switch-row">
+        <span>
+          <span className="bp-field-label">Retirement goal</span>
+          <span className="bp-field-hint">{on
+            ? 'Linked to your Retirement plan. Target and date come from your expenses, loans, SIPs and inflation. Funds you map here show up in the plan.'
+            : 'Turn on to link this goal to the Retirement plan. Only one goal can be linked; turning it on here moves it from any other goal.'}</span>
+        </span>
+        <span className="bp-toggle">
+          <input type="checkbox" checked={on} disabled={busy} onChange={e => toggle(e.target.checked)} aria-label="Retirement goal" />
+          <span className="bp-toggle-track" />
+        </span>
+      </label>
+      {on && <a className="bp-btn sm bp-ret-open" href="/dashboard?tab=retirement">Open Retirement plan →</a>}
+    </div>
+  );
+}
+
+function BucketSummary({ bucket, onEdit, onReload, notify }) {
   const rows = [
     ['Target', num(bucket.target_amount) > 0 ? fmtINR(bucket.target_amount, { compact: false }) : 'Not set'],
     [bucket.recurrence !== 'none' ? 'Runs until' : 'Achieve by', bucket.target_date ? fmtDate(bucket.target_date) : (bucket.recurrence !== 'none' ? 'No end date' : 'Not set')],
@@ -132,12 +170,7 @@ function BucketSummary({ bucket, onEdit }) {
       <dl className="bp-summary">
         {rows.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}
       </dl>
-      {bucket.special_kind === 'retirement' && (
-        <div className="bp-callout ret">
-          <div>Target and date come from your Retirement plan: expenses, loans, SIPs and inflation.</div>
-          <a className="bp-btn sm" href="/dashboard?tab=retirement">Open Retirement plan →</a>
-        </div>
-      )}
+      <RetirementSwitch bucket={bucket} onReload={onReload} notify={notify} />
       <button className="bp-btn" onClick={onEdit}>✎ Edit this goal</button>
     </div>
   );
@@ -322,11 +355,10 @@ function BucketDetails({ bucket, loan, onReload, notify, onDelete, onEmi }) {
     <div className="bp-stack">
       <Field label="Goal name"><input className="bp-input" value={d.name} onChange={set('name')} maxLength={80} /></Field>
       <Field label="Colour"><ColorPicker value={d.color} onChange={(c) => setD(s => ({ ...s, color: c }))} /></Field>
+      <RetirementSwitch bucket={bucket} onReload={onReload} notify={notify} />
       {isRet ? (
         <div className="bp-callout ret">
-          <div className="bp-callout-title">Linked to your Retirement plan</div>
-          <div>Target {fmtINR(bucket.target_amount, { compact: false })} by {bucket.target_date ? fmtDate(bucket.target_date) : '—'}. The plan sets these from your expenses, loans and investing, so change them there.</div>
-          <a className="bp-btn sm" href="/dashboard?tab=retirement">Open Retirement plan →</a>
+          <div>Target {fmtINR(bucket.target_amount, { compact: false })} by {bucket.target_date ? fmtDate(bucket.target_date) : '—'}, set by the Retirement plan.</div>
         </div>
       ) : (
       <div className="bp-grid2">

@@ -779,3 +779,4 @@ router.delete('/attachments/:id', requireAuth, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.loadUniverse = loadUniverse;

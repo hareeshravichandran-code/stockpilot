@@ -926,3 +926,6 @@ textarea.bp-input { resize: vertical; line-height: 1.45; }
 
 .bp-callout.ret { background: var(--indigo-soft); border-color: rgba(52,72,122,.3); }
 .bp-callout.ret .bp-btn { align-self: flex-start; text-decoration: none; }
+.bp-ret-switch.on { background: var(--indigo-soft); border-color: rgba(52,72,122,.3); }
+.bp-ret-switch.on .bp-toggle-track { background: var(--indigo) !important; }
+.bp-ret-open { align-self: flex-start; margin-top: 10px; text-decoration: none; }

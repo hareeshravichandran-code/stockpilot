@@ -33,7 +33,7 @@ const DEFAULT_RATE = { home: 8.5, car: 9.5, education: 10, personal: 13, gold: 9
 const DEFAULT_SETTINGS = {
   other_assets: 0, other_contrib: 0, step_up: 0, retire_spend_pct: 100,
   inflation: 6, swr: 4, cagr_cons: 10, cagr_opt: 12, target_age: 55, current_age: 35,
-  include_loans: true, exclude_mapped: true,
+  include_loans: true, exclude_mapped: true, asset_basis: 'all', include_family: true,
 };
 
 // ── Small inputs ─────────────────────────────────────────────────────
@@ -121,6 +121,42 @@ function Section({ id, title, sum, open, onToggle, children }) {
   );
 }
 
+// ── Assets mapped to the Retirement goal in Blueprint ────────────────
+const TYPE_LABEL = { stock: 'Stock', broker: 'Broker', mf: 'Mutual fund', fd: 'FD', rd: 'RD', nps: 'NPS' };
+function MappedAssets({ goal, includeFamily, onFamily }) {
+  const list = goal.assets || [];
+  const fam = list.filter(a => !a.mine);
+  const byType = list.reduce((m, a) => { if (a.mine || includeFamily) m[a.asset_type] = (m[a.asset_type] || 0) + a.value; return m; }, {});
+  if (!list.length && !goal.manual_value) {
+    return <div className="rp-empty">No funds mapped yet. In Blueprint, open “{goal.name}” → Funding, and map your MF folios, NPS, FDs, RDs or a whole broker.</div>;
+  }
+  return (
+    <div className="rp-mapped">
+      {Object.keys(byType).length > 1 && (
+        <div className="rp-mapped-mix">
+          {Object.entries(byType).sort((a, b) => b[1] - a[1]).map(([t, v]) => <span key={t} className={`rp-mix t-${t}`}>{TYPE_LABEL[t] || t} {inr(v)}</span>)}
+        </div>
+      )}
+      <ul className="rp-mapped-list">
+        {list.map(a => (
+          <li key={a.asset_type + a.asset_ref} className={`${!a.mine && !includeFamily ? 'off' : ''} ${a.missing ? 'missing' : ''}`}>
+            <span className={`rp-type t-${a.asset_type}`}>{TYPE_LABEL[a.asset_type] || a.asset_type}</span>
+            <span className="nm">{a.label}{!a.mine && <em className="rp-owner">{a.owner_name || 'Family'}</em>}{a.inactive && <em className="rp-owner closed">Closed</em>}<small>{a.sub}</small></span>
+            <b>{a.missing ? '—' : inr(a.value)}</b>
+          </li>
+        ))}
+        {goal.manual_value > 0 && (
+          <li><span className="rp-type t-cash">Cash</span><span className="nm">Set aside outside Kanalyst<small>Typed on the Blueprint goal</small></span><b>{inr(goal.manual_value)}</b></li>
+        )}
+      </ul>
+      {fam.length > 0 && onFamily && (
+        <Toggle id="rp-fam" checked={includeFamily} onChange={onFamily}
+          label={`Count family members’ assets (${inr(goal.family_value)})`} sub="For a joint retirement plan" />
+      )}
+    </div>
+  );
+}
+
 // ── Main ─────────────────────────────────────────────────────────────
 export default function RetirementPlanner() {
   const nav = useNavigate();
@@ -137,6 +173,7 @@ export default function RetirementPlanner() {
   const [scenario, setScenario] = useState('cons');
   const [saveState, setSaveState] = useState('idle');
   const [showAllYears, setShowAllYears] = useState(false);
+  const [showMapped, setShowMapped] = useState(false);
   const [goalBusy, setGoalBusy] = useState(false);
   const [goalMsg, setGoalMsg] = useState('');
   const [open, setOpen] = useState({ assets: true, invest: true, loans: true, spend: true, growth: false });
@@ -184,8 +221,13 @@ export default function RetirementPlanner() {
 
   // ── Projection ─────────────────────────────────────────────────────
   const model = useMemo(() => {
-    const mapped = settings.exclude_mapped ? n(auto?.otherGoals?.total) : 0;
-    const assetsTotal = val('stocks') + val('mf') + val('nps') + val('epf') + val('ppf') + val('ssy') + val('deposits') + n(settings.other_assets);
+    const lg = (auto?.retireGoals || []).find(g => g.linked);
+    const basisMapped = settings.asset_basis === 'mapped' && !!lg;
+    const goalFunds = lg ? n(lg.mine_value) + n(lg.manual_value) + (settings.include_family ? n(lg.family_value) : 0) : 0;
+    const mapped = !basisMapped && settings.exclude_mapped ? n(auto?.otherGoals?.total) : 0;
+    const assetsTotal = basisMapped
+      ? goalFunds + n(settings.other_assets)
+      : val('stocks') + val('mf') + val('nps') + val('epf') + val('ppf') + val('ssy') + val('deposits') + n(settings.other_assets);
     const start = Math.max(0, assetsTotal - mapped);
     const monthly = val('sip') + val('nps_c') + val('epf_c') + val('ppf_c') + val('rd_c') + n(settings.other_contrib);
     const age = n(settings.current_age) || 35;
@@ -203,7 +245,7 @@ export default function RetirementPlanner() {
     };
     const cons = run(settings.cagr_cons), opt = run(settings.cagr_opt);
     const emiTotal = loans.filter(l => l.include !== false).reduce((s, l) => s + amortize({ ...l, outstanding: n(l.outstanding), emi: n(l.emi), rate: n(l.rate), tenure: n(l.tenure) }).emi, 0);
-    return { start, assetsTotal, mapped, monthly, age, T, cons, opt, emiTotal };
+    return { start, assetsTotal, mapped, monthly, age, T, cons, opt, emiTotal, basisMapped, goalFunds };
     // eslint-disable-next-line
   }, [overrides, autoVals, settings, loans, auto]);
   const cur = scenario === 'opt' ? model.opt : model.cons;
@@ -218,7 +260,13 @@ export default function RetirementPlanner() {
 
   useEffect(() => {
     if (!ready) return undefined;
-    if (firstLoad.current) { firstLoad.current = false; return undefined; }
+    if (firstLoad.current) {
+      firstLoad.current = false;
+      // Skip the first save unless the linked Blueprint goal shows a different target (e.g. linked from Blueprint)
+      const lg = (auto?.retireGoals || []).find(g => g.linked);
+      const gp = goalPayload();
+      if (!lg || (Math.abs(n(lg.target_amount) - gp.target) < 1000 && lg.target_date === gp.date)) return undefined;
+    }
     setSaveState('pending');
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
@@ -297,7 +345,7 @@ export default function RetirementPlanner() {
             : <div className="rp-big none">Not before age {age + cur.H}</div>}
           <div className="rp-sub">
             {retireYear ? `${crossY} years from now` : 'Invest more, lower spending, or raise the growth rate'} · corpus today {inr(model.start)}
-            {model.mapped > 0 && <> (after setting aside {inr(model.mapped)} for other goals)</>}
+            {model.basisMapped ? <> (funds mapped to your Retirement goal)</> : model.mapped > 0 && <> (after setting aside {inr(model.mapped)} for other goals)</>}
           </div>
         </div>
         <div className={`rp-target ${onTrack ? 'ok' : 'short'}`}>
@@ -323,8 +371,15 @@ export default function RetirementPlanner() {
           {linked ? (
             <>
               <div className="rp-goal-name">{linked.name}</div>
-              <div className="rp-goal-row"><span>Target from this plan</span><b>{inr(linked.target_amount)}</b></div>
-              <div className="rp-goal-row"><span>Funds mapped there</span><b>{inr(linked.current_value)}</b></div>
+              <div className="rp-goal-row"><span>Target from this plan</span><b>{inr(model.cons.atT.magic)}</b></div>
+              <div className="rp-goal-row"><span>Funds mapped there</span><b>{inr(model.goalFunds)}</b></div>
+              <div className="rp-goal-bar"><i style={{ width: `${Math.min(100, linked.target_amount > 0 ? (model.goalFunds / linked.target_amount) * 100 : 0)}%` }} /></div>
+              <button type="button" className="rp-link" aria-expanded={showMapped} onClick={() => setShowMapped(v => !v)}>
+                {showMapped ? 'Hide' : 'See'} {(linked.assets || []).length} mapped asset{(linked.assets || []).length === 1 ? '' : 's'} <span className={`rp-chev ${showMapped ? 'up' : ''}`}>⌄</span>
+              </button>
+              <div className={`rp-reveal ${showMapped ? 'open' : ''}`}><div className="rp-reveal-inner">
+                <MappedAssets goal={linked} includeFamily={settings.include_family} />
+              </div></div>
               <div className="rp-goal-actions">
                 <button type="button" className="rp-btn" onClick={() => nav('/blueprint')}>Open Blueprint</button>
                 <button type="button" className="rp-btn ghost" disabled={goalBusy} onClick={unlinkGoal}>Unlink</button>
@@ -387,6 +442,20 @@ export default function RetirementPlanner() {
       {/* Inputs */}
       <div className="rp-grid">
         <Section id="assets" open={open.assets} onToggle={() => setOpen(o => ({ ...o, assets: !o.assets }))} title="What you have today" sum={inr(model.assetsTotal)}>
+          <div className="rp-seg rp-basis" role="radiogroup" aria-label="Which assets count">
+            <button type="button" role="radio" aria-checked={!model.basisMapped} className={!model.basisMapped ? 'on' : ''} onClick={() => setS('asset_basis')('all')}>All my assets</button>
+            <button type="button" role="radio" aria-checked={model.basisMapped} className={model.basisMapped ? 'on' : ''} disabled={!linked}
+              title={linked ? '' : 'Link a Retirement goal in Blueprint first'} onClick={() => setS('asset_basis')('mapped')}>Only funds mapped to {linked ? `“${linked.name}”` : 'the Retirement goal'}</button>
+          </div>
+          {model.basisMapped ? (
+            <>
+              <MappedAssets goal={linked} includeFamily={settings.include_family} onFamily={setS('include_family')} />
+              <div className="rp-fields">
+                <Money id="rp-oth" label="Anything else for retirement" value={settings.other_assets} onChange={setS('other_assets')} hint="EPF, PPF, gold or anything not mapped in Blueprint" />
+              </div>
+              <div className="rp-row-between"><span className="rp-hint">Map or unmap funds in Blueprint → goal → Funding.</span><button type="button" className="rp-btn sm" onClick={() => nav('/blueprint')}>Open Blueprint</button></div>
+            </>
+          ) : (<>
           <div className="rp-fields">
             <Money id="rp-mf" label="Mutual funds" value={val('mf')} auto={autoVals.mf} source={auto?.assets.mf.source} onChange={setVal('mf')} onReset={resetVal('mf')} />
             <Money id="rp-st" label="Stocks" value={val('stocks')} auto={autoVals.stocks} source={auto?.assets.stocks.source} onChange={setVal('stocks')} onReset={resetVal('stocks')} />
@@ -404,6 +473,7 @@ export default function RetirementPlanner() {
                 sub={auto.otherGoals.goals.slice(0, 4).map(g => `${g.name} ${inr(g.value)}`).join(' · ')} />
             </div>
           )}
+          </>)}
         </Section>
 
         <Section id="invest" open={open.invest} onToggle={() => setOpen(o => ({ ...o, invest: !o.invest }))} title="What you invest each month" sum={`${inr(model.monthly)}/mo`}>

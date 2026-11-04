@@ -16,6 +16,7 @@ const requireAuth = require('../middleware/requireAuth');
 const supabase    = require('../services/supabase');
 const { computeFD } = require('./fd');
 const { computeRD } = require('./rd');
+const loadUniverse = (uid) => require('./blueprint').loadUniverse(uid);   // lazy: avoids a load-order cycle
 
 const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
 const r0 = (v) => Math.round(num(v));
@@ -264,6 +265,9 @@ router.get('/autofill', requireAuth, async (req, res) => {
       .map(b => ({ name: b.name, value: b.mapped_value })).sort((a, b) => b.value - a.value);
     const retireGoals = buckets.filter(b => b.kind === 'goal' && !b.is_loan && b.status !== 'completed' && (b.id === linkedId || b.special_kind === 'retirement' || /retire/i.test(b.name)))
       .map(b => ({ id: b.id, name: b.name, target_amount: num(b.target_amount), target_date: b.target_date, current_value: b.current_value, linked: b.id === linkedId }));
+    // Every asset mapped to the linked goal, with names (yours and family members')
+    const linkedGoal = retireGoals.find(g => g.linked);
+    if (linkedGoal) Object.assign(linkedGoal, await mappedAssets(uid, linkedGoal.id, buckets.find(b => b.id === linkedGoal.id)));
 
     // Bank SMS
     const tx = await analyseTransactions(uid, user?.name);
@@ -297,6 +301,23 @@ router.get('/autofill', requireAuth, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ── Assets mapped to one goal, labelled the same way Blueprint shows them ──
+async function mappedAssets(uid, bucketId, bucket) {
+  const [{ data: maps }, uni] = await Promise.all([
+    supabase.from('bp_bucket_assets').select('asset_type, asset_ref').eq('user_id', uid).eq('bucket_id', bucketId),
+    loadUniverse(uid).catch(() => ({ byKey: {} })),
+  ]);
+  const assets = (maps || []).map(m => {
+    const it = uni.byKey[`${m.asset_type}::${m.asset_ref}`];
+    const mine = !String(m.asset_ref).startsWith('fam:');
+    if (!it) return { asset_type: m.asset_type, asset_ref: m.asset_ref, label: 'No longer in your records', sub: m.asset_ref, value: 0, mine, owner_name: null, missing: true };
+    return { asset_type: m.asset_type, asset_ref: m.asset_ref, label: it.label, sub: it.sub, value: r0(it.value), mine, owner_name: it.owner_name || null, inactive: !!it.inactive };
+  }).sort((a, b) => (b.mine - a.mine) || (b.value - a.value));
+  const mineValue = assets.filter(a => a.mine).reduce((s, a) => s + a.value, 0);
+  const familyValue = assets.filter(a => !a.mine).reduce((s, a) => s + a.value, 0);
+  return { assets, mine_value: r0(mineValue), family_value: r0(familyValue), manual_value: r0(num(bucket?.manual_value)) };
+}
 
 // ═══════════════════════════════════════════════════════════════════
 //  Plan
@@ -341,7 +362,7 @@ router.put('/', requireAuth, async (req, res) => {
   if (!data || typeof data !== 'object') return res.status(400).json({ error: 'data is required' });
   if (JSON.stringify(data).length > 60000) return res.status(413).json({ error: 'Plan is too large' });
   try {
-    const plan = await savePlan(uid, { data });
+    const plan = await savePlan(uid, { data: { ...data, lastGoal: goal && goal.target > 0 ? { target: r0(goal.target), date: goal.date || null } : (data.lastGoal || null) } });
     const synced = await syncGoal(uid, plan.linked_bucket_id, goal);
     res.json({ plan, goal: synced });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
@@ -354,8 +375,9 @@ router.post('/goal', requireAuth, async (req, res) => {
   try {
     let bucketId = bucket_id;
     if (bucketId) {
-      const { data: b } = await supabase.from('bp_buckets').select('id, kind, is_loan').eq('id', bucketId).eq('user_id', uid).maybeSingle();
+      const { data: b } = await supabase.from('bp_buckets').select('id, kind, is_loan, is_emi').eq('id', bucketId).eq('user_id', uid).maybeSingle();
       if (!b || b.kind !== 'goal' || b.is_loan) return res.status(404).json({ error: 'That goal was not found' });
+      if (b.is_emi) return res.status(400).json({ error: 'An EMI goal can’t be your retirement goal' });
     } else {
       // New goal in the furthest-out lane of your first plan box (or outside if you have none)
       const { data: boards } = await supabase.from('bp_boards').select('id').eq('user_id', uid).order('created_at').limit(1);
@@ -382,7 +404,10 @@ router.post('/goal', requireAuth, async (req, res) => {
       await supabase.from('bp_buckets').update({ special_kind: null }).eq('id', prev.linked_bucket_id).eq('user_id', uid);
     }
     const plan = await savePlan(uid, { linked_bucket_id: bucketId, ...(prev ? {} : { data: {} }) });
-    const synced = await syncGoal(uid, bucketId, { target, date });
+    // Mark it as the retirement goal; target comes from the request, else from the last saved plan
+    await supabase.from('bp_buckets').update({ special_kind: 'retirement', recurrence: 'none' }).eq('id', bucketId).eq('user_id', uid);
+    const g = target > 0 ? { target, date } : prev?.data?.lastGoal;
+    const synced = await syncGoal(uid, bucketId, g);
     await supabase.from('bp_comments').insert({ user_id: uid, bucket_id: bucketId, body: 'Linked to the Retirement planner. Target and date now come from your plan.', is_system: true });
     res.status(201).json({ plan, goal: synced });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
