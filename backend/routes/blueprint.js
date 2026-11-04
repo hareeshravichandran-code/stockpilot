@@ -136,7 +136,7 @@ async function loadMemberUniverse(userId, prefix, member) {
     let c = {};
     try { c = computeFD(fd); } catch (e) { c = { current_value: num(fd.principal_amount), is_active: true }; }
     items.push({
-      asset_type: 'fd', asset_ref: fd.id,
+      asset_type: 'fd', asset_ref: String(fd.fd_id || fd.id),
       label: fd.nickname || `${fd.institution_name || 'FD'}`, sub: `FD · matures ${c.maturity_date || '—'}${c.is_active ? '' : ' · closed'}`,
       value: round2(num(c.current_value)), inactive: !c.is_active,
     });
@@ -145,7 +145,7 @@ async function loadMemberUniverse(userId, prefix, member) {
     let c = {};
     try { c = computeRD(rd); } catch (e) { c = { current_value: 0, is_active: true }; }
     items.push({
-      asset_type: 'rd', asset_ref: rd.id,
+      asset_type: 'rd', asset_ref: String(rd.rd_id || rd.id),
       label: rd.nickname || `${rd.institution_name || 'RD'}`, sub: `RD · ₹${num(rd.monthly_installment).toLocaleString('en-IN')}/mo${c.is_active ? '' : ' · closed'}`,
       value: round2(num(c.current_value)), inactive: !c.is_active,
     });
@@ -477,6 +477,9 @@ router.post('/buckets', requireAuth, async (req, res) => {
 router.put('/buckets/:id', requireAuth, async (req, res) => {
   const b = cleanBucket(req.body);
   delete b.status; // status changes go through complete / reopen
+  // A special goal's target and date belong to its module (e.g. the Retirement planner)
+  const { data: cur0 } = await supabase.from('bp_buckets').select('special_kind').eq('id', req.params.id).eq('user_id', req.user.id).maybeSingle();
+  if (cur0?.special_kind === 'retirement') { delete b.target_amount; delete b.target_date; delete b.recurrence; }
   if (b.recurrence && b.recurrence !== 'none' && b.cycle_start === undefined) {
     const { data: cur } = await supabase.from('bp_buckets').select('cycle_start').eq('id', req.params.id).single();
     if (!cur?.cycle_start) b.cycle_start = today();

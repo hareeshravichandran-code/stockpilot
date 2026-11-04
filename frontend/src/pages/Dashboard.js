@@ -292,6 +292,13 @@ export default function Dashboard() {
     if (error) { setSyncResult({ success: false, message: 'Connection failed. Please try again.' }); }
   }, [loadPortfolio, searchParams]);
 
+  // Deep link: /dashboard?tab=retirement (from Blueprint and elsewhere)
+  const tabParam = searchParams.get('tab');
+  useEffect(() => {
+    if (tabParam) loadTab(tabParam);
+    // eslint-disable-next-line
+  }, [tabParam]);
+
   // Auto-scan income every 30 mins
   useEffect(() => {
     const run = () => { if (incomeRules.length > 0) incomeAPI.scan().catch(() => {}); };

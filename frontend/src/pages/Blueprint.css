@@ -806,6 +806,7 @@ textarea.bp-input { resize: vertical; line-height: 1.45; }
 /* EMI and loan cards */
 .bp-rec.emi  { background: var(--violet-soft); color: var(--violet); font-weight: 600; }
 .bp-rec.loan { background: var(--text); color: var(--surface); font-weight: 600; }
+.bp-rec.ret  { background: var(--indigo); color: #fff; font-weight: 600; }
 .bp-bucket.goal.loan { background: linear-gradient(160deg, var(--violet-soft) 0%, var(--card) 70%); border: 1.5px solid color-mix(in srgb, var(--violet) 45%, transparent); }
 .bp-bucket.goal.loan::before { background: var(--violet); width: 5px; }
 .bp-emi.active { border-color: color-mix(in srgb, var(--violet) 45%, transparent); background: color-mix(in srgb, var(--violet) 6%, var(--surface-2)); }
@@ -922,3 +923,6 @@ textarea.bp-input { resize: vertical; line-height: 1.45; }
 .zoom-mid .bp-target.none { font-size: 17px; }
 .zoom-far .bp-target.none { font-size: 20px; }
 .zoom-far .bp-rel { display: none; }
+
+.bp-callout.ret { background: var(--indigo-soft); border-color: rgba(52,72,122,.3); }
+.bp-callout.ret .bp-btn { align-self: flex-start; text-decoration: none; }

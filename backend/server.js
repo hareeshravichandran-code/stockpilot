@@ -19,6 +19,7 @@ const npsRoutes      = require('./routes/nps');
 const fdRoutes       = require('./routes/fd');
 const rdRoutes       = require('./routes/rd');
 const blueprintRoutes = require('./routes/blueprint');
+const retirementRoutes = require('./routes/retirement');
 
 const app = express();
 
@@ -66,6 +67,7 @@ app.use('/api/nps',      npsRoutes);
 app.use('/api/fd',       fdRoutes);
 app.use('/api/rd',       rdRoutes);
 app.use('/api/blueprint', blueprintRoutes);
+app.use('/api/retirement', retirementRoutes);
 
 // ── Health check ──
 // Debug endpoint - check PDF tools

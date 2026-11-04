@@ -132,6 +132,12 @@ function BucketSummary({ bucket, onEdit }) {
       <dl className="bp-summary">
         {rows.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}
       </dl>
+      {bucket.special_kind === 'retirement' && (
+        <div className="bp-callout ret">
+          <div>Target and date come from your Retirement plan: expenses, loans, SIPs and inflation.</div>
+          <a className="bp-btn sm" href="/dashboard?tab=retirement">Open Retirement plan →</a>
+        </div>
+      )}
       <button className="bp-btn" onClick={onEdit}>✎ Edit this goal</button>
     </div>
   );
@@ -303,7 +309,12 @@ function BucketDetails({ bucket, loan, onReload, notify, onDelete, onEmi }) {
     finally { setBusy(false); }
   };
 
-  const save = () => run(() => blueprintAPI.updateBucket(bucket.id, d), 'Saved');
+  const isRet = bucket.special_kind === 'retirement';
+  const save = () => {
+    const body = { ...d };
+    if (isRet) { delete body.target_amount; delete body.target_date; delete body.recurrence; delete body.recurrence_day; delete body.recurrence_month; }
+    return run(() => blueprintAPI.updateBucket(bucket.id, body), 'Saved');
+  };
   const reached = num(bucket.target_amount) > 0 && num(bucket.progress) >= 100;
   const preview = nextDue({ ...bucket, ...d });
 
@@ -311,6 +322,13 @@ function BucketDetails({ bucket, loan, onReload, notify, onDelete, onEmi }) {
     <div className="bp-stack">
       <Field label="Goal name"><input className="bp-input" value={d.name} onChange={set('name')} maxLength={80} /></Field>
       <Field label="Colour"><ColorPicker value={d.color} onChange={(c) => setD(s => ({ ...s, color: c }))} /></Field>
+      {isRet ? (
+        <div className="bp-callout ret">
+          <div className="bp-callout-title">Linked to your Retirement plan</div>
+          <div>Target {fmtINR(bucket.target_amount, { compact: false })} by {bucket.target_date ? fmtDate(bucket.target_date) : '—'}. The plan sets these from your expenses, loans and investing, so change them there.</div>
+          <a className="bp-btn sm" href="/dashboard?tab=retirement">Open Retirement plan →</a>
+        </div>
+      ) : (
       <div className="bp-grid2">
         <Field label={d.recurrence === 'none' ? 'Target amount (₹)' : 'Amount per cycle (₹)'}>
           <input className="bp-input mono" type="number" min="0" value={d.target_amount} onChange={set('target_amount')} />
@@ -319,8 +337,9 @@ function BucketDetails({ bucket, loan, onReload, notify, onDelete, onEmi }) {
           <input className="bp-input" type="date" value={d.target_date} onChange={set('target_date')} />
         </Field>
       </div>
-      {!bucket.is_loan && <ScheduleFields d={d} setD={setD} />}
-      {!bucket.is_loan && <EmiFields bucket={bucket} loan={loan} onEmi={onEmi} notify={notify} />}
+      )}
+      {!bucket.is_loan && !isRet && <ScheduleFields d={d} setD={setD} />}
+      {!bucket.is_loan && !isRet && <EmiFields bucket={bucket} loan={loan} onEmi={onEmi} notify={notify} />}
       {bucket.is_loan && <div className="bp-callout">This is the loan an EMI goal pays into. Each time you close an EMI cycle, the instalment is added here as paid.</div>}
       {d.recurrence !== 'none' && preview && <div className="bp-field-hint">Next due {fmtDate(preview)} ({relTime(daysUntil(preview))}).</div>}
       <Field label="Cash set aside outside Kanalyst (₹)" hint="Added to the mapped funds — savings account money, cash, anything not tracked here.">

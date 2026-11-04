@@ -962,7 +962,8 @@ function BucketCard({ bucket: b, rect, selected, dragging, linkTarget, external,
       style={style} onPointerDown={onDown}>
       <div className="bp-bucket-top">
         <span className="bp-bucket-name" title={b.name}>{done && '✓ '}{b.name}</span>
-        {b.is_loan ? <span className="bp-rec loan">Loan</span>
+        {b.special_kind === 'retirement' ? <span className="bp-rec ret" title="Target comes from the Retirement plan">Retire</span>
+          : b.is_loan ? <span className="bp-rec loan">Loan</span>
           : b.is_emi ? <span className="bp-rec emi" title={scheduleText(b)}>EMI</span>
           : b.recurrence !== 'none' && <span className="bp-rec" title={scheduleText(b)}>↻ {b.recurrence === 'weekly' ? 'Wk' : b.recurrence === 'monthly' ? 'Mo' : 'Yr'}</span>}
       </div>

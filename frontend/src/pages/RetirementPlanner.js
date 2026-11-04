@@ -1,537 +1,528 @@
-import { useState, useEffect, useMemo } from 'react';
+/**
+ * Kanalyst — Retirement plan
+ *
+ * Fills itself from Kanalyst (portfolio, NPS, deposits, bank SMS, Blueprint EMIs) and
+ * lets you override any number. Handles several loans, step-up SIPs, EMIs freed after
+ * payoff, spending in retirement, and money already set aside for other goals.
+ * Saves the plan and keeps the Retirement goal in Blueprint in sync.
+ *
+ * Hooks live only at the top of each component (never inside JSX conditionals).
+ */
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-  ResponsiveContainer, ReferenceDot, ReferenceLine
+  ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot,
 } from 'recharts';
-import api, { portfolioAPI, mfAPI, npsAPI } from '../lib/api';
+import { retirementAPI } from '../lib/api';
+import { amortize, outstandingAfter, payoffDate, simulate, requiredExtra, ageFromDob, CURRENT_YEAR } from '../retirement/engine';
+import './RetirementPlanner.css';
 
-// ─────────────────────────────────────────────────────────────────────────
-// Formatting helpers (match house style used elsewhere in Dashboard.js)
-// ─────────────────────────────────────────────────────────────────────────
-const fmt = (v) => {
-  const n = Number(v) || 0;
-  const sign = n < 0 ? '-' : '';
-  const abs = Math.abs(n);
-  if (abs >= 10000000) return `${sign}₹${(abs / 10000000).toFixed(2)}Cr`;
-  if (abs >= 100000)   return `${sign}₹${(abs / 100000).toFixed(2)}L`;
-  return `${sign}₹${abs.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+const n = (v) => { const x = parseFloat(v); return Number.isFinite(x) ? x : 0; };
+const inr = (v) => {
+  const x = n(v), a = Math.abs(x), s = x < 0 ? '−' : '';
+  if (a >= 1e7) return `${s}₹${(a / 1e7).toFixed(2)}Cr`;
+  if (a >= 1e5) return `${s}₹${(a / 1e5).toFixed(2)}L`;
+  if (a >= 1e3) return `${s}₹${(a / 1e3).toFixed(1)}K`;
+  return `${s}₹${Math.round(a)}`;
 };
-const fmtFull = (v) => '₹' + (Number(v) || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 });
-const fmtPct  = (v) => `${(Number(v) || 0).toFixed(1)}%`;
+const inrFull = (v) => '₹' + Math.round(n(v)).toLocaleString('en-IN');
+const uid = () => Math.random().toString(36).slice(2, 9);
+const LOAN_TYPES = [['home', 'Home'], ['car', 'Car'], ['education', 'Education'], ['personal', 'Personal'], ['gold', 'Gold'], ['card', 'Card'], ['other', 'Other']];
+const DEFAULT_RATE = { home: 8.5, car: 9.5, education: 10, personal: 13, gold: 9, card: 36, other: 10 };
 
-const CURRENT_YEAR = new Date().getFullYear();
+const DEFAULT_SETTINGS = {
+  other_assets: 0, other_contrib: 0, step_up: 0, retire_spend_pct: 100,
+  inflation: 6, swr: 4, cagr_cons: 10, cagr_opt: 12, target_age: 55, current_age: 35,
+  include_loans: true, exclude_mapped: true,
+};
 
-// ─────────────────────────────────────────────────────────────────────────
-// Core calculation engine — pure functions, mirrors spec sections 3.1–3.6
-// ─────────────────────────────────────────────────────────────────────────
-
-// 3.1 / 3.2 — corpus growth, with and without continued investing
-function corpusWithInvesting(start, pmt, r, y) {
-  if (r === 0) return start + pmt * y;
-  return start * Math.pow(1 + r, y) + pmt * (Math.pow(1 + r, y) - 1) / r;
-}
-function corpusWithoutInvesting(start, r, y) {
-  return start * Math.pow(1 + r, y);
-}
-
-// 3.3 — loan amortization, outstanding balance after y years
-function loanOutstanding(emi, rMonthly, nTotalMonths, y) {
-  const nRemaining = nTotalMonths - y * 12;
-  if (nRemaining <= 0) return 0;
-  if (rMonthly === 0) return emi * nRemaining; // edge case: 0% interest, linear payoff
-  return emi * (1 - Math.pow(1 + rMonthly, -nRemaining)) / rMonthly;
-}
-
-// 3.6 — reverse calculation: required PMT to hit a target year
-function requiredPMT(magicNumberAtTarget, start, r, yTarget) {
-  if (yTarget === 0) return magicNumberAtTarget > start ? Infinity : -1;
-  const grown = start * Math.pow(1 + r, yTarget);
-  if (r === 0) return (magicNumberAtTarget - grown) / yTarget;
-  return (magicNumberAtTarget - grown) * r / (Math.pow(1 + r, yTarget) - 1);
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// Small presentational pieces
-// ─────────────────────────────────────────────────────────────────────────
-function FieldGroup({ title, accent, children }) {
+// ── Small inputs ─────────────────────────────────────────────────────
+function Money({ id, label, value, auto, source, onChange, onReset, suffix, step = 1000, hint }) {
+  const overridden = auto !== undefined && auto !== null && value !== auto;
   return (
-    <div style={{
-      background: 'var(--surface)', border: '1px solid var(--border)',
-      borderRadius: 'var(--r-xl)', padding: '16px 18px', boxShadow: 'var(--shadow-1)'
-    }}>
-      <div style={{
-        fontFamily: 'var(--font-mono)', fontSize: 10.5, fontWeight: 600,
-        letterSpacing: '.1em', textTransform: 'uppercase', color: accent || 'var(--text-3)',
-        marginBottom: 12
-      }}>{title}</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>{children}</div>
-    </div>
-  );
-}
-
-function NumField({ label, value, onChange, suffix, prefilled, step = 1000, min = 0 }) {
-  return (
-    <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-        <label style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{label}</label>
-        {prefilled && (
-          <span style={{
-            fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--mint)',
-            background: 'var(--mint-soft)', padding: '1px 5px', borderRadius: 4,
-            letterSpacing: '.03em'
-          }}>FROM PORTFOLIO</span>
-        )}
-      </div>
-      <div style={{ position: 'relative' }}>
-        <input
-          type="number"
-          value={value}
-          min={min}
-          step={step}
-          onChange={(e) => onChange(e.target.value === '' ? 0 : parseFloat(e.target.value))}
-          style={{
-            width: '100%', padding: '8px 36px 8px 10px', borderRadius: 'var(--r-md)',
-            border: '1px solid var(--border-2)', background: 'var(--surface-2)',
-            color: 'var(--text)', fontFamily: 'var(--font-mono)', fontSize: 13,
-            boxSizing: 'border-box', outline: 'none'
-          }}
-        />
-        {suffix && (
-          <span style={{
-            position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
-            fontSize: 11, color: 'var(--text-4)'
-          }}>{suffix}</span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function KPICard({ label, value, sub, accent, icon }) {
-  return (
-    <div className="k-tile" style={{ flex: 1, minWidth: 0 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-        <span style={{ fontSize: 10.5, fontFamily: 'var(--font-mono)', letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--text-3)' }}>{label}</span>
-        {icon && <span style={{ fontSize: 15, opacity: 0.7 }}>{icon}</span>}
-      </div>
-      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 23, fontWeight: 700, color: accent || 'var(--text)', letterSpacing: '-0.01em' }}>{value}</div>
-      {sub && <div style={{ fontSize: 11.5, color: 'var(--text-3)', marginTop: 4 }}>{sub}</div>}
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// Main component
-// ─────────────────────────────────────────────────────────────────────────
-export default function RetirementPlanner() {
-  const [loadingPrefill, setLoadingPrefill] = useState(true);
-  const [prefilledFields, setPrefilledFields] = useState({});
-  const [inputsOpen, setInputsOpen] = useState(true);
-  const [mode, setMode] = useState('forward'); // 'forward' | 'reverse'
-  const [scenario, setScenario] = useState('pessimist'); // 'pessimist' | 'optimist'
-  const [showFullTable, setShowFullTable] = useState(false);
-  const [reverseTargetYear, setReverseTargetYear] = useState(CURRENT_YEAR + 14);
-
-  const [inputs, setInputs] = useState({
-    // Assets
-    mutual_funds_value: 0,
-    stocks_value: 0,
-    epf_value: 0,
-    nps_value: 0,
-    other_assets_value: 0,
-    // Liabilities
-    loan_principal_outstanding: 0,
-    loan_emi: 0,
-    loan_interest_rate_annual: 8.5,
-    loan_years_remaining: 0,
-    include_loan_in_magic_number: true,
-    // Contributions
-    monthly_sip_total: 0,
-    monthly_epf_contribution: 0,
-    monthly_nps_contribution: 0,
-    // Lifestyle
-    monthly_expenses_today: 0,
-    inflation_rate_annual: 6,
-    safe_withdrawal_rate: 4,
-    expected_cagr_pessimist: 10,
-    expected_cagr_optimist: 12,
-    projection_horizon_years: 30,
-  });
-
-  const set = (key) => (val) => setInputs((p) => ({ ...p, [key]: val }));
-
-  // ── Prefill from existing Kanalyst portfolio data ───────────────────────
-  useEffect(() => {
-    let cancelled = false;
-    async function prefill() {
-      const filled = {};
-      const next = {};
-
-      const [stocksR, mfR, npsR, assetsR, exp0, exp1, exp2] = await Promise.allSettled([
-        portfolioAPI.get(),
-        mfAPI.get(),
-        npsAPI.get(),
-        portfolioAPI.assets(),
-        fetchMonth(0),
-        fetchMonth(1),
-        fetchMonth(2),
-      ]);
-
-      if (stocksR.status === 'fulfilled') {
-        const v = stocksR.value?.data?.summary?.totalMarket;
-        if (v != null && v > 0) { next.stocks_value = Math.round(v); filled.stocks_value = true; }
-      }
-      if (mfR.status === 'fulfilled') {
-        const v = mfR.value?.data?.summary?.totalValue;
-        if (v != null && v > 0) { next.mutual_funds_value = Math.round(v); filled.mutual_funds_value = true; }
-      }
-      if (npsR.status === 'fulfilled') {
-        const v = npsR.value?.data?.latest?.total_value;
-        if (v != null && v > 0) { next.nps_value = Math.round(v); filled.nps_value = true; }
-      }
-      let assetBalances = null;
-      if (assetsR.status === 'fulfilled') {
-        assetBalances = assetsR.value?.data;
-        if (assetBalances) {
-          if (assetBalances.epf > 0) { next.epf_value = Math.round(assetBalances.epf); filled.epf_value = true; }
-          const otherSum = (assetBalances.ppf || 0) + (assetBalances.ssy || 0) + (assetBalances.fd || 0);
-          if (otherSum > 0) { next.other_assets_value = Math.round(otherSum); filled.other_assets_value = true; }
-          if (assetBalances.homeLoan > 0) { next.loan_principal_outstanding = Math.round(assetBalances.homeLoan); filled.loan_principal_outstanding = true; }
-          // fall back to generic asset NPS only if the dedicated NPS module had nothing
-          if (!filled.nps_value && assetBalances.nps > 0) { next.nps_value = Math.round(assetBalances.nps); filled.nps_value = true; }
-        }
-      }
-
-      const monthVals = [exp0, exp1, exp2]
-        .filter((r) => r.status === 'fulfilled' && r.value?.data?.total_expenses > 0)
-        .map((r) => r.value.data.total_expenses);
-      if (monthVals.length > 0) {
-        const avg = monthVals.reduce((a, b) => a + b, 0) / monthVals.length;
-        next.monthly_expenses_today = Math.round(avg);
-        filled.monthly_expenses_today = true;
-      }
-
-      if (!cancelled) {
-        setInputs((p) => ({ ...p, ...next }));
-        setPrefilledFields(filled);
-        setLoadingPrefill(false);
-      }
-    }
-    function fetchMonth(monthsAgo) {
-      const d = new Date();
-      d.setMonth(d.getMonth() - monthsAgo);
-      const month = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`;
-      return api.get('/api/expense/transactions/summary', { params: { month } });
-    }
-    prefill().catch(() => setLoadingPrefill(false));
-    return () => { cancelled = true; };
-  }, []);
-
-  // ── Derived calculation series ──────────────────────────────────────────
-  const calc = useMemo(() => {
-    const {
-      mutual_funds_value, stocks_value, epf_value, nps_value, other_assets_value,
-      loan_emi, loan_interest_rate_annual, loan_years_remaining, include_loan_in_magic_number,
-      monthly_sip_total, monthly_epf_contribution, monthly_nps_contribution,
-      monthly_expenses_today, inflation_rate_annual, safe_withdrawal_rate,
-      expected_cagr_pessimist, expected_cagr_optimist, projection_horizon_years,
-    } = inputs;
-
-    const start = mutual_funds_value + stocks_value + epf_value + nps_value + other_assets_value;
-    const pmtYear1 = (monthly_sip_total + monthly_epf_contribution + monthly_nps_contribution) * 12;
-    const r = (scenario === 'optimist' ? expected_cagr_optimist : expected_cagr_pessimist) / 100;
-    const swr = Math.max(safe_withdrawal_rate, 2) / 100;
-    const inflation = inflation_rate_annual / 100;
-    const horizon = Math.min(Math.max(projection_horizon_years, 1), 40);
-
-    const rMonthly = loan_years_remaining > 0
-      ? Math.pow(1 + loan_interest_rate_annual / 100, 1 / 12) - 1
-      : 0;
-    const nTotalMonths = loan_years_remaining * 12;
-
-    const rows = [];
-    let crossoverWithSip = null;
-    let crossoverNoSip = null;
-
-    for (let y = 0; y <= horizon; y++) {
-      const ci = corpusWithInvesting(start, pmtYear1, r, y);
-      const cni = corpusWithoutInvesting(start, r, y);
-      const annualExpense = monthly_expenses_today * 12 * Math.pow(1 + inflation, y);
-      const corpusForExpenses = annualExpense * (1 / swr);
-      const loanOut = include_loan_in_magic_number
-        ? loanOutstanding(loan_emi, rMonthly, nTotalMonths, y)
-        : 0;
-      const mn = corpusForExpenses + loanOut;
-
-      const feasibleWithSip = ci >= mn;
-      const feasibleNoSip = cni >= mn;
-      if (!crossoverWithSip && feasibleWithSip) crossoverWithSip = { year: CURRENT_YEAR + y, yearIndex: y };
-      if (!crossoverNoSip && feasibleNoSip) crossoverNoSip = { year: CURRENT_YEAR + y, yearIndex: y };
-
-      rows.push({
-        year: CURRENT_YEAR + y, yearIndex: y,
-        corpusWithSip: ci, corpusWithoutSip: cni,
-        magicNumber: mn, loanOutstanding: loanOut,
-        gapWithSip: ci - mn, feasibleWithSip, feasibleNoSip,
-      });
-    }
-
-    // Reverse mode: required PMT to retire by a chosen target year
-    const yTarget = Math.max(0, Math.min(reverseTargetYear - CURRENT_YEAR, horizon));
-    const mnAtTarget = rows[yTarget]?.magicNumber ?? 0;
-    const reqPmt = requiredPMT(mnAtTarget, start, r, yTarget);
-    const reqMonthly = reqPmt > 0 ? reqPmt / 12 : 0;
-    const alreadyAchievable = reqPmt <= 0;
-
-    return {
-      start, pmtYear1, r, swr, inflation, horizon, rows,
-      crossoverWithSip, crossoverNoSip,
-      magicNumberToday: rows[0]?.magicNumber ?? 0,
-      reverse: { yTarget, mnAtTarget, reqPmt, reqMonthly, alreadyAchievable },
-    };
-  }, [inputs, scenario, reverseTargetYear]);
-
-  const warnCagrVsInflation = (scenario === 'optimist' ? inputs.expected_cagr_optimist : inputs.expected_cagr_pessimist) <= inputs.inflation_rate_annual;
-
-  // Key years for the collapsed table view
-  const keyYearIndices = [0, 5, 10, 15, 20, 25, 30].filter((y) => y <= calc.horizon);
-  const tableRows = showFullTable ? calc.rows : calc.rows.filter((r) => keyYearIndices.includes(r.yearIndex));
-
-  const chartData = calc.rows.map((r) => ({
-    year: r.year,
-    'With investing': Math.round(r.corpusWithSip),
-    'Without investing': Math.round(r.corpusWithoutSip),
-    'Magic number': Math.round(r.magicNumber),
-  }));
-
-  return (
-    <div style={{ padding: '24px 28px' }} className="fade-in">
-
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-        <div>
-          <h2 style={{ color: 'var(--text)', fontSize: 22, fontWeight: 700, margin: 0, fontFamily: 'var(--font-display)' }}>
-            Retirement Magic Number
-          </h2>
-          <div style={{ color: 'var(--text-3)', fontSize: 13, marginTop: 3 }}>
-            The corpus you need, the year you'll get there — recalculated the moment you change an assumption
-          </div>
-        </div>
-        <div className="k-seg">
-          <button className={mode === 'forward' ? 'on' : ''} onClick={() => setMode('forward')}>When can I retire</button>
-          <button className={mode === 'reverse' ? 'on' : ''} onClick={() => setMode('reverse')}>Retire by a target year</button>
-        </div>
-      </div>
-
-      {!loadingPrefill && Object.keys(prefilledFields).length > 0 && (
-        <div style={{
-          display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 10, marginBottom: 18,
-          fontSize: 12, color: 'var(--mint)', background: 'var(--mint-soft)',
-          border: '1px solid rgba(31,107,74,0.18)', borderRadius: 'var(--r-md)', padding: '6px 12px'
-        }}>
-          ✓ Pulled {Object.keys(prefilledFields).length} field{Object.keys(prefilledFields).length > 1 ? 's' : ''} straight from your portfolio, NPS and expense history — adjust anything below
-        </div>
-      )}
-
-      {/* ── Inputs panel ─────────────────────────────────────────────── */}
-      <div style={{
-        background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 'var(--r-xl)',
-        marginBottom: 22, overflow: 'hidden'
-      }}>
-        <div
-          onClick={() => setInputsOpen((o) => !o)}
-          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '13px 18px', cursor: 'pointer' }}
-        >
-          <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-2)' }}>Your numbers</span>
-          <span style={{ fontSize: 13, color: 'var(--text-3)' }}>{inputsOpen ? '⌃ Collapse' : '⌄ Edit assumptions'}</span>
-        </div>
-
-        {inputsOpen && (
-          <div style={{ padding: '4px 18px 20px', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14 }}>
-
-            <FieldGroup title="Assets today" accent="var(--lime)">
-              <NumField label="Mutual funds" value={inputs.mutual_funds_value} onChange={set('mutual_funds_value')} prefilled={prefilledFields.mutual_funds_value} />
-              <NumField label="Direct stocks" value={inputs.stocks_value} onChange={set('stocks_value')} prefilled={prefilledFields.stocks_value} />
-              <NumField label="EPF" value={inputs.epf_value} onChange={set('epf_value')} prefilled={prefilledFields.epf_value} />
-              <NumField label="NPS" value={inputs.nps_value} onChange={set('nps_value')} prefilled={prefilledFields.nps_value} />
-              <NumField label="Other (PPF, SSY, FDs)" value={inputs.other_assets_value} onChange={set('other_assets_value')} prefilled={prefilledFields.other_assets_value} />
-            </FieldGroup>
-
-            <FieldGroup title="Loan" accent="var(--coral)">
-              <NumField label="Outstanding principal" value={inputs.loan_principal_outstanding} onChange={set('loan_principal_outstanding')} prefilled={prefilledFields.loan_principal_outstanding} />
-              <NumField label="Monthly EMI" value={inputs.loan_emi} onChange={set('loan_emi')} step={500} />
-              <NumField label="Interest rate" value={inputs.loan_interest_rate_annual} onChange={set('loan_interest_rate_annual')} suffix="% p.a." step={0.1} />
-              <NumField label="Years remaining" value={inputs.loan_years_remaining} onChange={set('loan_years_remaining')} suffix="yrs" step={1} />
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2, cursor: 'pointer' }}>
-                <span
-                  className={`k-toggle ${inputs.include_loan_in_magic_number ? 'on' : ''}`}
-                  onClick={() => set('include_loan_in_magic_number')(!inputs.include_loan_in_magic_number)}
-                />
-                <span style={{ fontSize: 11.5, color: 'var(--text-3)' }}>Include payoff in magic number</span>
-              </label>
-            </FieldGroup>
-
-            <FieldGroup title="Monthly contributions" accent="var(--violet)">
-              <NumField label="SIPs (all funds)" value={inputs.monthly_sip_total} onChange={set('monthly_sip_total')} step={500} />
-              <NumField label="EPF contribution" value={inputs.monthly_epf_contribution} onChange={set('monthly_epf_contribution')} step={500} />
-              <NumField label="NPS contribution" value={inputs.monthly_nps_contribution} onChange={set('monthly_nps_contribution')} step={500} />
-              <div style={{ fontSize: 11, color: 'var(--text-4)', marginTop: 2 }}>
-                Total: <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-2)' }}>
-                  {fmtFull(inputs.monthly_sip_total + inputs.monthly_epf_contribution + inputs.monthly_nps_contribution)}/mo
-                </span>
-              </div>
-            </FieldGroup>
-
-            <FieldGroup title="Lifestyle & growth" accent="var(--indigo)">
-              <NumField label="Monthly expenses today" value={inputs.monthly_expenses_today} onChange={set('monthly_expenses_today')} prefilled={prefilledFields.monthly_expenses_today} step={1000} />
-              <NumField label="Inflation" value={inputs.inflation_rate_annual} onChange={set('inflation_rate_annual')} suffix="% p.a." step={0.5} />
-              <NumField label="Safe withdrawal rate" value={inputs.safe_withdrawal_rate} onChange={set('safe_withdrawal_rate')} suffix="%" step={0.5} min={2} />
-              <NumField label="Expected CAGR (pessimist)" value={inputs.expected_cagr_pessimist} onChange={set('expected_cagr_pessimist')} suffix="%" step={0.5} />
-              <NumField label="Expected CAGR (optimist)" value={inputs.expected_cagr_optimist} onChange={set('expected_cagr_optimist')} suffix="%" step={0.5} />
-              <NumField label="Projection horizon" value={inputs.projection_horizon_years} onChange={set('projection_horizon_years')} suffix="yrs" step={1} min={1} />
-            </FieldGroup>
-
-          </div>
-        )}
-      </div>
-
-      {warnCagrVsInflation && (
-        <div style={{
-          marginBottom: 18, padding: '10px 14px', borderRadius: 'var(--r-md)',
-          background: 'var(--gold-soft)', border: '1px solid rgba(168,116,26,0.25)',
-          color: 'var(--gold)', fontSize: 12.5
-        }}>
-          ⚠ Your expected growth rate is at or below inflation — your corpus may never outpace the rising magic number under this scenario.
-        </div>
-      )}
-
-      {/* ── CAGR sensitivity toggle ──────────────────────────────────── */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 18 }}>
-        <div className="k-seg">
-          <button className={scenario === 'pessimist' ? 'on' : ''} onClick={() => setScenario('pessimist')}>Conservative · {inputs.expected_cagr_pessimist}%</button>
-          <button className={scenario === 'optimist' ? 'on' : ''} onClick={() => setScenario('optimist')}>Optimistic · {inputs.expected_cagr_optimist}%</button>
-        </div>
-        {mode === 'reverse' && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
-            <span style={{ fontSize: 12, color: 'var(--text-3)' }}>Target retirement year</span>
-            <input
-              type="number"
-              value={reverseTargetYear}
-              onChange={(e) => setReverseTargetYear(parseInt(e.target.value) || CURRENT_YEAR)}
-              style={{
-                width: 90, padding: '7px 10px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-2)',
-                background: 'var(--surface)', color: 'var(--text)', fontFamily: 'var(--font-mono)', fontSize: 13
-              }}
-            />
-          </div>
-        )}
-      </div>
-
-      {/* ── KPI cards ─────────────────────────────────────────────────── */}
-      {mode === 'forward' ? (
-        <div style={{ display: 'flex', gap: 12, marginBottom: 24 }}>
-          <KPICard label="Current corpus" value={fmt(calc.start)} icon="◈" />
-          <KPICard label="Magic number today" value={fmt(calc.magicNumberToday)} icon="🎯" accent="var(--indigo)" />
-          <KPICard
-            label="Retire by — with SIP"
-            value={calc.crossoverWithSip ? calc.crossoverWithSip.year : `Not in ${calc.horizon}yr`}
-            sub={calc.crossoverWithSip ? `${calc.crossoverWithSip.yearIndex} years away` : 'Extend horizon or invest more'}
-            icon="🚀" accent="var(--mint)"
-          />
-          <KPICard
-            label="Retire by — no further SIP"
-            value={calc.crossoverNoSip ? calc.crossoverNoSip.year : `Not in ${calc.horizon}yr`}
-            sub={calc.crossoverNoSip ? `${calc.crossoverNoSip.yearIndex} years away` : 'Corpus alone insufficient'}
-            icon="⏸" accent="var(--text-3)"
-          />
-        </div>
-      ) : (
-        <div style={{ display: 'flex', gap: 12, marginBottom: 24 }}>
-          <KPICard label="Target year" value={reverseTargetYear} sub={`${calc.reverse.yTarget} years from now`} icon="🎯" />
-          <KPICard label="Corpus needed by then" value={fmt(calc.reverse.mnAtTarget)} icon="◈" accent="var(--indigo)" />
-          {calc.reverse.alreadyAchievable ? (
-            <KPICard label="Required monthly investment" value="Already achievable" sub="Your existing corpus alone gets there" icon="✅" accent="var(--mint)" />
-          ) : (
-            <KPICard
-              label="Required monthly investment"
-              value={fmt(calc.reverse.reqMonthly)}
-              sub={calc.reverse.reqMonthly > 150000 ? '⚠ Check this is realistic for your income' : 'Across SIP + EPF + NPS combined'}
-              icon="💰" accent={calc.reverse.reqMonthly > 150000 ? 'var(--coral)' : 'var(--mint)'}
-            />
-          )}
-        </div>
-      )}
-
-      {/* ── Chart ─────────────────────────────────────────────────────── */}
-      <div className="k-card" style={{ padding: '20px 18px 8px', marginBottom: 24 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', marginBottom: 14, paddingLeft: 6 }}>
-          Corpus vs. magic number — {calc.horizon}-year projection ({scenario === 'optimist' ? 'optimistic' : 'conservative'} growth)
-        </div>
-        <ResponsiveContainer width="100%" height={320}>
-          <LineChart data={chartData} margin={{ top: 8, right: 20, left: 0, bottom: 8 }}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="year" tick={{ fontSize: 11 }} />
-            <YAxis tickFormatter={(v) => fmt(v)} tick={{ fontSize: 11 }} width={70} />
-            <Tooltip formatter={(v) => fmtFull(v)} labelFormatter={(y) => `Year ${y}`} />
-            <Legend wrapperStyle={{ fontSize: 12 }} />
-            <Line type="monotone" dataKey="With investing" stroke="var(--mint)" strokeWidth={2} dot={false} />
-            <Line type="monotone" dataKey="Without investing" stroke="var(--text-3)" strokeWidth={2} dot={false} strokeDasharray="4 3" />
-            <Line type="monotone" dataKey="Magic number" stroke="var(--coral)" strokeWidth={2} dot={false} />
-            {calc.crossoverWithSip && (
-              <ReferenceDot x={calc.crossoverWithSip.year} y={chartData[calc.crossoverWithSip.yearIndex]?.['With investing']} r={5} fill="var(--mint)" stroke="var(--surface)" strokeWidth={2} />
-            )}
-            {calc.crossoverNoSip && (
-              <ReferenceDot x={calc.crossoverNoSip.year} y={chartData[calc.crossoverNoSip.yearIndex]?.['Without investing']} r={5} fill="var(--text-3)" stroke="var(--surface)" strokeWidth={2} />
-            )}
-            {mode === 'reverse' && (
-              <ReferenceLine x={reverseTargetYear} stroke="var(--indigo)" strokeDasharray="2 2" label={{ value: 'Target', fontSize: 11, fill: 'var(--indigo)' }} />
-            )}
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-
-      {/* ── Year-by-year table ────────────────────────────────────────── */}
-      <div className="k-card" style={{ padding: '18px 18px 14px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, paddingLeft: 6 }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>Year-by-year breakdown</span>
-          <button className="k-btn-ghost" onClick={() => setShowFullTable((s) => !s)}>
-            {showFullTable ? 'Show key years only' : `Show all ${calc.horizon} years`}
+    <div className="rp-field">
+      <div className="rp-field-top">
+        <label htmlFor={id}>{label}</label>
+        {source && !overridden && <span className="rp-src">{source}</span>}
+        {overridden && (
+          <button type="button" className="rp-src edited" onClick={onReset} title={`Kanalyst has ${inrFull(auto)}${source ? ' from ' + source : ''}`}>
+            Edited · use {suffix ? auto : inr(auto)} ↺
           </button>
+        )}
+      </div>
+      <div className="rp-input-wrap">
+        {!suffix && <span className="rp-pre">₹</span>}
+        <input id={id} type="number" inputMode="decimal" className={`rp-input ${suffix ? 'has-suf' : 'has-pre'}`} value={value || ''}
+          placeholder="0" step={step} min={0} onChange={(e) => onChange(e.target.value === '' ? 0 : parseFloat(e.target.value))} />
+        {suffix && <span className="rp-suf">{suffix}</span>}
+      </div>
+      {hint && <div className="rp-hint">{hint}</div>}
+    </div>
+  );
+}
+
+function Toggle({ id, checked, onChange, label, sub }) {
+  return (
+    <label className="rp-toggle-row" htmlFor={id}>
+      <span><span className="rp-toggle-label">{label}</span>{sub && <span className="rp-toggle-sub">{sub}</span>}</span>
+      <span className="rp-switch"><input id={id} type="checkbox" checked={!!checked} onChange={(e) => onChange(e.target.checked)} /><i /></span>
+    </label>
+  );
+}
+
+// ── Loans ────────────────────────────────────────────────────────────
+function LoanRow({ loan, onChange, onRemove }) {
+  const am = amortize(loan);
+  const end = payoffDate(am);
+  const set = (k) => (e) => onChange({ ...loan, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value === '' ? '' : (k === 'name' || k === 'type' ? e.target.value : parseFloat(e.target.value)) });
+  return (
+    <div className={`rp-loan ${loan.include === false ? 'off' : ''}`}>
+      <div className="rp-loan-head">
+        <input className="rp-loan-name" value={loan.name} onChange={set('name')} aria-label="Loan name" maxLength={40} />
+        <select className="rp-loan-type" value={loan.type} onChange={set('type')} aria-label="Loan type">
+          {LOAN_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+        </select>
+        <button type="button" className="rp-icon" onClick={onRemove} aria-label={`Remove ${loan.name}`}>✕</button>
+      </div>
+      <div className="rp-loan-grid">
+        <label><span>Outstanding</span><input type="number" min={0} step={10000} value={loan.outstanding} onChange={set('outstanding')} /></label>
+        <label><span>EMI / month</span><input type="number" min={0} step={500} value={loan.emi} onChange={set('emi')} placeholder={am.derivedEmi ? Math.round(am.emi) : '0'} /></label>
+        <label><span>Rate % p.a.</span><input type="number" min={0} step={0.1} value={loan.rate} onChange={set('rate')} /></label>
+        <label><span>Months left</span><input type="number" min={0} step={1} value={loan.emi > 0 ? '' : loan.tenure} onChange={set('tenure')} placeholder={am.months !== Infinity && am.months > 0 ? am.months : '—'} disabled={n(loan.emi) > 0} /></label>
+      </div>
+      <div className="rp-loan-foot">
+        <span className={`rp-loan-end ${am.status}`}>
+          {am.status === 'paid' && n(loan.emi) > 0 ? <span className="rp-loan-ask">Add what you still owe to see when it ends</span>
+            : am.status === 'paid' ? 'Paid off'
+            : am.status === 'never' ? `EMI is below the monthly interest (${inr(am.interest)}) — it never ends`
+            : am.status === 'noplan' ? 'Add an EMI or months left to see when it ends'
+            : <>Ends <b>{end.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}</b>{am.derivedEmi ? <> · EMI {inr(am.emi)}</> : null} · {Math.round(am.months / 12 * 10) / 10} yrs</>}
+        </span>
+        <span className="rp-loan-flags">
+          <label><input type="checkbox" checked={loan.include !== false} onChange={set('include')} /> Clear before retiring</label>
+          <label><input type="checkbox" checked={!!loan.redirect} onChange={set('redirect')} disabled={am.months === Infinity || am.status === 'paid'} /> Invest the EMI after it ends</label>
+        </span>
+      </div>
+      {loan.note && <div className="rp-hint">{loan.note}</div>}
+    </div>
+  );
+}
+
+function Section({ id, title, sum, open, onToggle, children }) {
+  return (
+    <section className={`rp-sec ${open ? 'open' : ''}`}>
+      <button type="button" className="rp-sec-head" aria-expanded={!!open} aria-controls={`rp-sec-${id}`} onClick={onToggle}>
+        <span className="rp-sec-title">{title}</span>
+        <span className="rp-sec-sum">{sum}</span>
+        <span className="rp-chev" aria-hidden="true">⌄</span>
+      </button>
+      <div className="rp-sec-body" id={`rp-sec-${id}`}><div className="rp-sec-inner">{children}</div></div>
+    </section>
+  );
+}
+
+// ── Main ─────────────────────────────────────────────────────────────
+export default function RetirementPlanner() {
+  const nav = useNavigate();
+  const [auto, setAuto] = useState(null);
+  const [loadErr, setLoadErr] = useState('');
+  const [plan, setPlan] = useState(null);          // saved row
+  const [ready, setReady] = useState(false);
+  const [overrides, setOverrides] = useState({});
+  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const [loans, setLoans] = useState([]);
+  const [spendSel, setSpendSel] = useState({});
+  const [sipSel, setSipSel] = useState({});
+  const [dismissed, setDismissed] = useState([]);
+  const [scenario, setScenario] = useState('cons');
+  const [saveState, setSaveState] = useState('idle');
+  const [showAllYears, setShowAllYears] = useState(false);
+  const [goalBusy, setGoalBusy] = useState(false);
+  const [goalMsg, setGoalMsg] = useState('');
+  const [open, setOpen] = useState({ assets: true, invest: true, loans: true, spend: true, growth: false });
+  const saveTimer = useRef(null);
+  const firstLoad = useRef(true);
+
+  // Load auto-fill and saved plan
+  const load = useCallback(async () => {
+    setLoadErr('');
+    const [a, p] = await Promise.allSettled([retirementAPI.autofill(), retirementAPI.get()]);
+    if (a.status !== 'fulfilled') { setLoadErr(a.reason?.response?.data?.error || 'Could not read your Kanalyst data'); }
+    const af = a.status === 'fulfilled' ? a.value.data : null;
+    const saved = p.status === 'fulfilled' ? p.value.data.plan : null;
+    setAuto(af);
+    setPlan(saved);
+    const d = saved?.data || {};
+    setOverrides(d.overrides || {});
+    setSettings({ ...DEFAULT_SETTINGS, ...(d.settings || {}), ...(d.settings?.current_age ? {} : { current_age: ageFromDob(af?.profile?.dob) || DEFAULT_SETTINGS.current_age }) });
+    setSpendSel(d.spend || {});
+    setSipSel(d.sips || {});
+    setDismissed(d.dismissed || []);
+    if (Array.isArray(d.loans)) setLoans(d.loans);
+    else setLoans((af?.loans || []).map(l => ({ id: uid(), include: true, redirect: false, rate: DEFAULT_RATE[l.type] || 9, tenure: '', ...l })));
+    setReady(true);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  // ── Auto values ────────────────────────────────────────────────────
+  const autoVals = useMemo(() => {
+    if (!auto) return {};
+    const groups = auto.spending?.groups || [];
+    const spend = groups.reduce((s, g) => s + ((spendSel[g.key] ?? g.include) ? g.monthly : 0), 0);
+    const sips = (auto.sips || []).reduce((s, x) => s + ((sipSel[x.label] ?? x.regular) ? x.monthly : 0), 0);
+    return {
+      stocks: auto.assets.stocks.value, mf: auto.assets.mf.value, nps: auto.assets.nps.value, epf: auto.assets.epf.value,
+      ppf: auto.assets.ppf.value, ssy: auto.assets.ssy.value, deposits: auto.assets.deposits.value,
+      sip: sips, nps_c: auto.contributions.nps.value, epf_c: auto.contributions.epf.value, ppf_c: auto.contributions.ppf.value, rd_c: auto.contributions.rd.value,
+      expenses: spend,
+    };
+  }, [auto, spendSel, sipSel]);
+  const val = (k) => (overrides[k] !== undefined ? overrides[k] : n(autoVals[k]));
+  const setVal = (k) => (v) => setOverrides(o => ({ ...o, [k]: v }));
+  const resetVal = (k) => () => setOverrides(o => { const x = { ...o }; delete x[k]; return x; });
+  const setS = (k) => (v) => setSettings(s => ({ ...s, [k]: v }));
+
+  // ── Projection ─────────────────────────────────────────────────────
+  const model = useMemo(() => {
+    const mapped = settings.exclude_mapped ? n(auto?.otherGoals?.total) : 0;
+    const assetsTotal = val('stocks') + val('mf') + val('nps') + val('epf') + val('ppf') + val('ssy') + val('deposits') + n(settings.other_assets);
+    const start = Math.max(0, assetsTotal - mapped);
+    const monthly = val('sip') + val('nps_c') + val('epf_c') + val('ppf_c') + val('rd_c') + n(settings.other_contrib);
+    const age = n(settings.current_age) || 35;
+    const T = Math.max(1, Math.round(n(settings.target_age) - age));
+    const base = {
+      start, monthly, stepUp: settings.step_up, loans: loans.map(l => ({ ...l, outstanding: n(l.outstanding), emi: n(l.emi), rate: n(l.rate), tenure: n(l.tenure) })),
+      monthlyExpenses: val('expenses'), retireSpendPct: settings.retire_spend_pct, inflation: settings.inflation, swr: settings.swr,
+      includeLoans: settings.include_loans, horizon: Math.min(60, Math.max(T + 10, 25)),
+    };
+    const run = (r) => {
+      const p = { ...base, r };
+      const s = simulate(p);
+      const extra = requiredExtra(p, T);
+      return { ...s, extra, T, atT: s.rows[Math.min(T, s.rows.length - 1)] };
+    };
+    const cons = run(settings.cagr_cons), opt = run(settings.cagr_opt);
+    const emiTotal = loans.filter(l => l.include !== false).reduce((s, l) => s + amortize({ ...l, outstanding: n(l.outstanding), emi: n(l.emi), rate: n(l.rate), tenure: n(l.tenure) }).emi, 0);
+    return { start, assetsTotal, mapped, monthly, age, T, cons, opt, emiTotal };
+    // eslint-disable-next-line
+  }, [overrides, autoVals, settings, loans, auto]);
+  const cur = scenario === 'opt' ? model.opt : model.cons;
+
+  // ── Save (debounced) and sync the Blueprint goal ───────────────────
+  const goalPayload = useCallback(() => {
+    const yr = CURRENT_YEAR + model.T;
+    const dob = auto?.profile?.dob ? new Date(auto.profile.dob) : null;
+    const date = dob ? `${yr}-${String(dob.getMonth() + 1).padStart(2, '0')}-${String(Math.min(28, dob.getDate())).padStart(2, '0')}` : `${yr}-12-31`;
+    return { target: Math.round(model.cons.atT.magic), date };   // Blueprint uses the conservative number
+  }, [model, auto]);
+
+  useEffect(() => {
+    if (!ready) return undefined;
+    if (firstLoad.current) { firstLoad.current = false; return undefined; }
+    setSaveState('pending');
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(async () => {
+      setSaveState('saving');
+      try {
+        const r = await retirementAPI.save({ v: 2, overrides, settings, loans, spend: spendSel, sips: sipSel, dismissed }, goalPayload());
+        setPlan(r.data.plan);
+        setSaveState('saved');
+      } catch (e) { setSaveState('error'); }
+    }, 1200);
+    return () => clearTimeout(saveTimer.current);
+  }, [overrides, settings, loans, spendSel, sipSel, dismissed, ready, goalPayload]);
+
+  // ── Blueprint goal actions ─────────────────────────────────────────
+  const linkGoal = async (bucketId) => {
+    setGoalBusy(true); setGoalMsg('');
+    try {
+      await retirementAPI.linkGoal({ bucket_id: bucketId || null, ...goalPayload(), name: 'Retirement' });
+      await load();
+      setGoalMsg(bucketId ? 'Linked. Blueprint now shows this plan’s target.' : 'Created a Retirement goal in Blueprint and linked it.');
+    } catch (e) { setGoalMsg(e?.response?.data?.error || 'Could not link the goal'); }
+    finally { setGoalBusy(false); }
+  };
+  const unlinkGoal = async () => {
+    setGoalBusy(true);
+    try { await retirementAPI.unlinkGoal(); await load(); setGoalMsg('Unlinked. The goal stays in Blueprint.'); }
+    catch (e) { setGoalMsg('Could not unlink'); }
+    finally { setGoalBusy(false); }
+  };
+
+  if (!ready) return <div className="rp"><div className="rp-loading"><span className="rp-spin" /> Reading your portfolio, deposits, NPS and bank SMS…</div></div>;
+
+  // ── Derived display ────────────────────────────────────────────────
+  const age = model.age;
+  const crossY = cur.crossWith;
+  const retireYear = crossY !== null ? CURRENT_YEAR + crossY : null;
+  const targetYear = CURRENT_YEAR + model.T;
+  const atT = cur.atT;
+  const onTrack = atT.corpus >= atT.magic;
+  const linked = (auto?.retireGoals || []).find(g => g.linked);
+  const candidates = (auto?.retireGoals || []).filter(g => !g.linked);
+  const newLoanSuggestions = (auto?.loans || []).filter(l => !loans.some(x => x.source_id === l.source_id) && !dismissed.includes(l.source_id));
+  const spending = auto?.spending || { groups: [], months: [] };
+  const staleDays = spending.lastSync ? Math.round((Date.now() - new Date(spending.lastSync)) / 864e5) : null;
+
+  const chart = cur.rows.map(r => ({ year: r.year, age: age + r.y, corpus: Math.round(r.corpus), noSip: Math.round(r.corpusNoSip), magic: Math.round(r.magic), loans: Math.round(r.loansLeft) }));
+  const loanEnds = loans.filter(l => l.include !== false).map(l => ({ l, end: payoffDate(amortize({ ...l, outstanding: n(l.outstanding), emi: n(l.emi), rate: n(l.rate), tenure: n(l.tenure) })) })).filter(x => x.end);
+  const keyYears = new Set([0, 5, 10, 15, 20, 25, 30, 35, 40, model.T, crossY].filter(v => v !== null));
+  const tableRows = showAllYears ? cur.rows : cur.rows.filter(r => keyYears.has(r.y));
+
+
+  return (
+    <div className="rp">
+      {/* Header */}
+      <header className="rp-head">
+        <div>
+          <h2>Retirement plan</h2>
+          <p>Filled in from your Kanalyst data. Change any number; your edits are saved.</p>
         </div>
-        <table className="k-tbl">
-          <thead>
-            <tr>
-              <th>Year</th>
-              <th className="r">With investing</th>
-              <th className="r">Without investing</th>
-              <th className="r">Magic number</th>
-              <th className="r">Gap (with SIP)</th>
-              <th className="r">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {tableRows.map((r) => (
-              <tr key={r.yearIndex}>
-                <td className="mono">{r.year}</td>
-                <td className="r mono">{fmt(r.corpusWithSip)}</td>
-                <td className="r mono">{fmt(r.corpusWithoutSip)}</td>
-                <td className="r mono">{fmt(r.magicNumber)}</td>
-                <td className="r mono" style={{ color: r.gapWithSip >= 0 ? 'var(--mint)' : 'var(--coral)' }}>
-                  {r.gapWithSip >= 0 ? '+' : ''}{fmt(r.gapWithSip)}
-                </td>
-                <td className="r">
-                  {r.feasibleWithSip ? (
-                    <span className="k-badge k-tinted" style={{ '--c': 'var(--mint)' }}>ON TRACK</span>
-                  ) : (
-                    <span className="k-badge k-tinted" style={{ '--c': 'var(--text-3)' }}>BUILDING</span>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="rp-head-right">
+          <span className={`rp-save ${saveState}`}>{{ idle: plan ? 'Saved' : 'Not saved yet', pending: 'Unsaved changes', saving: 'Saving…', saved: 'Saved', error: 'Could not save' }[saveState]}</span>
+          <div className="rp-seg" role="radiogroup" aria-label="Growth scenario">
+            <button role="radio" aria-checked={scenario === 'cons'} className={scenario === 'cons' ? 'on' : ''} onClick={() => setScenario('cons')}>Conservative {settings.cagr_cons}%</button>
+            <button role="radio" aria-checked={scenario === 'opt'} className={scenario === 'opt' ? 'on' : ''} onClick={() => setScenario('opt')}>Optimistic {settings.cagr_opt}%</button>
+          </div>
+        </div>
+      </header>
+      {loadErr && <div className="rp-banner warn">{loadErr}. You can still enter numbers by hand.</div>}
+
+      {/* Hero */}
+      <div className="rp-hero">
+        <div className="rp-hero-main">
+          <div className="rp-k">On this plan you can retire</div>
+          {retireYear
+            ? <div className="rp-big">{retireYear}<span> at age {age + crossY}</span></div>
+            : <div className="rp-big none">Not before age {age + cur.H}</div>}
+          <div className="rp-sub">
+            {retireYear ? `${crossY} years from now` : 'Invest more, lower spending, or raise the growth rate'} · corpus today {inr(model.start)}
+            {model.mapped > 0 && <> (after setting aside {inr(model.mapped)} for other goals)</>}
+          </div>
+        </div>
+        <div className={`rp-target ${onTrack ? 'ok' : 'short'}`}>
+          <div className="rp-target-top">
+            <span className="rp-k">Your target</span>
+            <span className="rp-stepper">
+              <button type="button" onClick={() => setS('target_age')(Math.max(age + 1, n(settings.target_age) - 1))} aria-label="Retire a year earlier">−</button>
+              <b>Age {settings.target_age}</b>
+              <button type="button" onClick={() => setS('target_age')(Math.min(80, n(settings.target_age) + 1))} aria-label="Retire a year later">+</button>
+            </span>
+          </div>
+          <div className="rp-target-row"><span>Needed in {targetYear}</span><b>{inr(atT.magic)}</b></div>
+          <div className="rp-target-row"><span>You’ll have</span><b>{inr(atT.corpus)}</b></div>
+          <div className="rp-verdict">
+            {onTrack
+              ? <>On track · {inr(atT.corpus - atT.magic)} to spare</>
+              : cur.extra === Infinity ? <>Not reachable by {targetYear} at this growth rate</>
+              : <>Invest <b>{inrFull(cur.extra)}</b> more a month to retire at {settings.target_age}</>}
+          </div>
+        </div>
+        <div className="rp-goal">
+          <div className="rp-k">Retirement goal in Blueprint</div>
+          {linked ? (
+            <>
+              <div className="rp-goal-name">{linked.name}</div>
+              <div className="rp-goal-row"><span>Target from this plan</span><b>{inr(linked.target_amount)}</b></div>
+              <div className="rp-goal-row"><span>Funds mapped there</span><b>{inr(linked.current_value)}</b></div>
+              <div className="rp-goal-actions">
+                <button type="button" className="rp-btn" onClick={() => nav('/blueprint')}>Open Blueprint</button>
+                <button type="button" className="rp-btn ghost" disabled={goalBusy} onClick={unlinkGoal}>Unlink</button>
+              </div>
+              <div className="rp-hint">Blueprint uses the conservative number and your target year. It updates when you save here.</div>
+            </>
+          ) : (
+            <>
+              <p className="rp-goal-p">Link a goal so Blueprint shows {inr(model.cons.atT.magic)} by {targetYear} and tracks the funds you map to it.</p>
+              <div className="rp-goal-actions">
+                {candidates.slice(0, 2).map(g => (
+                  <button key={g.id} type="button" className="rp-btn" disabled={goalBusy} onClick={() => linkGoal(g.id)}>Link “{g.name}”</button>
+                ))}
+                <button type="button" className={`rp-btn ${candidates.length ? 'ghost' : 'primary'}`} disabled={goalBusy} onClick={() => linkGoal(null)}>Create Retirement goal</button>
+              </div>
+            </>
+          )}
+          {goalMsg && <div className="rp-hint ok">{goalMsg}</div>}
+        </div>
       </div>
 
+      {/* Chart */}
+      <div className="rp-card">
+        <div className="rp-card-head">
+          <div><div className="rp-card-title">Corpus vs what you need</div><div className="rp-card-sub">Magic number = yearly spending ÷ {settings.swr}% withdrawal rate{settings.include_loans ? ', plus loans still owed' : ''}</div></div>
+          <div className="rp-legend"><span><i className="c" />With investing</span><span><i className="ns" />If you stop investing</span><span><i className="m" />Magic number</span>{loans.length > 0 && settings.include_loans && <span><i className="l" />Loans left</span>}</div>
+        </div>
+        <ResponsiveContainer width="100%" height={330}>
+          <ComposedChart data={chart} margin={{ top: 10, right: 16, left: 0, bottom: 4 }}>
+            <defs>
+              <linearGradient id="rpC" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="var(--mint)" stopOpacity={0.22} /><stop offset="100%" stopColor="var(--mint)" stopOpacity={0} /></linearGradient>
+            </defs>
+            <CartesianGrid stroke="var(--border)" vertical={false} />
+            <XAxis dataKey="year" tick={{ fontSize: 11, fill: 'var(--text-3)' }} tickLine={false} axisLine={{ stroke: 'var(--border-2)' }} />
+            <YAxis tickFormatter={inr} tick={{ fontSize: 11, fill: 'var(--text-3)' }} width={66} tickLine={false} axisLine={false} />
+            <Tooltip formatter={(v, k) => [inrFull(v), { corpus: 'With investing', noSip: 'If you stop investing', magic: 'Magic number', loans: 'Loans left' }[k] || k]}
+              labelFormatter={(y) => `${y} · age ${age + (y - CURRENT_YEAR)}`}
+              contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border-2)', borderRadius: 10, fontSize: 12 }} />
+            {settings.include_loans && <Area type="monotone" dataKey="loans" stroke="var(--coral)" strokeWidth={1} fill="var(--coral-soft)" fillOpacity={1} />}
+            <Area type="monotone" dataKey="corpus" stroke="var(--mint)" strokeWidth={2.6} fill="url(#rpC)" />
+            <Line type="monotone" dataKey="noSip" stroke="var(--text-3)" strokeWidth={1.6} strokeDasharray="5 4" dot={false} />
+            <Line type="monotone" dataKey="magic" stroke="var(--indigo)" strokeWidth={2.4} dot={false} />
+            <ReferenceLine x={targetYear} stroke="var(--gold)" strokeDasharray="3 3" label={{ value: `Target · ${settings.target_age}`, position: 'insideTopRight', fontSize: 11, fill: 'var(--gold)' }} />
+            {loanEnds.map(({ l, end }) => (
+              <ReferenceLine key={l.id} x={end.getFullYear()} stroke="var(--coral)" strokeOpacity={0.5} strokeDasharray="2 4" />
+            ))}
+            {crossY !== null && <ReferenceDot x={retireYear} y={chart[crossY]?.corpus} r={6} fill="var(--mint)" stroke="var(--surface)" strokeWidth={2} />}
+          </ComposedChart>
+        </ResponsiveContainer>
+        {loanEnds.length > 0 && (
+          <div className="rp-ends">
+            <span className="rp-k">Loans end</span>
+            {loanEnds.sort((a, b) => a.end - b.end).map(({ l, end }) => (
+              <span key={l.id} className="rp-end-chip">{l.name} · {end.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}{l.redirect ? ' · EMI then invested' : ''}</span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Inputs */}
+      <div className="rp-grid">
+        <Section id="assets" open={open.assets} onToggle={() => setOpen(o => ({ ...o, assets: !o.assets }))} title="What you have today" sum={inr(model.assetsTotal)}>
+          <div className="rp-fields">
+            <Money id="rp-mf" label="Mutual funds" value={val('mf')} auto={autoVals.mf} source={auto?.assets.mf.source} onChange={setVal('mf')} onReset={resetVal('mf')} />
+            <Money id="rp-st" label="Stocks" value={val('stocks')} auto={autoVals.stocks} source={auto?.assets.stocks.source} onChange={setVal('stocks')} onReset={resetVal('stocks')} />
+            <Money id="rp-nps" label="NPS" value={val('nps')} auto={autoVals.nps} source={auto?.assets.nps.source} onChange={setVal('nps')} onReset={resetVal('nps')} />
+            <Money id="rp-epf" label="EPF" value={val('epf')} auto={autoVals.epf} source={autoVals.epf ? auto?.assets.epf.source : null} onChange={setVal('epf')} onReset={resetVal('epf')} />
+            <Money id="rp-ppf" label="PPF" value={val('ppf')} auto={autoVals.ppf} source={autoVals.ppf ? auto?.assets.ppf.source : null} onChange={setVal('ppf')} onReset={resetVal('ppf')} />
+            <Money id="rp-ssy" label="SSY" value={val('ssy')} auto={autoVals.ssy} source={autoVals.ssy ? auto?.assets.ssy.source : null} onChange={setVal('ssy')} onReset={resetVal('ssy')} />
+            <Money id="rp-dep" label="FDs and RDs" value={val('deposits')} auto={autoVals.deposits} source={autoVals.deposits ? auto?.assets.deposits.source : null} onChange={setVal('deposits')} onReset={resetVal('deposits')} />
+            <Money id="rp-oth" label="Anything else for retirement" value={settings.other_assets} onChange={setS('other_assets')} hint="Gold, property you will sell, etc." />
+          </div>
+          {n(auto?.otherGoals?.total) > 0 && (
+            <div className="rp-callout">
+              <Toggle id="rp-excl" checked={settings.exclude_mapped} onChange={setS('exclude_mapped')}
+                label={`Leave out ${inr(auto.otherGoals.total)} already mapped to other goals`}
+                sub={auto.otherGoals.goals.slice(0, 4).map(g => `${g.name} ${inr(g.value)}`).join(' · ')} />
+            </div>
+          )}
+        </Section>
+
+        <Section id="invest" open={open.invest} onToggle={() => setOpen(o => ({ ...o, invest: !o.invest }))} title="What you invest each month" sum={`${inr(model.monthly)}/mo`}>
+          {(auto?.sips || []).length > 0 && (
+            <div className="rp-list">
+              <div className="rp-list-title">SIPs and fund buys found in bank SMS <span>({spending.months.join(', ')})</span></div>
+              {auto.sips.map(s => {
+                const on = sipSel[s.label] ?? s.regular;
+                return (
+                  <label key={s.label} className={`rp-li ${on ? '' : 'off'}`}>
+                    <input type="checkbox" checked={on} onChange={(e) => setSipSel(x => ({ ...x, [s.label]: e.target.checked }))} />
+                    <span className="nm">{s.label}<small>{s.months} of {spending.months.length} months{s.regular ? '' : ' · looks one-off'}</small></span>
+                    <b>{inr(s.monthly)}/mo</b>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+          <div className="rp-fields">
+            <Money id="rp-sip" label="SIPs, total" value={val('sip')} auto={autoVals.sip} source={autoVals.sip ? 'Bank SMS' : null} onChange={setVal('sip')} onReset={resetVal('sip')} step={500} />
+            <Money id="rp-npsc" label="NPS contribution" value={val('nps_c')} auto={autoVals.nps_c} source={auto?.contributions.nps.source} onChange={setVal('nps_c')} onReset={resetVal('nps_c')} step={500} />
+            <Money id="rp-epfc" label="EPF (yours + employer)" value={val('epf_c')} auto={autoVals.epf_c} source={auto?.contributions.epf.source} onChange={setVal('epf_c')} onReset={resetVal('epf_c')} step={500} hint={autoVals.epf_c ? null : 'Not in SMS. Check your payslip'} />
+            <Money id="rp-ppfc" label="PPF" value={val('ppf_c')} auto={autoVals.ppf_c} source={auto?.contributions.ppf.source} onChange={setVal('ppf_c')} onReset={resetVal('ppf_c')} step={500} />
+            <Money id="rp-rdc" label="RD instalments" value={val('rd_c')} auto={autoVals.rd_c} source={auto?.contributions.rd.source} onChange={setVal('rd_c')} onReset={resetVal('rd_c')} step={500} />
+            <Money id="rp-othc" label="Other monthly investing" value={settings.other_contrib} onChange={setS('other_contrib')} step={500} />
+            <Money id="rp-step" label="Raise investing each year by" value={settings.step_up} onChange={setS('step_up')} suffix="%" step={1} hint="A yearly step-up, e.g. 5% with each salary hike" />
+          </div>
+        </Section>
+
+        <Section id="loans" open={open.loans} onToggle={() => setOpen(o => ({ ...o, loans: !o.loans }))} title="Loans" sum={loans.length ? `${loans.length} · EMI ${inr(model.emiTotal)}/mo` : 'None'}>
+          {newLoanSuggestions.length > 0 && (
+            <div className="rp-suggest">
+              {newLoanSuggestions.map(l => (
+                <div key={l.source_id} className="rp-suggest-row">
+                  <span><b>{l.name}</b> found{l.emi ? ` · EMI ${inr(l.emi)}/mo` : ''}{l.outstanding ? ` · ${inr(l.outstanding)} owed` : ''}<small>{l.note}</small></span>
+                  <span className="rp-suggest-actions">
+                    <button type="button" className="rp-btn sm" onClick={() => setLoans(x => [...x, { id: uid(), include: true, redirect: false, rate: DEFAULT_RATE[l.type] || 9, tenure: '', ...l }])}>Add</button>
+                    <button type="button" className="rp-btn sm ghost" onClick={() => setDismissed(d => [...d, l.source_id])}>Ignore</button>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          {loans.length === 0 && <div className="rp-empty">No loans. Add one to see when it ends and how it changes your number.</div>}
+          <div className="rp-loans">
+            {loans.map(l => (
+              <LoanRow key={l.id} loan={l}
+                onChange={(nl) => setLoans(x => x.map(y => y.id === l.id ? nl : y))}
+                onRemove={() => { setLoans(x => x.filter(y => y.id !== l.id)); if (l.source_id) setDismissed(d => [...d, l.source_id]); }} />
+            ))}
+          </div>
+          <div className="rp-row-between">
+            <button type="button" className="rp-btn" onClick={() => setLoans(x => [...x, { id: uid(), name: 'New loan', type: 'home', outstanding: 0, emi: 0, rate: 8.5, tenure: '', include: true, redirect: false, source: 'manual' }])}>+ Add a loan</button>
+            <span className="rp-hint">The Loans module will fill these for you once it’s built.</span>
+          </div>
+          <Toggle id="rp-incl" checked={settings.include_loans} onChange={setS('include_loans')} label="Count loans still owed in the magic number" sub="You need to clear them before you stop earning" />
+        </Section>
+
+        <Section id="spend" open={open.spend} onToggle={() => setOpen(o => ({ ...o, spend: !o.spend }))} title="What you spend" sum={`${inr(val('expenses'))}/mo`}>
+          {staleDays !== null && staleDays > 30 && (
+            <div className="rp-banner warn">Your phone last synced bank SMS on {new Date(spending.lastSync).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}. Open the Android app to sync, so this stays current.</div>
+          )}
+          {spending.groups.length > 0 ? (
+            <div className="rp-list">
+              <div className="rp-list-title">Monthly average from bank SMS <span>({spending.months.join(', ')})</span></div>
+              {spending.groups.map(g => {
+                const on = spendSel[g.key] ?? g.include;
+                return (
+                  <label key={g.key} className={`rp-li ${on ? '' : 'off'}`}>
+                    <input type="checkbox" checked={on} onChange={(e) => setSpendSel(x => ({ ...x, [g.key]: e.target.checked }))} />
+                    <span className="nm">{g.label}<small>{g.count} payments{g.note ? ` · ${g.note}` : ''}</small></span>
+                    <b>{inr(g.monthly)}/mo</b>
+                  </label>
+                );
+              })}
+            </div>
+          ) : <div className="rp-empty">No bank SMS yet. Enter your monthly spend below.</div>}
+          <div className="rp-fields">
+            <Money id="rp-exp" label="Monthly spending today" value={val('expenses')} auto={autoVals.expenses} source={autoVals.expenses ? 'Bank SMS' : null} onChange={setVal('expenses')} onReset={resetVal('expenses')} hint="Leave out EMIs and SIPs, they’re counted separately" />
+            <Money id="rp-rsp" label="In retirement you’ll spend" value={settings.retire_spend_pct} onChange={setS('retire_spend_pct')} suffix="% of today" step={5} hint="No commute or school fees may lower it; healthcare raises it" />
+            <Money id="rp-inf" label="Inflation" value={settings.inflation} onChange={setS('inflation')} suffix="% a year" step={0.5} />
+          </div>
+        </Section>
+
+        <Section id="growth" open={open.growth} onToggle={() => setOpen(o => ({ ...o, growth: !o.growth }))} title="Growth and safety" sum={`${settings.cagr_cons}–${settings.cagr_opt}% growth · ${settings.swr}% withdrawal`}>
+          <div className="rp-fields">
+            <Money id="rp-age" label="Your age today" value={settings.current_age} onChange={setS('current_age')} suffix="yrs" step={1} hint={auto?.profile?.dob ? 'From your profile date of birth' : 'Add your date of birth in your profile'} />
+            <Money id="rp-tage" label="Retire at" value={settings.target_age} onChange={setS('target_age')} suffix="yrs" step={1} />
+            <Money id="rp-cc" label="Growth, conservative" value={settings.cagr_cons} onChange={setS('cagr_cons')} suffix="% a year" step={0.5} />
+            <Money id="rp-co" label="Growth, optimistic" value={settings.cagr_opt} onChange={setS('cagr_opt')} suffix="% a year" step={0.5} />
+            <Money id="rp-swr" label="Yearly withdrawal in retirement" value={settings.swr} onChange={setS('swr')} suffix="% of corpus" step={0.25} hint="4% is the common rule; 3–3.5% is safer for an early or long retirement" />
+          </div>
+          {n(settings.cagr_cons) <= n(settings.inflation) && <div className="rp-banner warn">Conservative growth is at or below inflation. Your corpus can’t outgrow your spending in that case.</div>}
+        </Section>
+      </div>
+
+      {/* Table */}
+      <div className="rp-card">
+        <div className="rp-card-head">
+          <div className="rp-card-title">Year by year</div>
+          <button type="button" className="rp-btn ghost sm" onClick={() => setShowAllYears(s => !s)}>{showAllYears ? 'Key years only' : `All ${cur.rows.length} years`}</button>
+        </div>
+        <div className="rp-tbl-wrap">
+          <table className="rp-tbl">
+            <thead><tr><th>Year</th><th>Age</th><th className="r">Invested that year</th><th className="r">Corpus</th><th className="r">Loans left</th><th className="r">Magic number</th><th className="r">Gap</th><th></th></tr></thead>
+            <tbody>
+              {tableRows.map(r => (
+                <tr key={r.y} className={r.y === model.T ? 'is-target' : r.y === crossY ? 'is-cross' : ''}>
+                  <td>{r.year}</td><td>{age + r.y}</td>
+                  <td className="r">{inr(r.invest)}</td><td className="r">{inr(r.corpus)}</td>
+                  <td className="r">{r.loansLeft > 0 ? inr(r.loansLeft) : '—'}</td><td className="r">{inr(r.magic)}</td>
+                  <td className={`r ${r.gap >= 0 ? 'pos' : 'neg'}`}>{r.gap >= 0 ? '+' : ''}{inr(r.gap)}</td>
+                  <td>{r.y === model.T ? <span className="rp-tag gold">Target</span> : r.y === crossY ? <span className="rp-tag mint">Can retire</span> : r.gap >= 0 ? <span className="rp-tag mint">Ahead</span> : null}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }

@@ -211,4 +211,12 @@ export const blueprintAPI = {
   deleteFile:    (id)           => api.delete(`/api/blueprint/attachments/${id}`),
 };
 
+export const retirementAPI = {
+  autofill:   ()            => api.get('/api/retirement/autofill', { timeout: 60000 }),
+  get:        ()            => api.get('/api/retirement'),
+  save:       (data, goal)  => api.put('/api/retirement', { data, goal }),
+  linkGoal:   (body)        => api.post('/api/retirement/goal', body),
+  unlinkGoal: ()            => api.delete('/api/retirement/goal'),
+};
+
 export default api;
