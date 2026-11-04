@@ -8,6 +8,7 @@ import Dividends from './Dividends';
 import ManageExpense from './ManageExpense';
 import RetirementPlanner from './RetirementPlanner';
 import HistoricalSyncPanel from './HistoricalSyncPanel';
+import { NetWorthHero, MoneyTiles, GoalsSnapshot, inr } from './DashboardOverview';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import './Dashboard.css';
 
@@ -1277,146 +1278,83 @@ export default function Dashboard() {
           {/* DASHBOARD */}
           {tab === 'dashboard' && (
             <div className="fade-in">
-              {/* ── Phase 1: 5 Tiles ── */}
               {(() => {
-                const stocksVal   = s.totalMarket || 0;
-                const fdRdVal     = (fdSummary.totalCurrentValue||0) + (rdSummary.totalCurrentValue||0);
-                const mfVal       = mfData?.summary?.totalValue || 0;
-                const npsVal = parseFloat(npsData.latest?.total_value||0);
-                const otherAssets = (assetBalances.ppf||0) + (assetBalances.epf||0) + npsVal + fdRdVal + (assetBalances.ssy||0);
-                const totalNetWorth = stocksVal + mfVal + otherAssets;
-                const totalCredit = (liabilities.homeLoan||0) + (liabilities.creditCard||0);
-
-                const pieData = [
-                  { name: 'Stocks', value: stocksVal, color: '#6b8e23' },
-                  { name: 'Mutual Funds', value: mfVal, color: '#5d3b78' },
-                  { name: 'PPF', value: assetBalances.ppf||0, color: '#a8741a' },
-                  { name: 'EPF', value: assetBalances.epf||0, color: '#2d6b6b' },
-                  { name: 'NPS', value: npsVal, color: '#5d3b78' },
-                  { name: 'Bank Deposits', value: fdRdVal, color: '#b8551f' },
-                  { name: 'SSY', value: assetBalances.ssy||0, color: '#964062' },
-                ].filter(d => d.value > 0);
-
-                const growthData = [
-                  { fy: 'FY22', value: 520000 },
-                  { fy: 'FY23', value: 780000 },
-                  { fy: 'FY24', value: 1050000 },
-                  { fy: 'FY25', value: 1194517 },
-                  { fy: 'FY26', value: totalNetWorth || 1409134 },
+                const stocksVal = s.totalMarket || 0;
+                const mfVal     = mfData?.summary?.totalValue || 0;
+                const npsVal    = parseFloat(npsData.latest?.total_value || 0);
+                const fdRdVal   = (fdSummary.totalCurrentValue || 0) + (rdSummary.totalCurrentValue || 0);
+                // Each asset class gets its own hue (MF and NPS used to share one)
+                const parts = [
+                  { name: 'Stocks',        value: stocksVal,              color: 'var(--lime)' },
+                  { name: 'Mutual funds',  value: mfVal,                  color: 'var(--violet)' },
+                  { name: 'NPS',           value: npsVal,                 color: 'var(--indigo)' },
+                  { name: 'Bank deposits', value: fdRdVal,                color: 'var(--peach)' },
+                  { name: 'PPF',           value: assetBalances.ppf || 0, color: 'var(--gold)' },
+                  { name: 'EPF',           value: assetBalances.epf || 0, color: 'var(--teal)' },
+                  { name: 'SSY',           value: assetBalances.ssy || 0, color: 'var(--rose)' },
                 ];
-
-                return (<>
+                const owed = (liabilities.homeLoan || 0) + (liabilities.creditCard || 0);
+                const asOf = s.casDate ? new Date(s.casDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : null;
+                return (
+                  <div className={`ov-wrap ${refreshing ? 'kv-loading' : ''}`}>
                   {/* Family combined bar - only in family mode */}
-                  {familyMode && familyStatus.inFamily && (() => {
-                    const fTotal    = holdings.reduce((s,h)=>s+(h.marketValue||0),0);
-                    const fInvested = holdings.reduce((s,h)=>s+((h.quantity||0)*(h.avg_cost||0)),0);
-                    const fPnl      = fTotal - fInvested;
-                    return (
-                      <div style={{background:'var(--indigo-soft)',border:'1px solid rgba(52,72,122,0.20)',borderRadius:12,padding:'14px 20px',marginBottom:16,display:'flex',gap:28,alignItems:'center',flexWrap:'wrap'}}>
-                        <div style={{display:'flex',alignItems:'center',gap:8}}>
-                          <span style={{fontSize:18}}>👨‍👩‍👧‍👦</span>
-                          <span style={{color:'#5d3b78',fontWeight:700,fontSize:13}}>Family Portfolio</span>
+                    {familyMode && familyStatus.inFamily && (() => {
+                      const fTotal    = holdings.reduce((s,h)=>s+(h.marketValue||0),0);
+                      const fInvested = holdings.reduce((s,h)=>s+((h.quantity||0)*(h.avg_cost||0)),0);
+                      const fPnl      = fTotal - fInvested;
+                      return (
+                        <div style={{background:'var(--indigo-soft)',border:'1px solid rgba(52,72,122,0.20)',borderRadius:12,padding:'14px 20px',marginBottom:16,display:'flex',gap:28,alignItems:'center',flexWrap:'wrap'}}>
+                          <div style={{display:'flex',alignItems:'center',gap:8}}>
+                            <span style={{fontSize:18}}>👨‍👩‍👧‍👦</span>
+                            <span style={{color:'#5d3b78',fontWeight:700,fontSize:13}}>Family Portfolio</span>
+                          </div>
+                          {[
+                            {label:'Combined Value',  val:fmtFull(fTotal),    color:'#6b8e23', cls:'kv-refresh'},
+                            {label:'Total Invested',  val:fmtFull(fInvested), color:'var(--text-3)'},
+                            {label:'Total P&L',       val:fmtFull(fPnl),      color:fPnl>=0?'#6b8e23':'#a82c2c'},
+                            {label:'Holdings',        val:holdings.length+' stocks', color:'#5d3b78'},
+                          ].map(stat=>(
+                            <div key={stat.label}>
+                              <div style={{color:'var(--text-3)',fontSize:10,fontWeight:600,letterSpacing:0.5,marginBottom:2}}>{stat.label}</div>
+                              <div style={{color:stat.color,fontWeight:700,fontSize:16}}>{stat.val}</div>
+                            </div>
+                          ))}
                         </div>
-                        {[
-                          {label:'Combined Value',  val:fmtFull(fTotal),    color:'#6b8e23', cls:'kv-refresh'},
-                          {label:'Total Invested',  val:fmtFull(fInvested), color:'var(--text-3)'},
-                          {label:'Total P&L',       val:fmtFull(fPnl),      color:fPnl>=0?'#6b8e23':'#a82c2c'},
-                          {label:'Holdings',        val:holdings.length+' stocks', color:'#5d3b78'},
-                        ].map(stat=>(
-                          <div key={stat.label}>
-                            <div style={{color:'var(--text-3)',fontSize:10,fontWeight:600,letterSpacing:0.5,marginBottom:2}}>{stat.label}</div>
-                            <div style={{color:stat.color,fontWeight:700,fontSize:16}}>{stat.val}</div>
-                          </div>
-                        ))}
+                      );
+                    })()}
+
+                    <NetWorthHero parts={parts} liabilities={owed} hideValues={hideValues} asOf={asOf}
+                      onUpdateBalances={() => setShowAssetModal(true)} />
+                    <MoneyTiles income={monthlyIncome} spent={monthlyExpenses} dividends={dividendTotal}
+                      yieldPct={s.yieldOnMarket} hideValues={hideValues} />
+                    <div className="ov-row">
+                      <GoalsSnapshot hideValues={hideValues} onOpen={() => nav('/blueprint')} />
+                      <div className="ov-card ov-quick">
+                        <header className="ov-card-head"><div><div className="ov-card-title">Where your money sits</div><div className="ov-card-sub">Open any module</div></div></header>
+                        <div className="ov-quick-grid">
+                          {[
+                            { id: 'holdings',     label: 'Stocks',        v: stocksVal },
+                            { id: 'mutualfunds',  label: 'Mutual funds',  v: mfVal },
+                            { id: 'bankdeposits', label: 'Bank deposits', v: fdRdVal },
+                            { id: 'nps',          label: 'NPS',           v: npsVal },
+                            { id: 'retirement',   label: 'Retirement plan', v: null },
+                            { id: 'expenses',     label: 'Expenses',      v: monthlyExpenses },
+                          ].map(q => (
+                            <button key={q.id} className="ov-quick-btn" onClick={() => loadTab(q.id)}>
+                              <span>{q.label}</span>
+                              <b>{q.v === null ? 'Plan' : hideValues ? '••••' : inr(q.v)}</b>
+                            </button>
+                          ))}
+                        </div>
                       </div>
-                    );
-                  })()}
-
-                  {/* Top 5 tiles */}
-                  <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:12, marginBottom:20 }}>
-                    {[
-                      { label:'Total Net Worth', val: hideValues ? '₹ ••••' : fmt(totalNetWorth), sub: hideValues ? '—' : 'All assets combined', color:'#6b8e23', icon:'💰' },
-                      { label:'Dividend Income FY26', val: hideValues ? '₹ ••••' : fmt(dividendTotal||0), sub: hideValues ? '—' : dividendTotal > 0 ? `${s.yieldOnMarket||0}% yield on market` : 'Sync dividends to update', color:'#a8741a', icon:'💸' },
-                      { label:'Outstanding Credit', val: hideValues ? '₹ ••••' : fmt(totalCredit), sub: hideValues ? '—' : 'Loans + Credit Cards', color: totalCredit > 0 ? '#a82c2c':'#888', icon:'🏦' },
-                      { label:'Monthly Income', val: hideValues ? '₹ ••••' : fmt(monthlyIncome), sub: hideValues ? '—' : 'Salary this month', color:'#2d6b6b', icon:'💼' },
-                      { label:'This Month Expenses', val: hideValues ? '₹ ••••' : fmt(monthlyExpenses), sub: hideValues ? '—' : 'From transactions', color: monthlyExpenses > monthlyIncome*0.8 ? '#b8551f':'#5d3b78', icon:'🧾' },
-                    ].map(t => (
-                      <div key={t.label}
-                        className={refreshing ? 'kv-loading' : 'kv-refresh'}
-                        style={{ background:'var(--surface)', borderRadius:12, padding:'16px 14px', border:'1px solid var(--border)', cursor:'default', transition:'opacity 0.3s', boxShadow:'var(--shadow-1)' }}>
-                        <div style={{ fontSize:20, marginBottom:6 }}>{t.icon}</div>
-                        <div style={{ fontSize:11, color:'var(--text-3)', marginBottom:4 }}>{t.label}</div>
-                        <div style={{ fontSize:20, fontWeight:700, color:t.color }}>{t.val}</div>
-                        <div style={{ fontSize:11, color:'#555', marginTop:4 }}>{t.sub}</div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Update balances button */}
-                  <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:16 }}>
-                    <button className="k-btn-ghost" onClick={() => setShowAssetModal(true)}>⚙ Update PPF/EPF/NPS/FD balances</button>
-                  </div>
-
-                  {/* Charts row */}
-                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1.8fr', gap:16, marginBottom:20 }}>
-                    {/* Pie Chart */}
-                    <div style={{ background:'var(--surface)', borderRadius:12, padding:20, border:'1px solid var(--border)' }}>
-                      <div style={{ fontWeight:600, color:'var(--text-3)', fontSize:13, marginBottom:12 }}>📊 Asset Allocation</div>
-                      {pieData.length > 0 ? (
-                        <>
-                          <PieChart width={200} height={180}>
-                            <Pie data={pieData} cx={100} cy={90} innerRadius={55} outerRadius={85} dataKey="value" paddingAngle={2}>
-                              {pieData.map((d,i) => <Cell key={i} fill={d.color} />)}
-                            </Pie>
-                            <Tooltip formatter={(v) => fmt(v)} contentStyle={{ background:'var(--surface)', border:'1px solid rgba(26,22,18,0.12)', borderRadius:8, fontSize:12 }} />
-                          </PieChart>
-                          <div style={{ display:'flex', flexWrap:'wrap', gap:'6px 12px', marginTop:8 }}>
-                            {pieData.map(d => (
-                              <div key={d.name} style={{ display:'flex', alignItems:'center', gap:5, fontSize:11 }}>
-                                <div style={{ width:8, height:8, borderRadius:'50%', background:d.color }} />
-                                <span style={{ color:'var(--text-3)' }}>{d.name}</span>
-                                <span style={{ color:'#666' }}>{totalNetWorth > 0 ? ((d.value/totalNetWorth)*100).toFixed(0)+'%' : '-'}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </>
-                      ) : (
-                        <div style={{ color:'#555', fontSize:12, textAlign:'center', paddingTop:40 }}>No asset data yet</div>
-                      )}
-                    </div>
-
-                    {/* Growth Chart */}
-                    <div style={{ background:'var(--surface)', borderRadius:12, padding:20, border:'1px solid var(--border)' }}>
-                      <div style={{ fontWeight:600, color:'var(--text-3)', fontSize:13, marginBottom:12 }}>📈 Portfolio Growth (Yearly)</div>
-                      <ResponsiveContainer width="100%" height={200}>
-                        <AreaChart data={growthData} margin={{ top:5, right:10, left:0, bottom:0 }}>
-                          <defs>
-                            <linearGradient id="growthGrad" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#6b8e23" stopOpacity={0.25}/>
-                              <stop offset="95%" stopColor="#6b8e23" stopOpacity={0}/>
-                            </linearGradient>
-                          </defs>
-                          <XAxis dataKey="fy" stroke="var(--border-2)" tick={{ fill:'var(--text-3)', fontSize:11 }} />
-                          <YAxis stroke="var(--border-2)" tick={{ fill:'var(--text-3)', fontSize:10 }} tickFormatter={v => '₹'+(v/100000).toFixed(0)+'L'} />
-                          <Tooltip formatter={v => [fmt(v), 'Net Worth']} contentStyle={{ background:'var(--surface)', border:'1px solid rgba(26,22,18,0.12)', borderRadius:8, fontSize:12 }} />
-                          <Area type="monotone" dataKey="value" stroke="#6b8e23" strokeWidth={2} fill="url(#growthGrad)" />
-                        </AreaChart>
-                      </ResponsiveContainer>
                     </div>
                   </div>
-
-                  {/* CAS date */}
-                  {s.casDate && (
-                    <div style={{ fontSize:'12px', color:'#555', textAlign:'right', marginBottom:8 }}>
-                      📋 Stock holdings as per CAS dated {new Date(s.casDate).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' })} ({s.casSource})
-                    </div>
-                  )}
-                </>);
+                );
               })()}
 
               {/* No email connected prompt */}
               {emailStatus.length === 0 && (
-                <div className="db-connect-prompt">
+                <div className="db-connect-prompt" style={{ marginTop: 18 }}>
                   <div className="db-connect-prompt-icon">📬</div>
                   <div>
                     <strong>Connect your email to auto-sync your portfolio</strong>
@@ -1429,11 +1367,11 @@ export default function Dashboard() {
               )}
 
               {/* Charts */}
-              <div className="db-grid-3">
-                <div className="db-card" style={{gridColumn:'span 2'}}>
+              <div className="db-grid-3" style={{ marginTop: 18 }}>
+                <div className="db-card">
                   <div className="db-card-header">
                     <div>
-                      <div className="db-card-title">📈 Portfolio History</div>
+                      <div className="db-card-title">Portfolio history</div>
                       <div className="db-card-sub">{historyData.length > 0 ? `${historyData.length} snapshots · ${historySummary.dateRange?.from||''} – ${historySummary.dateRange?.to||''}` : 'Sync CAS emails to build history'}</div>
                     </div>
                     <div style={{display:'flex',gap:6,alignItems:'center'}}>
@@ -1493,7 +1431,7 @@ export default function Dashboard() {
 
                 <div className="db-card">
                   <div className="db-card-header">
-                    <div className="db-card-title">Sector Split</div>
+                    <div className="db-card-title">Sector split</div>
                   </div>
                   <div style={{ display:'flex', flexDirection:'column', alignItems:'center', padding:'12px 0' }}>
                     <PieChart width={160} height={160}>
@@ -1519,7 +1457,7 @@ export default function Dashboard() {
               {/* Top Holdings */}
               <div className="db-card" style={{ marginTop: 20 }}>
                 <div className="db-card-header">
-                  <div className="db-card-title">Top Stock Holdings</div>
+                  <div className="db-card-title">Top stock holdings</div>
                   <button className="db-card-action" onClick={() => loadTab('holdings')}>View all →</button>
                 </div>
                 <div style={{overflowX:'auto'}}>

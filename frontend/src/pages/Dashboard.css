@@ -286,3 +286,16 @@ select.db-input { cursor:pointer; }
 .recharts-default-tooltip { background: var(--surface) !important; border-color: rgba(26,22,18,0.12) !important; color: var(--text) !important; }
 .recharts-tooltip-label   { color: var(--text) !important; }
 .recharts-tooltip-item    { color: var(--text-2) !important; }
+
+/* ── Shared dashboard polish (all tabs) ─────────────────────────── */
+.db-content .db-card { border-radius: 16px; border-color: var(--border-2); box-shadow: 0 1px 0 rgba(26,22,18,0.03), 0 4px 14px rgba(26,22,18,0.05); }
+.db-content .db-card-title { font-size: 15px; }
+.db-content .db-card-sub { font-size: 12px; }
+.db-content .db-table th { font: 600 11.5px/1.4 var(--font-ui); text-transform: none; letter-spacing: 0; color: var(--text-3); }
+.db-content .db-table td { font-size: 14px; color: var(--text); }
+.db-content .db-table td.mono, .db-content .db-table td.pos, .db-content .db-table td.neg { font-family: var(--font-ui); font-size: 14px; font-variant-numeric: tabular-nums; }
+.db-content .db-table td.pos, .db-content .db-table td.neg { font-weight: 600; }
+.db-content .db-stock-name { font-weight: 600; }
+.db-content .db-legend-row { font-size: 13px; padding: 7px 0; }
+.db-content .db-legend-val { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text); }
+
