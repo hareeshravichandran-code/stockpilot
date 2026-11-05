@@ -1,0 +1,9 @@
+# App lives on app.kanalyst.in
+/dashboard   https://app.kanalyst.in/dashboard   301
+/dashboard/* https://app.kanalyst.in/dashboard   301
+/app         https://app.kanalyst.in             301
+/login       https://app.kanalyst.in/login       301
+/signup      https://app.kanalyst.in/signup      301
+/blueprint   https://app.kanalyst.in/blueprint   301
+/family      https://app.kanalyst.in/family      301
+/privacy     /privacy.html                       200

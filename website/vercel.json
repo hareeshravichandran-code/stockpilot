@@ -1,0 +1,23 @@
+{
+  "cleanUrls": false,
+  "trailingSlash": false,
+  "redirects": [
+    { "source": "/dashboard", "destination": "https://app.kanalyst.in/dashboard", "permanent": true },
+    { "source": "/dashboard/:path*", "destination": "https://app.kanalyst.in/dashboard", "permanent": true },
+    { "source": "/app", "destination": "https://app.kanalyst.in", "permanent": true },
+    { "source": "/login", "destination": "https://app.kanalyst.in/login", "permanent": true },
+    { "source": "/signup", "destination": "https://app.kanalyst.in/signup", "permanent": true },
+    { "source": "/blueprint", "destination": "https://app.kanalyst.in/blueprint", "permanent": true },
+    { "source": "/family", "destination": "https://app.kanalyst.in/family", "permanent": true }
+  ],
+  "rewrites": [
+    { "source": "/privacy", "destination": "/privacy.html" }
+  ],
+  "headers": [
+    { "source": "/(.*)", "headers": [
+      { "key": "X-Content-Type-Options", "value": "nosniff" },
+      { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+      { "key": "X-Frame-Options", "value": "DENY" }
+    ] }
+  ]
+}

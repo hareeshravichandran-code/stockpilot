@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Privacy policy · Kanalyst</title>
+<meta name="description" content="How Kanalyst collects, uses, protects and deletes your data, including Gmail, bank SMS and family information.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="site.css">
+<style>
+  .pp { max-width: 1080px; margin: 0 auto; padding: 40px 24px 80px; display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 48px; }
+  .pp-head { grid-column: 1 / -1; }
+  .pp-head h1 { font-size: clamp(42px, 5vw, 64px); }
+  .pp-head p { color: var(--ink-2); margin-top: 10px; font-size: 18px; max-width: 60ch; }
+  .pp-sum { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+  .pp-sum div { background: var(--paper); border: 1px solid var(--line); border-radius: 18px; padding: 18px; }
+  .pp-sum b { display: block; font: 400 22px var(--serif); }
+  .pp-sum span { font-size: 14px; color: var(--ink-2); }
+  .toc { position: sticky; top: 90px; align-self: start; display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+  .toc a { text-decoration: none; color: var(--ink-2); padding: 5px 10px; border-radius: 8px; border-left: 3px solid transparent; }
+  .toc a:hover { background: var(--paper); color: var(--ink); border-left-color: var(--marigold); }
+  .body h2 { font-size: 30px; margin: 40px 0 12px; scroll-margin-top: 90px; }
+  .body h2:first-child { margin-top: 0; }
+  .body p, .body li { color: var(--ink-2); line-height: 1.7; }
+  .body p + p { margin-top: 12px; }
+  .body ul { padding-left: 20px; margin: 10px 0; }
+  .body strong { color: var(--ink); }
+  .callout { background: var(--paper); border-left: 4px solid var(--prussian); border-radius: 12px; padding: 16px 18px; margin: 16px 0; }
+  .callout p { color: var(--ink); }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 15px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; color: var(--ink-2); }
+  th { color: var(--ink); font-weight: 600; background: var(--paper); }
+  @media (max-width: 860px) { .pp { grid-template-columns: 1fr; gap: 24px; } .toc { display: none; } .pp-sum { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 520px) { .pp-sum { grid-template-columns: 1fr; } table { font-size: 14px; } th, td { padding: 8px; } }
+</style>
+</head>
+<body>
+<nav class="nav">
+  <a class="logo" href="/"><span class="mark" aria-hidden="true"></span>Kanalyst</a>
+  <div class="nav-links">
+    <a href="/">Home</a>
+    <a class="btn ghost" href="https://app.kanalyst.in/login">Log in</a>
+    <a class="btn" href="https://app.kanalyst.in/signup">Start free</a>
+  </div>
+</nav>
+
+<main class="pp">
+  <header class="pp-head">
+    <h1>Privacy policy</h1>
+    <p>Last updated 5 November 2026. This policy covers the Kanalyst website (kanalyst.in), the web app (app.kanalyst.in) and the Kanalyst Android app.</p>
+  </header>
+
+  <div class="pp-sum" aria-label="In short">
+    <div><b>Reads only</b><span>Kanalyst never moves money or sends email for you.</span></div>
+    <div><b>Never sold</b><span>We don’t sell, rent or share your data for advertising.</span></div>
+    <div><b>Encrypted</b><span>TLS in transit, encryption at rest, Gmail tokens AES-256-GCM.</span></div>
+    <div><b>Yours to delete</b><span>Delete everything from Settings → Privacy, any time.</span></div>
+  </div>
+
+  <nav class="toc" aria-label="Sections">
+    <a href="#who">1. Who we are</a>
+    <a href="#collect">2. What we collect</a>
+    <a href="#use">3. How we use it</a>
+    <a href="#sms">4. Bank SMS (Android)</a>
+    <a href="#gmail">5. Gmail: Limited Use</a>
+    <a href="#sheets">6. Google Sheets</a>
+    <a href="#family">7. Family sharing</a>
+    <a href="#security">8. Storage and security</a>
+    <a href="#sharing">9. Who we share with</a>
+    <a href="#rights">10. Your rights</a>
+    <a href="#delete">11. Deleting your data</a>
+    <a href="#children">12. Children</a>
+    <a href="#changes">13. Changes</a>
+    <a href="#contact">14. Contact</a>
+  </nav>
+
+  <article class="body">
+    <h2 id="who">1. Who we are</h2>
+    <p>Kanalyst is a personal and family finance app built and run in India. It helps you track investments, goals, retirement, loans, insurance, documents and important dates for the people in your household. Kanalyst is an information tool. It is not a bank, broker or registered investment adviser, and nothing in it is financial advice.</p>
+
+    <h2 id="collect">2. What we collect</h2>
+    <table>
+      <thead><tr><th>What</th><th>Where it comes from</th></tr></thead>
+      <tbody>
+        <tr><td>Account details: name, email, and a password hash or Google sign-in</td><td>You, when you sign up</td></tr>
+        <tr><td>Optional profile details: PAN, date of birth, mobile number, broker client code</td><td>You, in Profile. Used only to open password-protected statements (see section 5).</td></tr>
+        <tr><td>Holdings and statements: stocks, mutual funds, NPS, dividends</td><td>Consolidated Account Statements (CAS) and NPS statements you upload or that we read from Gmail with your permission</td></tr>
+        <tr><td>FDs, RDs, PPF, EPF, SSY, loans, balances</td><td>You enter them</td></tr>
+        <tr><td>Bank transactions: amount, merchant, date, bank, category</td><td>Bank SMS read on your Android phone (section 4)</td></tr>
+        <tr><td>Goals, Blueprint boards, retirement plan, comments</td><td>You create them</td></tr>
+        <tr><td>Family information: names, relations, dates of birth, insurance policies, document types and due dates</td><td>You enter them. We keep only the last 4 characters of policy and document numbers, never the full number.</td></tr>
+        <tr><td>Technical logs: sync results and errors</td><td>Our servers, to fix problems</td></tr>
+      </tbody>
+    </table>
+    <p>We do not collect your bank, broker or demat passwords, and we never ask for OTPs.</p>
+
+    <h2 id="use">3. How we use it</h2>
+    <ul>
+      <li>To show your net worth, holdings, spending, goals, retirement plan, family cover and calendar.</li>
+      <li>To remind you about renewals, premiums, fees and maturities.</li>
+      <li>To keep the web app and Android app in sync for your account.</li>
+      <li>To fix errors and keep the service secure.</li>
+    </ul>
+    <p>We do not use your data for advertising, and we do not use it to train AI models.</p>
+
+    <h2 id="sms">4. Bank SMS (Android)</h2>
+    <p>With your permission, the Android app reads SMS from known bank and card sender IDs to record transactions. It does not read personal messages, OTPs or messages from your contacts. Transaction details (amount, merchant, date, bank) are stored on your phone and synced to your Kanalyst account. You can turn off SMS access at any time in your phone’s settings. Transactions you added by hand are not affected.</p>
+
+    <h2 id="gmail">5. Gmail integration: Limited Use disclosure</h2>
+    <p>The web app can optionally connect to your Gmail account, with the read-only <strong>gmail.readonly</strong> permission, to import your investment statements automatically.</p>
+    <ul>
+      <li><strong>What we look for:</strong> statements from the depositories (NSDL, CDSL, CVL), NPS statements from Protean, and income or dividend emails matching rules you set up.</li>
+      <li><strong>What we keep:</strong> only the figures extracted from those statements, such as holdings, values and dates. We don’t keep the emails themselves.</li>
+      <li><strong>Password-protected PDFs:</strong> to open a statement, we may use the PAN, date of birth or mobile number you saved in Profile. When a password can’t be worked out by simple rules, the email’s sender, subject and body text and those profile details may be sent to Google’s Gemini API to suggest the password. Some PDFs may also be read using Google’s text-recognition services. This processing happens under Google’s API terms.</li>
+      <li><strong>What we never do:</strong> send, delete, label or change your email; read unrelated personal email; or let a human read your email, except with your explicit consent for a specific support request, or where the law requires it.</li>
+      <li><strong>Token storage:</strong> your Gmail access tokens are encrypted with AES-256-GCM before they are stored.</li>
+      <li><strong>Turning it off:</strong> use Settings → Privacy → Disconnect Gmail, or remove Kanalyst at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>. Disconnecting revokes our access at Google and deletes the stored tokens.</li>
+    </ul>
+    <div class="callout"><p><strong>Kanalyst’s use and transfer of information received from Google APIs will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy#additional_requirements_for_specific_api_scopes">Google API Services User Data Policy</a>, including the Limited Use requirements.</strong></p></div>
+
+    <h2 id="sheets">6. Google Sheets</h2>
+    <p>If you connect Google Sheets, we ask permission to write to the spreadsheet you choose, to export your data. We don’t read other files in your Google Drive. You can revoke this at any time from your Google Account.</p>
+
+    <h2 id="family">7. Family sharing</h2>
+    <p>You can invite your partner or other adults into a family group. People in the same family group can see each other’s shared information, such as combined holdings, goals, insurance, documents and calendar dates. Only the person who added an item can change or delete it. You can leave a family group, or remove someone from it, at any time.</p>
+    <p>When you add family members who don’t have their own account, such as children or parents, you are responsible for having their permission, or the authority to share their details on their behalf.</p>
+
+    <h2 id="security">8. Storage and security</h2>
+    <p>Your data is stored in a Supabase (PostgreSQL) database, and the service runs on Railway, Vercel and Netlify. All traffic uses TLS (HTTPS). Data is encrypted at rest by our database provider, and Gmail tokens get an extra layer of AES-256-GCM encryption. Access to your data requires your signed-in session. No system is perfectly secure, but we work to protect your data and will tell you promptly if a breach affects you.</p>
+
+    <h2 id="sharing">9. Who we share with</h2>
+    <p>We don’t sell or rent your data. We share it only:</p>
+    <ul>
+      <li>with the service providers that run Kanalyst (Supabase, Railway, Vercel, Netlify, Google), only to provide the service;</li>
+      <li>with people in your family group, as described above;</li>
+      <li>when the law requires it.</li>
+    </ul>
+
+    <h2 id="rights">10. Your rights</h2>
+    <p>You can see, correct, export or delete your data. You can withdraw any permission (SMS, Gmail, Sheets) at any time. To ask for a copy of your data, write to us at the address below. We follow India’s Digital Personal Data Protection Act, 2023.</p>
+
+    <h2 id="delete">11. Deleting your data</h2>
+    <p>In the web app, go to Settings → Privacy → Delete Account &amp; All Data and type DELETE to confirm. This revokes Gmail access and permanently removes your account and everything linked to it: holdings, transactions, goals, Blueprint boards, retirement plan, family members, policies, documents and calendar entries. On Android, use Settings → Privacy &amp; Permissions → Delete All My Data. Deletion can’t be undone.</p>
+
+    <h2 id="children">12. Children</h2>
+    <p>Kanalyst accounts are for adults (18 or older). Parents may record details about their children, such as name, birthday, school fees, savings and insurance, inside their own account. Children do not get their own accounts.</p>
+
+    <h2 id="changes">13. Changes to this policy</h2>
+    <p>If we change this policy, we will update the date at the top. If the changes are significant, we will tell you in the app before they apply.</p>
+
+    <h2 id="contact">14. Contact</h2>
+    <p>Questions, data requests or concerns: <a href="mailto:hello@kanalyst.in">hello@kanalyst.in</a></p>
+  </article>
+</main>
+
+<footer class="foot">
+  <span class="logo small"><span class="mark" aria-hidden="true"></span>Kanalyst</span>
+  <a href="/">Home</a>
+  <a href="https://app.kanalyst.in/login">Log in</a>
+  <a href="mailto:hello@kanalyst.in">hello@kanalyst.in</a>
+  <span>© 2026 Kanalyst</span>
+</footer>
+</body>
+</html>
