@@ -6,6 +6,7 @@ import Signup from './pages/Signup';
 import Dashboard from './pages/Dashboard';
 import Dividends from './pages/Dividends';
 import Blueprint from './pages/Blueprint';
+import Family from './pages/Family';
 
 function PrivateRoute({ children }) {
   const { user, loading } = useAuth();
@@ -45,6 +46,7 @@ export default function App() {
           <Route path="/dashboard" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
           <Route path="/dividends" element={<PrivateRoute><Dividends /></PrivateRoute>} />
           <Route path="/blueprint" element={<PrivateRoute><Blueprint /></PrivateRoute>} />
+          <Route path="/family" element={<PrivateRoute><Family /></PrivateRoute>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

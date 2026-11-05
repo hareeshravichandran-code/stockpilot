@@ -1131,6 +1131,18 @@ export default function Dashboard() {
             <span className="nav-icon">▦</span>
             <span className="nav-label">Blueprint ↗</span>
           </div>
+          <div className="db-nav-label" style={{marginTop:12}}>Family</div>
+          {[
+            {to:'/family',                 icon:'⌂', label:'Family home'},
+            {to:'/family?tab=insurance',   icon:'☂', label:'Insurance'},
+            {to:'/family?tab=documents',   icon:'▤', label:'Documents'},
+            {to:'/family?tab=calendar',    icon:'▦', label:'Calendar'},
+          ].map(item => (
+            <div key={item.to} className="db-nav-item" onClick={()=>nav(item.to)}>
+              <span className="nav-icon">{item.icon}</span>
+              <span className="nav-label">{item.label}</span>
+            </div>
+          ))}
           <div className="db-nav-label" style={{marginTop:12}}>Analytics</div>
           {[
             {id:'tax',   icon:'⊞', label:'Tax Summary'},

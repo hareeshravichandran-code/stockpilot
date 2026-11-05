@@ -181,6 +181,21 @@ export const rdAPI = {
   delete:  (id)       => api.delete(`/api/rd/${id}`),
 };
 
+const crudAPI = (base) => ({
+  list: () => api.get(base),
+  create: (body) => api.post(base, body),
+  update: (id, body) => api.put(`${base}/${id}`, body),
+  remove: (id) => api.delete(`${base}/${id}`),
+});
+export const householdAPI = {
+  overview: () => api.get('/api/household/overview', { timeout: 45000 }),
+  calendar: (from, to) => api.get('/api/household/calendar', { params: { from, to }, timeout: 45000 }),
+  members: crudAPI('/api/household/members'),
+  policies: crudAPI('/api/household/policies'),
+  documents: crudAPI('/api/household/documents'),
+  events: crudAPI('/api/household/events'),
+};
+
 export const blueprintAPI = {
   get:           ()             => api.get('/api/blueprint'),
   assets:        ()             => api.get('/api/blueprint/assets'),
