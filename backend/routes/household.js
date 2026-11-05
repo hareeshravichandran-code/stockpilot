@@ -223,13 +223,17 @@ async function buildCalendar(uid, from, to) {
   const mName = Object.fromEntries(members.map(m => [m.id, m.is_me ? 'You' : m.name]));
   const ownerMember = (ownerId) => members.find(m => m.relation === 'self' && m.owner_id === ownerId);
 
-  const [pol, docs, evs, fds, rds, bks] = await Promise.all([
+  const [pol, docs, evs, fds, rds, bks, rev] = await Promise.all([
     supabase.from('insurance_policies').select('*').in('owner_id', ids).eq('status', 'active'),
     supabase.from('family_documents').select('*').in('owner_id', ids),
     supabase.from('family_events').select('*').in('owner_id', ids),
     supabase.from('fixed_deposits').select('*').in('user_id', ids),
     supabase.from('recurring_deposits').select('*').in('user_id', ids),
     supabase.from('bp_buckets').select('id, user_id, name, kind, status, target_amount, target_date, recurrence, recurrence_day, recurrence_month, is_emi, is_loan, special_kind').in('user_id', ids).eq('kind', 'goal').neq('status', 'completed'),
+    // Events master (Discover / manual): EMIs, SIPs, card dues, subscriptions, salary...
+    // Insurance and RD rows are already drawn from their own tables above, so skip them here.
+    supabase.from('recurring_events').select('*').in('owner_id', ids).eq('status', 'active')
+      .not('master_table', 'in', '("insurance_policies","recurring_deposits")'),
   ]);
   const items = [];
   const push = (o) => items.push({ id: `${o.module}:${o.ref}:${o.date}`, ...o });
@@ -294,6 +298,43 @@ async function buildCalendar(uid, from, to) {
       push({ ...base, kind: b.special_kind === 'retirement' ? 'retirement' : 'goal_target', date: b.target_date, title: `${b.name} target date`, amount: num(b.target_amount) || null });
     }
   }
+  // Events master: one series per obligation, with paid / overdue from event_payments
+  const evRows = (rev && rev.data) || [];
+  if (evRows.length) {
+    const { data: pays } = await supabase.from('event_payments').select('event_id, period, status')
+      .in('event_id', evRows.map(e => e.id)).gte('period', ymd(new Date(parse(from).getTime() - 10 * DAY))).lte('period', ymd(new Date(parse(to).getTime() + 10 * DAY)));
+    const paidOn = {};
+    for (const p of pays || []) if (p.status === 'paid') (paidOn[p.event_id] = paidOn[p.event_id] || []).push(parse(p.period).getTime());
+    const isPaid = (id, d) => (paidOn[id] || []).some(t => Math.abs(t - parse(d).getTime()) <= 6 * DAY);
+    const blueprintEmis = items.filter(i => i.kind === 'emi');
+    const MODULE = { emi: 'loans', sip: 'money', rd_instalment: 'money', salary: 'money', card_due: 'money', premium: 'insurance', subscription: 'calendar', bill: 'calendar', maturity: 'money' };
+    const today = todayStr();
+    for (const e of evRows) {
+      const day = Math.min(28, e.due_day || (e.start_date ? parseInt(e.start_date.slice(8, 10), 10) : 1) || 1);
+      let dates = [];
+      if (e.frequency === 'once') { const d = e.end_date || e.start_date; if (d && d >= from && d <= to) dates = [d]; }
+      else if (e.frequency === 'monthly') {
+        const f0 = parse(from); dates = occurrences(ymd(new Date(Date.UTC(f0.getUTCFullYear(), f0.getUTCMonth(), day))), 'monthly', from, to, 24);
+      } else {
+        const m = e.due_month || (e.start_date ? parseInt(e.start_date.slice(5, 7), 10) : parse(from).getUTCMonth() + 1);
+        const anchor = ymd(new Date(Date.UTC(parse(from).getUTCFullYear() - 1, m - 1, day)));
+        dates = occurrences(anchor, e.frequency, from, to, 12);
+      }
+      if (e.end_date) dates = dates.filter(d => d <= e.end_date);
+      if (e.start_date) dates = dates.filter(d => d >= e.start_date);
+      // Only call a past date overdue if we were already tracking it then
+      const trackedFrom = ymd(new Date((e.created_at ? Date.parse(e.created_at) : Date.now()) - 7 * DAY));
+      const om = ownerMember(e.owner_id);
+      for (const d of dates) {
+        // A Blueprint EMI with the same amount in the same month is the same obligation
+        if (e.kind === 'emi' && blueprintEmis.some(b => b.date.slice(0, 7) === d.slice(0, 7) && b.amount && e.amount && Math.abs(b.amount - num(e.amount)) <= num(e.amount) * 0.02)) continue;
+        const paid = isPaid(e.id, d);
+        push({ module: MODULE[e.kind] || 'calendar', kind: e.kind, ref: e.id, date: d, title: e.title, amount: num(e.amount) || null,
+          sub: paid ? 'Paid' : null, paid, overdue: !paid && d < today && d >= trackedFrom, direction: e.direction,
+          member_ids: e.member_id ? [e.member_id] : (om ? [om.id] : []), event_id: e.id });
+      }
+    }
+  }
   items.sort((a, b) => a.date.localeCompare(b.date) || a.module.localeCompare(b.module));
   return { items, members: members.map(m => ({ id: m.id, name: mName[m.id], color: m.color })) };
 }
@@ -349,6 +390,7 @@ router.get('/overview', requireAuth, async (req, res) => {
     }
     for (const it of cal.items) {
       if (['birthday', 'maturity', 'retirement', 'goal_target', 'anniversary', 'event'].includes(it.kind) && daysTo(it.date) <= 21) attention.push({ ...it, days: daysTo(it.date) });
+      else if (['emi', 'card_due', 'sip', 'subscription', 'rd_instalment', 'bill'].includes(it.kind) && !it.paid && daysTo(it.date) <= 5) attention.push({ ...it, days: daysTo(it.date) });
     }
     attention.sort((a, b) => a.days - b.days);
     // Gaps worth pointing out

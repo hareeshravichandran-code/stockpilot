@@ -21,6 +21,7 @@ const rdRoutes       = require('./routes/rd');
 const blueprintRoutes = require('./routes/blueprint');
 const retirementRoutes = require('./routes/retirement');
 const householdRoutes = require('./routes/household');
+const mastersRoutes = require('./routes/masters');
 
 const app = express();
 
@@ -70,6 +71,7 @@ app.use('/api/rd',       rdRoutes);
 app.use('/api/blueprint', blueprintRoutes);
 app.use('/api/retirement', retirementRoutes);
 app.use('/api/household', householdRoutes);
+app.use('/api/masters', mastersRoutes);
 
 // ── Health check ──
 // Debug endpoint - check PDF tools
