@@ -1092,7 +1092,7 @@ export default function Dashboard() {
       {/* SIDEBAR */}
       <aside className={`db-sidebar ${sidebarOpen ? 'open' : 'closed'}`}>
         <div className="db-logo">
-          <div className="db-logo-mark">K</div>
+          <img className="db-logo-img" src="/logo.svg" alt="Kanalyst" />
           {sidebarOpen && <div className="db-logo-sub">Own your finance story</div>}
           <button className="db-collapse-btn" onClick={() => { setSidebarOpen(o => !o); setShowProfileDropdown(false); }} title={sidebarOpen ? 'Collapse' : 'Expand'}>
             {sidebarOpen ? '‹' : '›'}

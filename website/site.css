@@ -27,9 +27,9 @@ a { color: inherit; }
 /* Logo */
 .logo { display: inline-flex; align-items: center; gap: 10px; font-family: var(--serif); font-size: 27px; text-decoration: none; color: var(--ink); }
 .logo.small { font-size: 20px; }
-.mark { width: 26px; height: 26px; border-radius: 8px; flex: 0 0 auto; background: conic-gradient(var(--moss) 0 25%, var(--marigold) 0 50%, var(--mulberry) 0 75%, var(--prussian) 0); }
-.logo.small .mark { width: 20px; height: 20px; border-radius: 6px; }
-.mark.big { width: 54px; height: 54px; border-radius: 16px; }
+.mark { width: 28px; height: 26px; flex: 0 0 auto; background: url(house.svg) center / contain no-repeat; }
+.logo.small .mark { width: 22px; height: 20px; }
+.mark.big { width: 58px; height: 54px; filter: drop-shadow(0 0 0 transparent); }
 
 /* Nav */
 .nav { position: sticky; top: 0; z-index: 30; display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 14px max(24px, calc((100% - 1200px) / 2)); background: rgba(239,232,215,.88); backdrop-filter: blur(10px); }

@@ -33,8 +33,7 @@
 /* Nav */
 .kl-nav { display: flex; align-items: center; justify-content: space-between; gap: 16px; max-width: 1240px; margin: 0 auto; padding: 22px 32px; }
 .kl-logo { display: flex; align-items: center; gap: 10px; font-family: 'DM Serif Display', serif; font-size: 26px; }
-.kl-logo-mark { width: 26px; height: 26px; border-radius: 8px; background:
-  conic-gradient(var(--kl-moss) 0 25%, var(--kl-marigold) 0 50%, var(--kl-mulberry) 0 75%, var(--kl-prussian) 0); }
+.kl-logo-mark { width: 28px; height: 26px; flex: 0 0 auto; background: url(../brand/logo.svg) center / contain no-repeat; }
 .kl-nav-links { display: flex; align-items: center; gap: 22px; }
 .kl-nav-links a { text-decoration: none; font-size: 15px; color: var(--kl-ink-2); }
 .kl-nav-links a:hover { color: var(--kl-ink); }

@@ -24,6 +24,7 @@
   display: flex; align-items: center; gap: 10px;
   white-space: nowrap; overflow: hidden; position: relative;
 }
+.db-logo-img { width: 30px; height: 28px; flex-shrink: 0; display: block; }
 .db-logo-mark { font-family: var(--font-display); font-size: 18px; color: var(--lime); flex-shrink: 0; }
 .db-logo-sub  { font-size: 9px; color: var(--text-4); letter-spacing: 1.5px; text-transform: uppercase; transition: opacity 0.15s; }
 .db-sidebar.closed .db-logo-sub { opacity: 0; }
