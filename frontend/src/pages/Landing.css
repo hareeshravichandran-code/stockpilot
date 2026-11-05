@@ -63,15 +63,17 @@
 @keyframes kl-draw { to { stroke-dashoffset: 0; } }
 
 .kl-house { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 21%; display: flex; flex-direction: column; align-items: center; gap: 2px; }
-.kl-house svg { width: 62%; fill: none; stroke: var(--kl-ink); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.kl-house .k-house { width: 62%; display: block; filter: drop-shadow(0 4px 0 rgba(26,22,18,.12)); }
+.k-house svg, .k-person svg { width: 100%; height: 100%; display: block; }
+.k-person { display: block; width: 100%; height: 100%; }
 .kl-house span { font-family: 'DM Serif Display', serif; font-size: clamp(13px, 1.4vw, 17px); }
 
 .kl-person { position: absolute; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 4px; border: 0; background: none; padding: 4px; cursor: pointer; font: inherit; color: var(--kl-ink); z-index: 3;
   opacity: 0; animation: kl-pop .5s var(--ease, ease) forwards; transition: opacity .3s; }
 .kl-person.dim { opacity: .45 !important; }
-.kl-avatar { width: clamp(42px, 5vw, 58px); height: clamp(42px, 5vw, 58px); border-radius: 50%; display: grid; place-items: center; background: var(--kl-ink); color: var(--kl-paper); font-family: 'DM Serif Display', serif; font-size: clamp(18px, 2vw, 24px); box-shadow: 0 0 0 4px var(--kl-cream); transition: transform .25s, background .25s, box-shadow .25s; }
+.kl-avatar { overflow: hidden; width: clamp(50px, 6vw, 70px); height: clamp(50px, 6vw, 70px); border-radius: 50%; display: grid; place-items: center; background: var(--kl-ink); color: var(--kl-paper); font-family: 'DM Serif Display', serif; font-size: clamp(18px, 2vw, 24px); box-shadow: 0 0 0 4px var(--kl-cream); transition: transform .25s, background .25s, box-shadow .25s; }
 .kl-person:hover .kl-avatar { transform: scale(1.06); }
-.kl-person.on .kl-avatar { background: var(--kl-marigold); color: var(--kl-ink); box-shadow: 0 0 0 4px var(--kl-cream), 0 0 0 7px var(--kl-marigold); }
+.kl-person.on .kl-avatar { box-shadow: 0 0 0 4px var(--kl-cream), 0 0 0 7px var(--kl-ink); transform: scale(1.08); }
 .kl-pname { font-size: 13px; font-weight: 600; line-height: 1.15; text-align: center; background: var(--kl-cream); padding: 1px 6px; border-radius: 6px; }
 .kl-pname small { display: block; font-size: 11px; font-weight: 400; color: var(--kl-ink-3); }
 
@@ -156,7 +158,7 @@
 .kl-spend i { flex: 1; background: rgba(250,245,232,.8); border-radius: 5px 5px 2px 2px; }
 
 .kl-faces { display: flex; }
-.kl-faces span { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; background: var(--kl-ink); color: var(--kl-paper); font-family: 'DM Serif Display', serif; font-size: 20px; margin-right: -8px; box-shadow: 0 0 0 3px var(--kl-paper); }
+.kl-faces span { overflow: hidden; width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; background: var(--kl-ink); color: var(--kl-paper); font-family: 'DM Serif Display', serif; font-size: 20px; margin-right: -8px; box-shadow: 0 0 0 3px var(--kl-paper); }
 .kl-faces span:nth-child(2) { background: var(--kl-mulberry); }
 .kl-faces span:nth-child(3) { background: var(--kl-marigold); color: var(--kl-ink); }
 .kl-faces span:nth-child(4) { background: var(--kl-teal); }

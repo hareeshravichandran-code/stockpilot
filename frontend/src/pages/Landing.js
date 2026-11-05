@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './Landing.css';
+import { Person, House } from '../brand/people';
 
 /* Kanalyst landing — a family home, not just a portfolio.
    Sample family below is illustrative (shown as a preview on the page). */
@@ -17,7 +18,7 @@ const MODULES = {
 const MEMBERS = [
   { id: 'arjun', name: 'Arjun', role: 'You',          x: 50, y: 25 },
   { id: 'meera', name: 'Meera', role: 'Partner',      x: 75, y: 50 },
-  { id: 'diya',  name: 'Diya',  role: 'Daughter, 8',  x: 50, y: 75 },
+  { id: 'nila',  name: 'Nila',  role: 'Daughter, 8',  x: 50, y: 75 },
   { id: 'paati', name: 'Paati', role: 'Grandmother',  x: 25, y: 50 },
 ];
 
@@ -28,9 +29,9 @@ const ITEMS = [
   { id: 'sip',    m: 'money',     who: ['arjun', 'meera'], title: 'SIPs',             note: '₹35K a month, 6 funds',      x: 93, y: 30 },
   { id: 'retire', m: 'goals',     who: ['arjun', 'meera'], title: 'Retirement',       note: 'On track for 2045',          x: 93, y: 70 },
   { id: 'pass',   m: 'documents', who: ['meera'],          title: 'Passport',         note: 'Expires Feb 2027',           x: 76, y: 92 },
-  { id: 'fees',   m: 'calendar',  who: ['diya'],           title: 'School fees',      note: 'Due 10 June',                x: 50, y: 97 },
-  { id: 'ssy',    m: 'money',     who: ['diya'],           title: 'Sukanya account',  note: '₹3.2L saved',                x: 24, y: 92 },
-  { id: 'floater',m: 'insurance', who: ['arjun', 'meera', 'diya'], title: 'Family health cover', note: '₹10L, renews 12 Aug', x: 66, y: 66 },
+  { id: 'fees',   m: 'calendar',  who: ['nila'],           title: 'School fees',      note: 'Due 10 June',                x: 50, y: 97 },
+  { id: 'ssy',    m: 'money',     who: ['nila'],           title: 'Sukanya account',  note: '₹3.2L saved',                x: 24, y: 92 },
+  { id: 'floater',m: 'insurance', who: ['arjun', 'meera', 'nila'], title: 'Family health cover', note: '₹10L, renews 12 Aug', x: 66, y: 66 },
   { id: 'fd',     m: 'money',     who: ['paati'],          title: 'Senior citizen FD', note: 'Matures 1 June',            x: 7,  y: 70 },
   { id: 'senior', m: 'insurance', who: ['paati'],          title: 'Senior health plan', note: 'Premium due in July',      x: 7,  y: 30 },
   { id: 'puc',    m: 'documents', who: ['arjun'],          title: 'Car PUC',          note: 'Due in 9 days',  urgent: true, x: 34, y: 34 },
@@ -40,7 +41,7 @@ const ITEMS = [
 const JUNE = [
   { d: 1,  m: 'money',     t: 'Paati’s FD matures',      a: '₹2.1L back' },
   { d: 5,  m: 'money',     t: 'SIPs go out',             a: '₹35,000' },
-  { d: 10, m: 'calendar',  t: 'Diya’s school fees',      a: '₹48,000' },
+  { d: 10, m: 'calendar',  t: 'Nila’s school fees',      a: '₹48,000' },
   { d: 12, m: 'insurance', t: 'Health premium',          a: '₹22,400' },
   { d: 14, m: 'calendar',  t: 'Paati’s 75th birthday',   a: '' },
   { d: 20, m: 'loans',     t: 'Home loan EMI',           a: '₹26,035' },
@@ -63,14 +64,14 @@ function Constellation() {
           }))}
         </svg>
         <div className="kl-house" aria-hidden="true">
-          <svg viewBox="0 0 64 60"><path d="M6 28 L32 6 L58 28" /><path d="M13 23 V54 H51 V23" /><path d="M27 54 V38 H37 V54" /></svg>
+          <House />
           <span>Our home</span>
         </div>
         {MEMBERS.map((m, i) => (
           <button key={m.id} type="button" className={`kl-person ${sel === m.id ? 'on' : ''} ${sel && sel !== m.id ? 'dim' : ''}`}
             style={{ left: `${m.x}%`, top: `${m.y}%`, animationDelay: `${0.25 + i * 0.08}s` }}
             aria-pressed={sel === m.id} onClick={() => setSel(s => s === m.id ? null : m.id)}>
-            <span className="kl-avatar">{m.name[0]}</span>
+            <span className="kl-avatar"><Person id={m.id} /></span>
             <span className="kl-pname">{m.name}<small>{m.role}</small></span>
           </button>
         ))}
@@ -117,7 +118,7 @@ function MoneyBar() {
   );
 }
 function GoalLanes() {
-  const g = [['Emergency fund', 82], ['Diya’s college', 34], ['New car', 61]];
+  const g = [['Emergency fund', 82], ['Nila’s college', 34], ['New car', 61]];
   return (
     <ul className="kl-goals">
       {g.map(([n, p]) => (
@@ -140,7 +141,7 @@ function RetireCurve() {
   );
 }
 function CoverRings() {
-  const p = [['Arjun', '₹1.6Cr'], ['Meera', '₹60L'], ['Diya', '₹10L'], ['Paati', '₹5L']];
+  const p = [['Arjun', '₹1.6Cr'], ['Meera', '₹60L'], ['Nila', '₹10L'], ['Paati', '₹5L']];
   return <div className="kl-covers">{p.map(([n, v]) => <span key={n}><b>{v}</b>{n}</span>)}</div>;
 }
 function Expiries() {
@@ -237,7 +238,7 @@ export default function Landing() {
           <article className="kl-b family">
             <h3>Family members <em className="kl-new">New</em></h3>
             <p>A profile for everyone, including children and parents who don’t log in. Share a home with your partner.</p>
-            <div className="kl-faces" aria-hidden="true">{MEMBERS.map(m => <span key={m.id}>{m.name[0]}</span>)}<span className="add">+</span></div>
+            <div className="kl-faces" aria-hidden="true">{MEMBERS.map(m => <span key={m.id}><Person id={m.id} /></span>)}<span className="add">+</span></div>
           </article>
         </div>
       </section>

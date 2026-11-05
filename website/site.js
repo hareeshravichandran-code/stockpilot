@@ -9,7 +9,7 @@
   var MEMBERS = [
     { id: 'arjun', name: 'Arjun', role: 'You', x: 50, y: 25 },
     { id: 'meera', name: 'Meera', role: 'Partner', x: 75, y: 50 },
-    { id: 'diya', name: 'Diya', role: 'Daughter, 8', x: 50, y: 75 },
+    { id: 'nila', name: 'Nila', role: 'Daughter, 8', x: 50, y: 75 },
     { id: 'paati', name: 'Paati', role: 'Grandmother', x: 25, y: 50 }
   ];
   var ITEMS = [
@@ -18,9 +18,9 @@
     { id: 'sip', m: 'money', who: ['arjun', 'meera'], t: 'SIPs', n: '₹35K a month', x: 93, y: 30 },
     { id: 'ret', m: 'goals', who: ['arjun', 'meera'], t: 'Retirement', n: 'On track for 2045', x: 93, y: 70 },
     { id: 'pass', m: 'documents', who: ['meera'], t: 'Passport', n: 'Expires Feb 2027', x: 76, y: 92 },
-    { id: 'fees', m: 'calendar', who: ['diya'], t: 'School fees', n: 'Due 10 June', x: 50, y: 97 },
-    { id: 'ssy', m: 'money', who: ['diya'], t: 'Sukanya account', n: '₹3.2L saved', x: 24, y: 92 },
-    { id: 'flo', m: 'insurance', who: ['arjun', 'meera', 'diya'], t: 'Family health cover', n: '₹10L, renews 12 Aug', x: 66, y: 66 },
+    { id: 'fees', m: 'calendar', who: ['nila'], t: 'School fees', n: 'Due 10 June', x: 50, y: 97 },
+    { id: 'ssy', m: 'money', who: ['nila'], t: 'Sukanya account', n: '₹3.2L saved', x: 24, y: 92 },
+    { id: 'flo', m: 'insurance', who: ['arjun', 'meera', 'nila'], t: 'Family health cover', n: '₹10L, renews 12 Aug', x: 66, y: 66 },
     { id: 'fd', m: 'money', who: ['paati'], t: 'Senior citizen FD', n: 'Matures 1 June', x: 7, y: 70 },
     { id: 'sen', m: 'insurance', who: ['paati'], t: 'Senior health plan', n: 'Premium due July', x: 7, y: 30 },
     { id: 'puc', m: 'documents', who: ['arjun'], t: 'Car PUC', n: 'Due in 9 days', urgent: true, x: 34, y: 34 },
@@ -48,7 +48,7 @@
       var b = document.createElement('button');
       b.type = 'button'; b.className = 'person'; b.style.left = m.x + '%'; b.style.top = m.y + '%'; b.style.animationDelay = (0.2 + i * 0.08) + 's';
       b.setAttribute('aria-pressed', 'false');
-      b.innerHTML = '<span class="avatar">' + m.name[0] + '</span><span class="pname">' + m.name + '<small>' + m.role + '</small></span>';
+      b.innerHTML = '<span class="avatar">' + ((window.KPEOPLE && window.KPEOPLE[m.id]) || m.name[0]) + '</span><span class="pname">' + m.name + '<small>' + m.role + '</small></span>';
       b.addEventListener('click', function () { choose(sel === m.id ? null : m.id); });
       stage.appendChild(b); people[m.id] = b;
     });
@@ -87,12 +87,15 @@
     choose(null);
     // Gentle tour until the visitor interacts
     if (!reduce) {
-      var order = ['arjun', 'meera', 'diya', 'paati', null], k = 0;
+      var order = ['arjun', 'meera', 'nila', 'paati', null], k = 0;
       stage.addEventListener('pointerenter', function () { userPicked = true; });
       Object.keys(people).forEach(function (id) { people[id].addEventListener('click', function () { userPicked = true; }); });
       var tour = setInterval(function () { if (userPicked) { clearInterval(tour); return; } choose(order[k++ % order.length]); }, 2600);
     }
   }
+
+  // ── Faces anywhere: <i class="face" data-p="arjun"> ────────────
+  if (window.KPEOPLE) document.querySelectorAll('.face[data-p]').forEach(function (el) { el.innerHTML = window.KPEOPLE[el.getAttribute('data-p')] || ''; });
 
   // ── Calendar dots ───────────────────────────────────────────────
   var month = document.querySelector('.month');

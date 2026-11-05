@@ -49,7 +49,8 @@
     <div class="stage" role="group" aria-label="A sample family in Kanalyst. Choose a person to see their things.">
       <svg class="lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"></svg>
       <div class="house" aria-hidden="true">
-        <svg viewBox="0 0 64 60"><path d="M6 28 L32 6 L58 28"/><path d="M13 23 V54 H51 V23"/><path d="M27 54 V38 H37 V54"/></svg>
+        <svg viewBox="0 0 64 60"><defs><clipPath id="kh"><path d="M32 3.5 C33.6 3.5 34.6 4.1 35.8 5.1 L59 24.6 C60.4 25.8 61 27 61 28.8 V52 C61 55.3 58.3 58 55 58 H9 C5.7 58 3 55.3 3 52 V28.8 C3 27 3.6 25.8 5 24.6 L28.2 5.1 C29.4 4.1 30.4 3.5 32 3.5 Z"/></clipPath></defs><g clip-path="url(#kh)"><rect width="32" height="31" fill="#2f4577"/><rect x="32" width="32" height="31" fill="#5f7f1f"/><rect x="32" y="31" width="32" height="29" fill="#e3a018"/><rect y="31" width="32" height="29" fill="#964062"/></g><path d="M26 58 V44 C26 40.7 28.7 38 32 38 C35.3 38 38 40.7 38 44 V58 Z" fill="#faf5e8"/></svg>
+
         <span>Our home</span>
       </div>
     </div>
@@ -89,7 +90,7 @@
     <article class="b insurance reveal">
       <h3>Insurance</h3>
       <p>Who's covered. When it renews.</p>
-      <div class="covers"><span><b>₹1.6Cr</b>Arjun</span><span><b>₹60L</b>Meera</span><span><b>₹10L</b>Diya</span><span><b>₹5L</b>Paati</span></div>
+      <div class="covers"><span><b>₹1.6Cr</b><i class="face" data-p="arjun"></i>Arjun</span><span><b>₹60L</b><i class="face" data-p="meera"></i>Meera</span><span><b>₹10L</b><i class="face" data-p="nila"></i>Nila</span><span><b>₹5L</b><i class="face" data-p="paati"></i>Paati</span></div>
     </article>
     <article class="b documents reveal">
       <h3>Documents</h3>
@@ -153,7 +154,7 @@
         <div class="v-blue">
           <div class="lane"><span class="ln">This year</span><div class="bk" style="--p:82"><b>Emergency fund</b><small>₹3L</small><i></i></div><div class="bk emi" style="--p:40"><b>Car EMI</b><small>₹14.5K/mo</small><i></i></div><div class="coin" aria-hidden="true"></div></div>
           <div class="lane"><span class="ln">3 years</span><div class="bk" style="--p:61"><b>New car</b><small>₹9L</small><i></i></div><div class="bk loan" style="--p:55"><b>Car loan</b><small>₹6L left</small><i></i></div></div>
-          <div class="lane"><span class="ln">Later</span><div class="bk ret" style="--p:24"><b>Retirement</b><small>₹4.6Cr</small><i></i></div><div class="bk" style="--p:34"><b>Diya's college</b><small>₹25L</small><i></i></div></div>
+          <div class="lane"><span class="ln">Later</span><div class="bk ret" style="--p:24"><b>Retirement</b><small>₹4.6Cr</small><i></i></div><div class="bk" style="--p:34"><b>Nila's college</b><small>₹25L</small><i></i></div></div>
         </div>
       </div>
       <!-- Retirement -->
@@ -176,8 +177,8 @@
             <span class="k">Needs attention</span>
             <div class="ar over"><b>3d</b><span>Driving licence</span><em>overdue</em></div>
             <div class="ar soon"><b>4d</b><span>Term premium</span><em>₹1.6K</em></div>
-            <div class="ar"><b>6d</b><span>Diya's school fees</span><em>₹48K</em></div>
-            <div class="ar"><b>12d</b><span>Diya turns 8</span><em></em></div>
+            <div class="ar"><b>6d</b><span>Nila's school fees</span><em>₹48K</em></div>
+            <div class="ar"><b>12d</b><span>Nila turns 8</span><em></em></div>
           </div>
           <div class="cov">
             <span class="k">Who is covered</span>
@@ -294,6 +295,7 @@
   <span>© 2026 Kanalyst. Built in India.</span>
 </footer>
 
+<script src="people.js"></script>
 <script src="site.js" defer></script>
 </body>
 </html>
