@@ -41,6 +41,7 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<PublicRoute><Landing /></PublicRoute>} />
+          <Route path="/welcome" element={<Landing />} />
           <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
           <Route path="/signup" element={<PublicRoute><Signup /></PublicRoute>} />
           <Route path="/dashboard" element={<PrivateRoute><Dashboard /></PrivateRoute>} />

@@ -4,7 +4,7 @@
  * Hooks live only in these child components (never inside JSX conditionals).
  */
 import { useEffect, useRef, useState } from 'react';
-import { blueprintAPI } from '../lib/api';
+import { blueprintAPI, householdAPI } from '../lib/api';
 import { dueDate, daysUntil, relTime, attention } from '../blueprint/geom';
 import './DashboardOverview.css';
 
@@ -223,6 +223,49 @@ export function GoalsSnapshot({ hideValues, onOpen }) {
           );
         })}
       </ul>
+    </section>
+  );
+}
+
+// ── Family strip: people, what needs attention, links into Family ───
+const FAM_COLOR = { ink: '#1a1612', mulberry: '#964062', marigold: '#e3a018', teal: '#2d6b6b', prussian: '#2f4577', moss: '#5f7f1f', aubergine: '#5d3b78', terracotta: '#b8551f' };
+const FAM_MOD = { insurance: '#2f4577', documents: '#964062', family: '#e3a018', money: '#5f7f1f', goals: '#5d3b78', loans: '#b8551f' };
+export function FamilyStrip({ onOpen }) {
+  const [ov, setOv] = useState(null);
+  useEffect(() => {
+    let live = true;
+    householdAPI.overview().then(r => { if (live) setOv(r.data); }).catch(() => { if (live) setOv(false); });
+    return () => { live = false; };
+  }, []);
+  if (ov === false) return null;
+  const members = ov?.members || [];
+  const c = ov?.counts || {};
+  const att = (ov?.attention || []).slice(0, 3);
+  return (
+    <section className="ov-fam" aria-label="Family">
+      <div className="ov-fam-left">
+        <div className="ov-fam-k">Family</div>
+        <div className="ov-fam-faces">
+          {members.slice(0, 6).map(m => (
+            <span key={m.id} className="ov-fam-av" style={{ background: FAM_COLOR[m.color] || FAM_COLOR.ink, color: m.color === 'marigold' ? '#1a1612' : '#faf5e8' }} title={m.name}>{(m.name || '?')[0]}</span>
+          ))}
+          <button type="button" className="ov-fam-add" onClick={() => onOpen('people')} aria-label="Add a family member">+</button>
+        </div>
+        <div className="ov-fam-sub">{ov ? `${members.length} ${members.length === 1 ? 'person' : 'people'}, ${c.policies || 0} policies, ${c.documents || 0} documents` : 'Loading…'}</div>
+      </div>
+      <div className="ov-fam-tiles">
+        <button type="button" className="ov-fam-tile t1" onClick={() => onOpen('insurance')}><b>{c.policies ?? '–'}</b><span>Insurance</span></button>
+        <button type="button" className="ov-fam-tile t2" onClick={() => onOpen('documents')}><b>{c.documents ?? '–'}</b><span>{c.overdue ? `Documents, ${c.overdue} overdue` : 'Documents'}</span></button>
+        <button type="button" className="ov-fam-tile t3" onClick={() => onOpen('calendar')}><b>{c.upcoming ?? '–'}</b><span>Dates, next 60 days</span></button>
+      </div>
+      <div className="ov-fam-att">
+        {att.length ? att.map(a => (
+          <button key={`${a.module}${a.ref}${a.date}`} type="button" className="ov-fam-row" style={{ '--c': FAM_MOD[a.module] || '#8a7d6a' }} onClick={() => onOpen(a.module === 'insurance' ? 'insurance' : a.module === 'documents' ? 'documents' : 'calendar')}>
+            <span className="ov-fam-days">{a.days < 0 ? `${-a.days}d late` : a.days === 0 ? 'Today' : `${a.days}d`}</span>
+            <span className="ov-fam-title">{a.title}</span>
+          </button>
+        )) : <button type="button" className="ov-fam-empty" onClick={() => onOpen('home')}>{ov ? 'Add your family, policies and documents to get reminders here' : ' '}</button>}
+      </div>
     </section>
   );
 }
