@@ -415,3 +415,5 @@ router.get('/overview', requireAuth, async (req, res) => {
 
 module.exports = router;
 module.exports._test = { occurrences, yearly, ageOn };
+module.exports.buildCalendar = buildCalendar;
+module.exports.calendarHelpers = { occurrences, ymd, parse, DAY };

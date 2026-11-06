@@ -196,6 +196,18 @@ export const householdAPI = {
   events: crudAPI('/api/household/events'),
 };
 
+export const mastersAPI = {
+  list:    ()            => api.get('/api/masters'),
+  create:  (data)        => api.post('/api/masters', data, { timeout: 45000 }),
+  update:  (id, data)    => api.put(`/api/masters/${id}`, data, { timeout: 45000 }),
+  remove:  (id)          => api.delete(`/api/masters/${id}`),
+  detail:  (id)          => api.get(`/api/masters/${id}/detail`),
+  link:    (id, txnIds)  => api.post(`/api/masters/${id}/link`, { txn_ids: txnIds }),
+  unlink:  (id, txnId)   => api.delete(`/api/masters/${id}/link/${txnId}`),
+  linkRun: ()            => api.post('/api/masters/link-run', {}, { timeout: 45000 }),
+  month:   (month)       => api.get('/api/masters/month', { params: { month }, timeout: 45000 }),
+};
+
 export const blueprintAPI = {
   get:           ()             => api.get('/api/blueprint'),
   assets:        ()             => api.get('/api/blueprint/assets'),

@@ -9,6 +9,7 @@ import ManageExpense from './ManageExpense';
 import RetirementPlanner from './RetirementPlanner';
 import HistoricalSyncPanel from './HistoricalSyncPanel';
 import { NetWorthHero, MoneyTiles, GoalsSnapshot, FamilyStrip, inr } from './DashboardOverview';
+import MoneyCalendar from '../money/MoneyCalendar';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import './Dashboard.css';
 
@@ -1344,6 +1345,7 @@ export default function Dashboard() {
 
                     <NetWorthHero parts={parts} liabilities={owed} hideValues={hideValues} asOf={asOf}
                       onUpdateBalances={() => setShowAssetModal(true)} />
+                    <MoneyCalendar hideValues={hideValues} onOpenMasters={() => nav('/family?tab=masters')} />
                     <FamilyStrip onOpen={(t) => nav(t === 'home' ? '/family' : `/family?tab=${t}`)} />
                     <MoneyTiles income={monthlyIncome} spent={monthlyExpenses} dividends={dividendTotal}
                       yieldPct={s.yieldOnMarket} hideValues={hideValues} />
