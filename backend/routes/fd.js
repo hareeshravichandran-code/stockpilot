@@ -81,13 +81,17 @@ function computeFD(fd, asOfDate = new Date()) {
 
 // ── GET / — list all FDs ──────────────────────────────────────────
 router.get('/', requireAuth, async (req, res) => {
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('fixed_deposits')
     .select('*, goals(id, name, target_date, target_amount)')
     .eq('user_id', req.user.id)
     .order('start_date', { ascending: false });
-
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) {
+    // The goal details are extras: if that lookup fails, still return the deposits
+    console.error(JSON.stringify({ event: 'FIXED_DEPOSITS_LIST_EMBED_ERROR', error: error.message, code: error.code }));
+    ({ data, error } = await supabase.from('fixed_deposits').select('*').eq('user_id', req.user.id).order('start_date', { ascending: false }));
+  }
+  if (error) { console.error(JSON.stringify({ event: 'FIXED_DEPOSITS_LIST_ERROR', error: error.message })); return res.status(500).json({ error: error.message }); }
 
   const enriched = (data || []).map(fd => ({ ...fd, ...computeFD(fd) }));
 
