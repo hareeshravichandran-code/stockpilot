@@ -453,17 +453,18 @@ function parseNSDLMF(text) {
   const SECTION_RE = /Mutual Fund Folios\s*\(F\)\s{0,5}\n?ISIN/;
   const secMatch = SECTION_RE.exec(text);
   if (!secMatch) {
-    console.log(JSON.stringify({ event: 'NSDL_MF_PARSE', found: 0, reason: 'section_not_found' }));
-    return [];
+    // Since Aug-2026 NSDL prints a bilingual (English + Hindi) statement and the old header
+    // no longer matches. Fall back to reading each fund row next to its ISIN.
+    const loose = parseNSDLMFLoose(text);
+    console.log(JSON.stringify({ event: 'NSDL_MF_PARSE', found: loose.length, reason: 'section_not_found', mode: 'loose' }));
+    return loose;
   }
   const sectionStart = secMatch.index;
 
-  let sectionEnd = -1;
-  const END_RE = /18,68,319/g;
-  END_RE.lastIndex = sectionStart;
-  let em;
-  while ((em = END_RE.exec(text)) !== null) sectionEnd = em.index + 30;
-  if (sectionEnd <= sectionStart) sectionEnd = sectionStart + 5000;
+  // Section ends after the last fund ISIN (+ its row); never rely on a fixed total
+  let sectionEnd = sectionStart + 5000;
+  const lastInf = [...text.slice(sectionStart, sectionStart + 20000).matchAll(/INF[A-Z0-9]{9}/g)].pop();
+  if (lastInf) sectionEnd = Math.max(sectionEnd, sectionStart + lastInf.index + 700);
 
   const section = text.slice(sectionStart, sectionEnd);
 
@@ -532,6 +533,49 @@ function parseNSDLMF(text) {
   }));
 
   return mfHoldings;
+}
+
+/**
+ * Layout-tolerant NSDL MF reader: for every fund ISIN, look in the text up to the next ISIN for
+ * "folio units avg-cost invested nav value [gain] [gain%]" allowing any non-numeric noise between.
+ */
+function parseNSDLMFLoose(text) {
+  const out = [];
+  const seen = new Set();
+  const hits = [...text.matchAll(/(?<![A-Z0-9])(INF[A-Z0-9]{9})/g)];
+  const NUM = '(-?[\\d,]+\\.\\d+)';
+  const GAP = '[^\\d-]{0,40}?';
+  const ROW = new RegExp(`(\\d{6,15})${GAP}([\\d,]+\\.\\d{3})${GAP}([\\d,]+\\.\\d{2,4})${GAP}([\\d,]+\\.\\d{2})${GAP}([\\d,]+\\.\\d{2,4})${GAP}([\\d,]+\\.\\d{2})(?:${GAP}${NUM})?(?:${GAP}${NUM})?`);
+  const n = (v) => (v == null ? null : parseFloat(String(v).replace(/,/g, '')));
+  for (let i = 0; i < hits.length; i++) {
+    const isin = hits[i][1];
+    const from = hits[i].index + 12;
+    const to = Math.min(i + 1 < hits.length ? hits[i + 1].index : text.length, from + 900);
+    const m = ROW.exec(text.slice(from, to));
+    if (!m) continue;
+    const row = { folio: m[1], units: n(m[2]), avg: n(m[3]), invested: n(m[4]), nav: n(m[5]), value: n(m[6]), gain: n(m[7]), pct: n(m[8]) };
+    // Sanity: value ≈ units × nav (within 3%), else it's not a fund row
+    if (!(row.units > 0 && row.nav > 0) || Math.abs(row.units * row.nav - row.value) > Math.max(5, row.value * 0.03)) continue;
+    const key = isin + ':' + row.folio;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const known = ISIN_TO_SYMBOL[isin];
+    const printed = text.slice(from, from + m.index).replace(/[^\x20-\x7E]+/g, ' ').replace(/\s+/g, ' ').trim();
+    const fundName = known ? known.company : (printed.length >= 6 && /[A-Za-z]{3}/.test(printed) ? printed.slice(0, 120) : isin);
+    out.push({
+      isin, folio_number: row.folio, fund_name: fundName, fund_house: mfFundHouse(fundName), fund_category: mfCategory(fundName),
+      units: row.units, nav: row.nav, nav_date: null, current_value: row.value,
+      invested_value: row.invested > 0 ? row.invested : null, avg_cost: row.avg, gain_loss: row.gain,
+      gain_loss_pct: row.pct, source: 'NSDL',
+    });
+  }
+  return out;
+}
+
+/** Text around the fund rows, saved to sync_logs when the MF section can't be read, to fix the parser. */
+function mfDebugSnippet(text) {
+  const i = text.search(/Mutual Fund Folios|INF[A-Z0-9]{9}/);
+  return i < 0 ? '' : text.slice(Math.max(0, i - 200), i + 6000);
 }
 
 function detectCASType(text) {
@@ -616,6 +660,7 @@ function parseCAS(text) {
 }
 
 module.exports = {
+  parseNSDLMFLoose, mfDebugSnippet,
   parseCAS,
   parseCDSLCAS,
   parseNSDLCAS,

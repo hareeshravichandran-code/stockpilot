@@ -139,6 +139,7 @@ async function parsePdfWithPasswords(pdfBuffer, passwords = [], filename = '') {
 // Extract text from all parts of an email (body + PDF attachments)
 async function extractEmailContent(gmail, messageId, payload, pdfPasswords = [], userProfile = {}, emailFrom = '', emailSubject = '') {
   let body = '';
+  const links = [];
   let pdfTexts = [];
   let pdfCount = 0;
   let pdfFailed = 0;
@@ -150,6 +151,11 @@ async function extractEmailContent(gmail, messageId, payload, pdfPasswords = [],
       body += Buffer.from(part.body.data, 'base64').toString('utf-8');
     }
 
+    if (mime === 'text/html' && part.body?.data) {
+      // Keep link targets: some statements (CAMS NPS) arrive as a download link, not an attachment
+      const raw = Buffer.from(part.body.data, 'base64').toString('utf-8');
+      for (const m of raw.matchAll(/href\s*=\s*["']([^"']+)["']/gi)) links.push(m[1].replace(/&amp;/g, '&'));
+    }
     if (mime === 'text/html' && part.body?.data && !body) {
       const html = Buffer.from(part.body.data, 'base64').toString('utf-8');
       body += html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
@@ -233,11 +239,12 @@ async function extractEmailContent(gmail, messageId, payload, pdfPasswords = [],
     }
   } else if (payload.body?.data) {
     body = Buffer.from(payload.body.data, 'base64').toString('utf-8');
+    for (const m of body.matchAll(/href\s*=\s*["']([^"']+)["']/gi)) links.push(m[1].replace(/&amp;/g, '&'));
   }
 
   const combinedText = [body, ...pdfTexts].join('\n\n--- PDF ATTACHMENT ---\n\n');
   console.log(JSON.stringify({ event: 'EMAIL_ASSEMBLED', pdfCount, pdfTextsCount: pdfTexts.length, pdfFailed, bodyLen: body?.length || 0, combinedLen: combinedText.length, hasMarker: combinedText.includes('--- PDF ATTACHMENT ---'), pdfPreview: pdfTexts[0]?.slice(0,150) || 'EMPTY' }));
-  return { body: combinedText, hasPdf: pdfCount > 0, pdfFailed };
+  return { body: combinedText, hasPdf: pdfCount > 0, pdfFailed, links };
 }
 
 async function fetchEmails(accessToken, refreshToken, query = '', userProfile = {}, options = {}) {
@@ -293,11 +300,11 @@ async function fetchEmails(accessToken, refreshToken, query = '', userProfile = 
 
       console.log(JSON.stringify({ event: 'EMAIL_PROCESSING', subject, from, date }));
 
-      const { body, hasPdf, pdfFailed } = await extractEmailContent(
+      const { body, hasPdf, pdfFailed, links } = await extractEmailContent(
         gmail, msg.id, detail.data.payload || {}, pdfPasswords, userProfile, from, subject
       );
 
-      emails.push({ id: msg.id, subject, from, date, body, hasPdf, pdfFailed });
+      emails.push({ id: msg.id, subject, from, date, body, hasPdf, pdfFailed, links });
 
     } catch (e) {
       console.error(JSON.stringify({ event: 'EMAIL_FETCH_ERROR', msgId: msg.id, error: e.message }));
@@ -307,4 +314,4 @@ async function fetchEmails(accessToken, refreshToken, query = '', userProfile = 
   return emails;
 }
 
-module.exports = { getAuthUrl, exchangeCode, fetchEmails, generatePdfPasswords };
+module.exports = { getAuthUrl, exchangeCode, fetchEmails, generatePdfPasswords, parsePdfWithPasswords };

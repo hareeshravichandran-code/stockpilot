@@ -253,6 +253,16 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
         mfSample:    mfHoldings.slice(0,3).map(h => `${h.fund_name?.slice(0,30)}:${h.units}u@${h.nav}`),
       }));
 
+      // Funds are in the statement but none could be read: keep the fund area so the parser can be fixed
+      if (!mfHoldings.length && /INF[A-Z0-9]{9}/.test(textToParse)) {
+        try {
+          const { mfDebugSnippet } = require('../services/casParser');
+          await logger._writeLog({ phase: 'cas_mf_debug', status: 'skipped', email_id: email.id || null, email_subject: email.subject,
+            email_from: email.from, email_date: email.date, has_pdf: true, items_found: 0, error_type: 'MF_NOT_READ',
+            error_message: 'Mutual fund rows present but not parsed', raw_text_snippet: mfDebugSnippet(textToParse) });
+        } catch (e) { console.log(JSON.stringify({ event: 'MF_DEBUG_SAVE_FAILED', error: e.message })); }
+      }
+
       // Consider success if we found equity holdings OR SOA MF holdings
       const totalFound = (holdings?.length || 0) + (mfHoldings?.length || 0);
 

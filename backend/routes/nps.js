@@ -27,8 +27,17 @@ router.get('/', requireAuth, async (req, res) => {
   console.log(JSON.stringify({ event: 'NPS_GET', userId: req.user.id, count: (data||[]).length }));
 
   const rows   = data || [];
-  // Enrich latest row with goal info if linked
+  // One row per PRAN (latest statement each). Two accounts (e.g. Protean + CAMS) add up.
+  const byPran = {};
+  for (const r of rows) { const k = r.pran || 'NPS'; if (!byPran[k]) byPran[k] = r; }
+  const accounts = Object.values(byPran);
+  const sumOf = (list, f) => list.reduce((t, r) => t + parseFloat(r[f] || 0), 0);
   let latest = rows[0] || null;
+  if (accounts.length > 1) {
+    latest = { ...accounts[0], pran: accounts.map(a => a.pran).join(' + '),
+      total_value: sumOf(accounts, 'total_value'), total_contributions: sumOf(accounts, 'total_contributions'),
+      notional_gain: sumOf(accounts, 'notional_gain'), statement_to: accounts.map(a => a.statement_to).sort().pop() };
+  }
   if (latest?.goal_id) {
     const { data: goal } = await supabase
       .from('goals').select('id, name, target_date, target_amount')
@@ -36,7 +45,16 @@ router.get('/', requireAuth, async (req, res) => {
     if (goal) latest = { ...latest, goals: goal };
   }
 
-  const history = rows.map(r => ({
+  // History: at each statement date, each account counts with its latest value up to that date
+  const datesAsc = [...new Set(rows.map(r => r.statement_to))].sort();
+  const multi = accounts.length > 1;
+  const history = !multi ? null : datesAsc.map(d => {
+    const at = Object.keys(byPran).map(k => rows.find(r => (r.pran || 'NPS') === k && r.statement_to <= d)).filter(Boolean);
+    return { date: d, email_date: null, total_value: sumOf(at, 'total_value'), total_contributions: sumOf(at, 'total_contributions'),
+      notional_gain: sumOf(at, 'notional_gain'), scheme_e: sumOf(at, 'scheme_e_value'), scheme_c: sumOf(at, 'scheme_c_value'),
+      scheme_g: sumOf(at, 'scheme_g_value'), xirr: null };
+  });
+  const historySingle = rows.map(r => ({
     date:               r.statement_to,
     email_date:         r.email_date || null,
     total_value:        parseFloat(r.total_value || 0),
@@ -47,12 +65,14 @@ router.get('/', requireAuth, async (req, res) => {
     scheme_g:           parseFloat(r.scheme_g_value || 0),
     xirr:               r.xirr,
   })).reverse();
+  const hist = history || historySingle;
 
-  const growthPct = history.length > 1 && history[0].total_value > 0
-    ? (((history[history.length - 1].total_value - history[0].total_value) / history[0].total_value) * 100).toFixed(2)
+  const growthPct = hist.length > 1 && hist[0].total_value > 0
+    ? (((hist[hist.length - 1].total_value - hist[0].total_value) / hist[0].total_value) * 100).toFixed(2)
     : null;
 
-  res.json({ latest, history, count: rows.length, growthPct });
+  res.json({ latest, history: hist, count: rows.length, growthPct,
+    accounts: accounts.map(a => ({ id: a.id, pran: a.pran, cra: a.source === 'cams_link' ? 'CAMS' : 'Protean', statement_to: a.statement_to, total_value: parseFloat(a.total_value || 0) })) });
 });
 
 // ── POST /sync — scan ALL Gmail NPS emails ────────────────────────
@@ -90,7 +110,7 @@ router.post('/sync', requireAuth, async (req, res) => {
 
   const searchAttempts = [
     // Protean CRA (formerly NSDL e-Gov) — main NPS statement sender
-    `from:(protean-tinpan.com OR nps.protean-tinpan.com) ${queryParts.join(' ')}`,
+    `from:(proteantech.in OR protean-tinpan.com OR nps.protean-tinpan.com) ${queryParts.join(' ')}`,
     // Subject-based fallbacks
     `subject:"NPS Transaction Statement" ${queryParts.join(' ')}`,
     `subject:"National Pension System" has:attachment`,
@@ -238,7 +258,7 @@ router.post('/sync', requireAuth, async (req, res) => {
               email_date:          email.date ? new Date(email.date).toISOString().split('T')[0] : null,
               raw_text_snippet:    textToParse.slice(0, 500),
               updated_at:          new Date().toISOString(),
-            }, { onConflict: 'user_id,statement_to' });
+            }, { onConflict: 'user_id,pran,statement_to' });
 
             if (dbErr) {
               console.error(JSON.stringify({ event: 'NPS_DB_ERROR', error: dbErr.message }));
@@ -264,6 +284,50 @@ router.post('/sync', requireAuth, async (req, res) => {
         console.error(JSON.stringify({ event: 'NPS_SEARCH_ERROR', query, error: e.message }));
       }
     }
+
+    // ── CAMS CRA accounts: the monthly statement is a download link (PDF locked with PAN) ──
+    try {
+      const { parsePdfWithPasswords } = require('../services/gmail');
+      const camsMails = await fetchEmails(decrypt(conn.access_token), decrypt(conn.refresh_token),
+        'from:camsnps.com subject:"Transaction Statement"', userProfile || {}, { maxResults: 3 });
+      camsMails.sort((a, b) => new Date(b.date) - new Date(a.date));
+      for (const email of camsMails.slice(0, 2)) {
+        const url = (email.links || []).find(l => /camsnps\.in\/.*statement/i.test(l));
+        if (!url) { console.log(JSON.stringify({ event: 'NPS_CAMS_NO_LINK', subject: email.subject })); continue; }
+        const r = await fetch(url, { redirect: 'follow' });
+        const buf = Buffer.from(await r.arrayBuffer());
+        if (!r.ok || buf.slice(0, 4).toString() !== '%PDF') {
+          await logger.logFailure({ phase: 'nps', emailId: email.id, subject: email.subject, from: email.from, date: email.date,
+            errorType: 'CAMS_LINK', errorMessage: `Statement link gave ${r.status} ${r.headers.get('content-type') || ''} (may have expired)` });
+          continue;
+        }
+        const pans = [userProfile?.pan, userProfile?.pan?.toUpperCase()].filter(Boolean);
+        const { text } = await parsePdfWithPasswords(buf, pans, 'cams-nps.pdf');
+        const pd = text ? parseNPSText(text) : null;
+        if (!pd || !pd.total_value) {
+          await logger._writeLog({ phase: 'nps_cams_debug', status: 'skipped', email_id: email.id, email_subject: email.subject,
+            email_from: email.from, email_date: email.date, has_pdf: true, items_found: 0, error_type: 'CAMS_NOT_READ',
+            error_message: text ? 'CAMS NPS statement opened but not understood' : 'Could not open the CAMS PDF with PAN',
+            raw_text_snippet: (text || '').slice(0, 6000) });
+          errors++;
+          continue;
+        }
+        if (!pd.statement_to) { const d = new Date(email.date); pd.statement_to = new Date(d.getFullYear(), d.getMonth(), 0).toISOString().slice(0, 10); }
+        const { error: e2 } = await supabase.from('nps_holdings').upsert({
+          user_id: userId, pran: pd.pran || 'CAMS', subscriber_name: pd.subscriber_name, registration_date: pd.registration_date,
+          statement_from: pd.statement_from, statement_to: pd.statement_to, cbo_name: pd.cbo_name, tier: pd.tier || 'I',
+          total_value: pd.total_value, total_contributions: pd.total_contributions, total_withdrawals: pd.total_withdrawals || 0,
+          notional_gain: pd.notional_gain, xirr: pd.xirr, num_contributions: pd.num_contributions,
+          scheme_e_value: pd.scheme_e_value, scheme_e_units: pd.scheme_e_units, scheme_e_nav: pd.scheme_e_nav, scheme_e_pct: pd.scheme_e_pct,
+          scheme_c_value: pd.scheme_c_value, scheme_c_units: pd.scheme_c_units, scheme_c_nav: pd.scheme_c_nav, scheme_c_pct: pd.scheme_c_pct,
+          scheme_g_value: pd.scheme_g_value, scheme_g_units: pd.scheme_g_units, scheme_g_nav: pd.scheme_g_nav, scheme_g_pct: pd.scheme_g_pct,
+          source: 'cams_link', email_date: new Date(email.date).toISOString().slice(0, 10), raw_text_snippet: text.slice(0, 500),
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id,pran,statement_to' });
+        if (e2) { errors++; console.error(JSON.stringify({ event: 'NPS_CAMS_DB_ERROR', error: e2.message })); }
+        else { saved++; parsed++; await logger.logSuccess({ phase: 'nps', emailId: email.id, subject: email.subject, from: email.from, date: email.date, hasPdf: true, itemsFound: 1, parsedData: [{ pran: pd.pran, date: pd.statement_to, value: pd.total_value }] }); break; }
+      }
+    } catch (e) { console.error(JSON.stringify({ event: 'NPS_CAMS_ERROR', error: e.message })); }
 
     console.log(JSON.stringify({ event: 'NPS_SYNC_COMPLETE', emailsFound, parsed, saved, errors }));
     await logger.finishSession({ emailsFound, parsed, saved, errors });
