@@ -181,6 +181,7 @@ export default function MoneyCalendar({ hideValues, onOpenMasters, onOpenEvents,
           <div className="mc-foot-h">
             <span>{isNow ? 'Coming up' : 'Expected this month'}</span>
             <span className="mc-foot-links">
+              <a className="mc-link" href="/money-flow">Money flow ›</a>
               {onOpenEvents && <button type="button" className="mc-link" onClick={onOpenEvents}>Events & alerts ›</button>}
               {onOpenMasters && <button type="button" className="mc-link" onClick={onOpenMasters}>Masters ›</button>}
             </span>

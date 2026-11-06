@@ -252,6 +252,35 @@ async function incomeInflows(userId, incomeBuckets) {
 //  or the same renewal month) is linked instead of creating a duplicate. Runs once per policy.
 // ═══════════════════════════════════════════════════════════════════
 const POLICY_WORDS = { health: /health|medical|mediclaim|family floater/i, term: /term|life/i, life: /life|term|endow|lic/i };
+/**
+ * Every Blueprint has a "Monthly expenses" goal tied to the Money flow module: it shows the expected
+ * monthly spend (average of the last 3 months) and what has actually been spent this month.
+ * An existing goal named like it is adopted; otherwise one is created once.
+ */
+async function ensureExpenseGoal(uid, buckets) {
+  if (buckets.some(b => b.special_kind === 'monthly_expense')) return;
+  const { data: flag } = await supabase.from('users').select('bp_expense_goal').eq('id', uid).maybeSingle();
+  if (flag?.bp_expense_goal) return;                                   // created once already (user may have deleted it)
+  const mark = () => supabase.from('users').update({ bp_expense_goal: true }).eq('id', uid);
+  const existing = buckets.find(b => b.kind === 'goal' && !b.special_kind && /month(ly)?\s*(house(hold)?\s*)?expens|household expens|living expens/i.test(b.name || ''));
+  if (existing) {
+    await supabase.from('bp_buckets').update({ special_kind: 'monthly_expense', updated_at: new Date().toISOString() }).eq('id', existing.id);
+    existing.special_kind = 'monthly_expense';
+    await mark();
+    return;
+  }
+  const { data: ly } = await supabase.from('bp_layers').select('id, board_id').eq('user_id', uid).order('sort_order').limit(1);
+  if (!ly || !ly.length) return;
+  const inLayer = buckets.filter(b => b.layer_id === ly[0].id);
+  const x = inLayer.reduce((mx, b) => Math.max(mx, num(b.x) + num(b.w || 200)), 0) + 20;
+  const { data: nb } = await supabase.from('bp_buckets').insert({
+    user_id: uid, board_id: ly[0].board_id, layer_id: ly[0].id, kind: 'goal', name: 'Monthly expenses', special_kind: 'monthly_expense',
+    target_amount: 0, recurrence: 'monthly', recurrence_day: 1, x, y: 16, w: 200, h: 112, status: 'active',
+  }).select().single();
+  if (nb) buckets.push(nb);
+  await mark();
+}
+
 async function linkPolicies(uid, buckets) {
   const { data: pols } = await supabase.from('insurance_policies').select('id, kind, insurer, plan_name, premium, premium_frequency, renewal_date, bp_auto, status')
     .eq('owner_id', uid).eq('status', 'active').in('kind', ['health', 'term', 'life']).not('bp_auto', 'is', true);
@@ -348,6 +377,14 @@ router.get('/', requireAuth, async (req, res) => {
 
     const buckets = kRes.data || [];
     await linkPolicies(uid, buckets).catch(e => console.error(JSON.stringify({ event: 'BP_POLICY_LINK_ERROR', error: e.message })));
+    await ensureExpenseGoal(uid, buckets).catch(e => console.error(JSON.stringify({ event: 'BP_EXPENSE_GOAL_ERROR', error: e.message })));
+    let flow = null;
+    if (buckets.some(b => b.special_kind === 'monthly_expense')) {
+      const mo = new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 7);
+      const f = await require('../services/moneyflow').monthFlow(uid, mo, { light: true }).catch(() => null);
+      if (f) flow = { month: mo, expected: f.totals.expense.expected, actual: f.totals.expense.actual, basis: f.expected_basis,
+        top: f.sections.expense.groups.slice(0, 3).map(g => ({ name: g.name, actual: g.actual })) };
+    }
     const policyIds = [...new Set(buckets.map(b => b.policy_id).filter(Boolean))];
     const { data: polRows } = policyIds.length
       ? await supabase.from('insurance_policies').select('id, kind, insurer, plan_name, premium, premium_frequency, renewal_date, alert_level').in('id', policyIds)
@@ -367,6 +404,7 @@ router.get('/', requireAuth, async (req, res) => {
         current_value: current,
         progress: target > 0 ? Math.round(Math.min(999, (current / target) * 100) * 10) / 10 : 0,
         inflow: inflows[b.id] || null,
+        flow: b.special_kind === 'monthly_expense' ? flow : undefined,
         policy: (() => {
           const p = polById[b.policy_id];
           if (!p) return null;

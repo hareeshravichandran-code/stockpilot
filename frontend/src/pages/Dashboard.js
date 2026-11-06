@@ -1144,6 +1144,10 @@ export default function Dashboard() {
             <span className="nav-icon">▦</span>
             <span className="nav-label">Blueprint ↗</span>
           </div>
+          <div className="db-nav-item" onClick={()=>nav('/money-flow')} title="Money flow: income, spending and investments vs your usual month">
+            <span className="nav-icon">⇅</span>
+            <span className="nav-label">Money flow ↗</span>
+          </div>
           <div className="db-nav-label" style={{marginTop:12}}>Analytics</div>
           {[
             {id:'tax',   icon:'⊞', label:'Tax Summary'},

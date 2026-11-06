@@ -65,7 +65,7 @@
 /* Coming up */
 .mc-foot { margin-top: 12px; padding-top: 12px; border-top: 1px dashed #e3dac6; }
 .mc-foot-h { display: flex; justify-content: space-between; align-items: center; font-size: 12px; font-weight: 700; color: #6f6250; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 8px; }
-.mc-link { border: 0; background: none; font: inherit; font-size: 13px; text-transform: none; letter-spacing: 0; font-weight: 600; color: #1a1612; cursor: pointer; }
+.mc-link { text-decoration: none; border: 0; background: none; font: inherit; font-size: 13px; text-transform: none; letter-spacing: 0; font-weight: 600; color: #1a1612; cursor: pointer; }
 .mc-up-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
 .mc-card { display: flex; align-items: center; gap: 10px; text-align: left; border: 1px solid #e8dfca; background: #fff8ea; border-left: 4px solid var(--c); border-radius: 12px; padding: 8px 10px; cursor: pointer; font: inherit; color: inherit; min-width: 0; }
 .mc-card:hover { background: #fffbf2; }

@@ -212,6 +212,10 @@ export const mastersAPI = {
   removeEvent: (id)       => api.delete(`/api/masters/events/${encodeURIComponent(id)}`),
 };
 
+export const moneyflowAPI = {
+  get: (month) => api.get('/api/moneyflow', { params: { month }, timeout: 45000 }),
+};
+
 export const blueprintAPI = {
   get:           ()             => api.get('/api/blueprint'),
   assets:        ()             => api.get('/api/blueprint/assets'),

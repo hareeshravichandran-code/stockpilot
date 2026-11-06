@@ -42,9 +42,17 @@ async function salaryOf(uid) {
   const c = summarise(cat || [], 'category');
   if (c) return c;
 
-  const { data: credits } = await supabase.from('expense_transactions').select('amount, date_time, merchant, sms_sender, payment_type')
+  const { data: credits } = await supabase.from('expense_transactions').select('id, amount, date_time, merchant, sms_sender, payment_type, type')
     .eq('user_id', uid).eq('is_deleted', false).eq('type', 'CREDIT').gte('amount', 15000).gte('date_time', since);
-  const cand = (credits || []).filter(t => {
+  const rows = detectSalaryRows(credits || []);
+  return rows.length ? summarise(rows, 'detected') : null;
+}
+
+/** The month-end salary stream among credit rows (needs id, amount, date_time, sms_sender, payment_type). */
+function detectSalaryRows(credits) {
+  const cand = credits.filter(t => {
+    if (t.type && t.type !== 'CREDIT') return false;
+    if (num(t.amount) < 15000) return false;
     const day = +ist(t.date_time).slice(8, 10);
     return /NEFT|RTGS|IMPS|BANK_TRANSFER/.test(t.payment_type || '') && (day >= 24 || day <= 3);
   });
@@ -68,7 +76,7 @@ async function salaryOf(uid) {
     const score = steady.length * Math.log10(median);
     if (steady.length >= 3 && (!best || score > best.score)) best = { score, rows: steady };
   }
-  return best ? summarise(best.rows, 'detected') : null;
+  return best ? best.rows : [];
 }
 
-module.exports = { salaryOf };
+module.exports = { salaryOf, detectSalaryRows };

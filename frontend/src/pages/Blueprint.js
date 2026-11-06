@@ -965,15 +965,27 @@ function BucketCard({ bucket: b, rect, selected, dragging, linkTarget, external,
 
   return (
     <div data-bucket-id={b.id}
-      className={`bp-bucket goal tone-${tone} ${b.is_loan ? 'loan' : ''} ${b.is_emi ? 'emi' : ''} ${leaving ? 'leaving' : ''} ${hex ? 'colored' : ''} ${att ? `att-${att}` : ''} ${selected ? 'selected' : ''} ${dragging ? 'dragging' : ''} ${done ? 'done' : ''} ${external ? 'external' : ''} ${linkTarget ? 'link-target' : ''}`}
+      className={`bp-bucket goal tone-${tone} ${b.special_kind === 'monthly_expense' && b.flow ? 'flow-goal' : ''} ${b.is_loan ? 'loan' : ''} ${b.is_emi ? 'emi' : ''} ${leaving ? 'leaving' : ''} ${hex ? 'colored' : ''} ${att ? `att-${att}` : ''} ${selected ? 'selected' : ''} ${dragging ? 'dragging' : ''} ${done ? 'done' : ''} ${external ? 'external' : ''} ${linkTarget ? 'link-target' : ''}`}
       style={style} onPointerDown={onDown}>
       <div className="bp-bucket-top">
         <span className="bp-bucket-name" title={b.name}>{done && '✓ '}{b.name}</span>
         {b.special_kind === 'retirement' ? <span className="bp-rec ret" title="Target comes from the Retirement plan">Retire</span>
+          : b.special_kind === 'monthly_expense' ? <span className="bp-rec flow" title="Linked to Money flow">Flow</span>
           : b.is_loan ? <span className="bp-rec loan">Loan</span>
           : b.is_emi ? <span className="bp-rec emi" title={scheduleText(b)}>EMI</span>
           : b.recurrence !== 'none' && <span className="bp-rec" title={scheduleText(b)}>↻ {b.recurrence === 'weekly' ? 'Wk' : b.recurrence === 'monthly' ? 'Mo' : 'Yr'}</span>}
       </div>
+      {b.special_kind === 'monthly_expense' && b.flow ? (() => {
+        const exp = num(b.flow.expected) || target, act = num(b.flow.actual);
+        const p = exp > 0 ? Math.min(140, (act / exp) * 100) : 0;
+        return (
+          <div className="bp-flow" title={`${b.flow.basis}. Top: ${(b.flow.top || []).map(t => `${t.name} ${fmtINR(t.actual)}`).join(', ')}`}>
+            <div className="bp-flow-row"><span>Spent this month</span><b className={act > exp && exp > 0 ? 'over' : ''}>{fmtINR(act)}</b></div>
+            <div className="bp-flow-bar"><i style={{ width: `${Math.min(100, p)}%` }} className={p > 100 ? 'over' : ''} /></div>
+            <div className="bp-flow-row sub"><span>Usual ~{fmtINR(exp)}/mo</span><span>{exp > 0 ? `${Math.round(p)}%` : ''}</span></div>
+          </div>
+        );
+      })() : (
       <div className="bp-money">
         <div className="bp-money-main">
           {target > 0
@@ -990,6 +1002,7 @@ function BucketCard({ bucket: b, rect, selected, dragging, linkTarget, external,
           </svg>
         )}
       </div>
+      )}
       {b.policy && (
         <div className={`bp-policy-in lv-${b.policy.level}${b.policy.blink ? ' blink' : ''}`}
           title={`${b.policy.insurer || 'Insurance'} ${b.policy.kind} policy · premium ${fmtINR(b.policy.premium, { compact: false })}${b.policy.due ? ' due ' + b.policy.due : ''}`}>

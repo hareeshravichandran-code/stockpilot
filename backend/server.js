@@ -72,6 +72,7 @@ app.use('/api/blueprint', blueprintRoutes);
 app.use('/api/retirement', retirementRoutes);
 app.use('/api/household', householdRoutes);
 app.use('/api/masters', mastersRoutes);
+app.use('/api/moneyflow', require('./routes/moneyflow'));
 
 // ── Health check ──
 // Debug endpoint - check PDF tools
