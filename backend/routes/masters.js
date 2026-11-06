@@ -48,7 +48,7 @@ function refKey(s) {
 /** Masked refs can be shorter: "56" matches "6756". */
 const refMatch = (a, b) => !!a && !!b && (a === b || (Math.min(a.length, b.length) >= 2 && (a.endsWith(b) || b.endsWith(a))));
 
-const cleanSubtype = (f) => (SUBTYPES[f.kind] || []).includes(f.subtype) ? f.subtype : null;
+const cleanSubtype = (f) => { const st = f.subtype ?? f.meta?.subtype; return (SUBTYPES[f.kind] || []).includes(st) ? st : null; };
 function cleanMatch(m) {
   if (!m || typeof m !== 'object') return {};
   const kw = (Array.isArray(m.keywords) ? m.keywords : String(m.keywords || '').split(','))
@@ -225,6 +225,31 @@ router.post('/apply', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Bank balances read on the phone from the latest SMS of each account → the account's master (meta.balance)
+router.post('/balances', requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.id;
+    const list = (Array.isArray(req.body?.accounts) ? req.body.accounts : []).slice(0, 30);
+    const { data: accts } = await supabase.from('money_masters').select('id, institution, inst_key, ref_key, meta').eq('owner_id', uid).eq('kind', 'bank_account');
+    let updated = 0, created = 0;
+    for (const a of list) {
+      const bal = num(a.balance); const rk = refKey(a.last4); const ik = instKey(a.bank);
+      if (bal == null || !rk || !isDate(a.as_of)) continue;
+      const hit = (accts || []).find(m => refMatch(m.ref_key, rk) && (!ik || !m.inst_key || m.inst_key.startsWith(ik.slice(0, 4)) || ik.startsWith((m.inst_key || '').slice(0, 4))));
+      if (hit) {
+        if (hit.meta?.balance_at && hit.meta.balance_at > a.as_of) continue;           // keep the newer reading
+        await supabase.from('money_masters').update({ meta: { ...(hit.meta || {}), balance: bal, balance_at: a.as_of }, updated_at: nowIso() }).eq('id', hit.id);
+        updated++;
+      } else {
+        const { error } = await supabase.from('money_masters').insert({ owner_id: uid, kind: 'bank_account', institution: str(a.bank), inst_key: ik, ref: rk, ref_key: rk,
+          title: `${str(a.bank) || 'Bank'} ••${rk}`, frequency: 'irregular', meta: { balance: bal, balance_at: a.as_of }, source: 'sms_balance', status: 'active' });
+        if (!error) created++;
+      }
+    }
+    res.json({ ok: true, updated, created });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 router.post('/events/:id/paid', requireAuth, async (req, res) => {
   try {
     const { data: ev } = await supabase.from('recurring_events').select('id').eq('id', req.params.id).eq('owner_id', req.user.id).maybeSingle();
@@ -263,6 +288,12 @@ function matches(m, t) {
   const amtOk = () => m.match?.any_amount || !num(m.amount) || Math.abs(num(t.amount) - num(m.amount)) <= Math.max(2, num(m.amount) * 0.15);
   if (m.match?.sender && t.sms_sender && !String(t.sms_sender).toUpperCase().includes(m.match.sender)) return false;
   if (kw.length) return kw.some(k => text.includes(k)) && amtOk();
+  // A fixed payment with no name in its SMS (e.g. an EMI by NACH): same bank, same amount (±1%)
+  if (m.meta && (m.meta.fixed === '1' || m.meta.fixed === true)) {
+    const bankWords = (m.institution || '').toLowerCase().split(/\s+/).filter(w => w.length > 2 && !['bank', 'ltd', 'limited', 'your'].includes(w));
+    const sameBank = !bankWords.length || bankWords.some(w => String(t.bank_name || '').toLowerCase().includes(w) || String(t.sms_sender || '').toLowerCase().includes(w.slice(0, 4)));
+    return sameBank && num(m.amount) > 0 && Math.abs(num(t.amount) - num(m.amount)) <= num(m.amount) * 0.01;
+  }
   const inst = (m.institution || '').toLowerCase().split(/\s+/).filter(w => w.length > 2 && !['bank', 'ltd', 'limited', 'mutual', 'fund', 'india'].includes(w));
   const hasInst = inst.length && inst.some(w => text.includes(w));
   const ref = m.ref_key && m.ref_key.length >= 2 ? m.ref_key : null;
@@ -308,7 +339,7 @@ async function linkActuals(uid, { force = false } = {}) {
   const [{ data: masters }, { data: events }, { data: txns }] = await Promise.all([
     supabase.from('money_masters').select('*').eq('owner_id', uid).eq('status', 'active'),
     supabase.from('recurring_events').select('*').eq('owner_id', uid).eq('master_table', 'money_masters'),
-    supabase.from('expense_transactions').select('id, amount, type, merchant, description, sms_body, sms_sender, date_time, category_id, master_id')
+    supabase.from('expense_transactions').select('id, amount, type, merchant, description, sms_body, sms_sender, bank_name, date_time, category_id, master_id')
       .eq('user_id', uid).eq('is_deleted', false).gte('date_time', since).order('date_time', { ascending: true }).range(0, 4999),
   ]);
   const ms = (masters || []).filter(m => m.kind !== 'bank_account');

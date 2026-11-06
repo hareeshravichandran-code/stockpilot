@@ -200,7 +200,7 @@ export default function Masters({ notify, go }) {
             return (
               <button key={m.id} type="button" className={`fm-card${m.status === 'closed' ? ' closed' : ''}`} style={{ '--c': kindOf(vk).c }} onClick={() => setDetail(m.id)}>
                 <span className="fm-ic"><KindIcon kind={vk} size={20} color="#faf5e8" /></span>
-                <span className="fm-main"><b>{m.title}</b><small>{kindOf(vk).label}{m.institution && m.institution !== m.title ? ` · ${m.institution}` : ''}{m.ref ? ` ••${m.ref}` : ''}</small><small>{whenText(m)}</small>{m.kind === 'sip' && m.linked_id && <small className="fm-folio">↻ {folios.find(f => f.id === String(m.linked_id))?.fund_name || 'Folio linked'}</small>}</span>
+                <span className="fm-main"><b>{m.title}</b><small>{kindOf(vk).label}{m.institution && m.institution !== m.title ? ` · ${m.institution}` : ''}{m.ref ? ` ••${m.ref}` : ''}</small><small>{m.kind === 'bank_account' && m.meta?.balance != null ? <>Balance <b className="fm-bal">{inrShort(m.meta.balance)}</b> · {fmtDate(m.meta.balance_at)}</> : whenText(m)}</small>{m.kind === 'sip' && m.linked_id && <small className="fm-folio">↻ {folios.find(f => f.id === String(m.linked_id))?.fund_name || 'Folio linked'}</small>}</span>
                 <span className={`fm-amt${m.kind === 'income' ? ' in' : ''}`}>{m.amount ? inrShort(m.amount) : ''}</span>
                 {m.source === 'discover' && <span className="fm-src">from SMS</span>}
               </button>);

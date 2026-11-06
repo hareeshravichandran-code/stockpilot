@@ -397,3 +397,4 @@ textarea.fo-in { resize: vertical; }
 @keyframes ev-blink { from { opacity: 1; } to { opacity: .4; } }
 @media (prefers-reduced-motion: reduce) { .ev-card.blink .ev-ic, .ev-now i { animation: none; } }
 @media (max-width: 640px) { .ev-grid { grid-template-columns: 1fr; } .ev-now { margin-left: 0; } }
+.fm-bal { color: #2d6b6b; font-weight: 700; }
