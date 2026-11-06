@@ -71,17 +71,51 @@ function nextDue(freq, day, month, start) {
 }
 
 // ── Read ────────────────────────────────────────────────────────────
+// ── SIP ↔ mutual fund folio ─────────────────────────────────────────
+const FUND_STOP = new Set(['fund', 'plan', 'direct', 'regular', 'growth', 'option', 'idcw', 'dividend', 'mutual', 'the', 'and', 'india',
+  'scheme', 'reinvestment', 'payout', 'sip', 'ltd', 'limited', 'asset', 'management', 'company', 'amc']);
+const fundWords = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(w => w.length > 2 && !FUND_STOP.has(w));
+function folioScore(m, h) {
+  const rk = m.ref_key, fol = String(h.folio_number || '').replace(/\D/g, '');
+  if (rk && rk.length >= 2 && fol && fol.endsWith(rk)) return 10;
+  const want = new Set([...fundWords(m.title), ...fundWords(m.institution)]);
+  return [...new Set(fundWords(`${h.fund_name || ''} ${h.fund_house || ''}`))].filter(w => want.has(w)).length;
+}
+const monthlyOf = (amount, freq) => num(amount) / ({ quarterly: 3, half_yearly: 6, yearly: 12 }[freq] || 1);
+
+/** Tie each SIP master to its folio (by folio digits, else by fund name) when it isn't tied yet. */
+async function linkFolios(uid) {
+  const [{ data: ms }, { data: hs }] = await Promise.all([
+    supabase.from('money_masters').select('id, title, institution, ref_key, linked_id').eq('owner_id', uid).eq('kind', 'sip').eq('status', 'active'),
+    supabase.from('mf_holdings').select('id, fund_name, fund_house, folio_number').eq('user_id', uid),
+  ]);
+  let n = 0;
+  for (const m of ms || []) {
+    if (m.linked_id || !(hs || []).length) continue;
+    const scored = hs.map(h => ({ h, s: folioScore(m, h) })).sort((a, b) => b.s - a.s);
+    const best = scored[0];
+    if (!best || best.s < 2) continue;
+    if (best.s < 10 && scored[1] && scored[1].s === best.s) continue;          // two funds look the same: let the user pick
+    await supabase.from('money_masters').update({ linked_table: 'mf_holdings', linked_id: String(best.h.id), updated_at: nowIso() }).eq('id', m.id);
+    n++;
+  }
+  return n;
+}
+
 router.get('/', requireAuth, async (req, res) => {
   try {
     const uid = req.user.id;
-    const [m, e, p, r] = await Promise.all([
+    await linkFolios(uid).catch(() => {});
+    const [m, e, p, r, f] = await Promise.all([
       supabase.from('money_masters').select('*').eq('owner_id', uid).order('created_at'),
       supabase.from('recurring_events').select('*').eq('owner_id', uid).order('created_at'),
       supabase.from('insurance_policies').select('id, kind, insurer, plan_name, policy_ref, premium, premium_frequency, renewal_date, status').eq('owner_id', uid),
       supabase.from('recurring_deposits').select('rd_id, institution_name, nickname, account_reference, monthly_installment, start_date').eq('user_id', uid),
+      supabase.from('mf_holdings').select('id, fund_name, folio_number, current_value').eq('user_id', uid),
     ]);
     if (m.error) throw m.error;
-    res.json({ masters: m.data || [], events: e.data || [], policies: p.data || [], rds: r.data || [] });
+    const folios = (f.data || []).map(h => ({ id: String(h.id), fund_name: h.fund_name, folio_number: h.folio_number, current_value: num(h.current_value) }));
+    res.json({ masters: m.data || [], events: e.data || [], policies: p.data || [], rds: r.data || [], folios });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -332,8 +366,14 @@ router.post('/', requireAuth, async (req, res) => {
     }
     const { data: fresh } = await supabase.from('money_masters').select('*').eq('id', r.id).maybeSingle();
     const eventId = f.event === false ? null : await syncEvent(req.user.id, fresh);
+    if (fresh?.kind === 'sip') {
+      if (f.linked_id) await supabase.from('mf_holdings').select('id').eq('id', f.linked_id).eq('user_id', req.user.id).maybeSingle()
+        .then(({ data: h }) => h && supabase.from('money_masters').update({ linked_table: 'mf_holdings', linked_id: String(h.id) }).eq('id', fresh.id));
+      else await linkFolios(req.user.id).catch(() => {});
+    }
+    const { data: latest } = await supabase.from('money_masters').select('*').eq('id', r.id).maybeSingle();
     const link = await linkActuals(req.user.id, { force: true });
-    res.json({ master: fresh, status: r.status, event_id: eventId, ...link });
+    res.json({ master: latest || fresh, status: r.status, event_id: eventId, ...link });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -354,6 +394,14 @@ router.put('/:id', requireAuth, async (req, res) => {
     if (b.match !== undefined) patch.match = cleanMatch(b.match);
     if (['active', 'closed'].includes(b.status)) patch.status = b.status;
     if (b.end_date !== undefined) patch.end_date = isDate(b.end_date) ? b.end_date : null;
+    if (b.linked_id !== undefined && m.kind === 'sip') {
+      if (!b.linked_id) { patch.linked_table = null; patch.linked_id = null; }
+      else {
+        const { data: h } = await supabase.from('mf_holdings').select('id').eq('id', b.linked_id).eq('user_id', uid).maybeSingle();
+        if (!h) return res.status(400).json({ error: 'That folio was not found in your mutual funds' });
+        patch.linked_table = 'mf_holdings'; patch.linked_id = String(h.id);
+      }
+    }
     const { data: fresh, error } = await supabase.from('money_masters').update(patch).eq('id', m.id).select().single();
     if (error) throw error;
     await syncEvent(uid, fresh);
@@ -503,5 +551,5 @@ router.delete('/:id', requireAuth, async (req, res) => {
 });
 
 module.exports = router;
-module.exports._test = { instKey, refKey, refMatch, nextDue, matches, nearestPeriod, defaultEvent, FLOW_KIND };
+module.exports._test = { folioScore, monthlyOf, fundWords, instKey, refKey, refMatch, nextDue, matches, nearestPeriod, defaultEvent, FLOW_KIND };
 module.exports.linkActuals = linkActuals;

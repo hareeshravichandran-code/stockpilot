@@ -28,11 +28,12 @@ const whenText = (m) => m.frequency === 'irregular' ? 'No fixed date'
   : m.frequency === 'monthly' ? (m.due_day ? `Every month on the ${ord(m.due_day)}` : 'Every month')
   : `${FREQ.find(f => f[0] === m.frequency)?.[1] || ''}${m.due_month ? ` · ${MONTHS[m.due_month - 1]}` : ''}${m.due_day ? ` ${m.due_day}` : ''}`;
 
-function MasterForm({ master, kind0, onClose, onSaved, notify }) {
+function MasterForm({ master, kind0, folios = [], onClose, onSaved, notify }) {
   const [d, setD] = useState({
     kind: master?.kind || kind0 || 'loan', subtype: master?.subtype || '', title: master?.title || '', institution: master?.institution || '',
     ref: master?.ref || '', amount: master?.amount ?? '', frequency: master?.frequency || 'monthly', due_day: master?.due_day ?? '',
     due_month: master?.due_month ?? '', keywords: (master?.match?.keywords || []).join(', '), any_amount: !!master?.match?.any_amount,
+    linked_id: master?.linked_table === 'mf_holdings' ? master.linked_id || '' : '',
   });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -48,6 +49,7 @@ function MasterForm({ master, kind0, onClose, onSaved, notify }) {
       ref: d.ref.trim() || null, amount: d.amount === '' ? null : +d.amount, frequency: d.frequency,
       due_day: d.due_day === '' ? null : +d.due_day, due_month: d.due_month === '' ? null : +d.due_month,
       match: { keywords: d.keywords, any_amount: d.any_amount },
+      ...(d.kind === 'sip' ? { linked_id: d.linked_id || null } : {}),
     };
     try {
       const r = master ? await mastersAPI.update(master.id, body) : await mastersAPI.create(body);
@@ -88,6 +90,11 @@ function MasterForm({ master, kind0, onClose, onSaved, notify }) {
           <input className="fo-in" value={d.institution} onChange={set('institution')} maxLength={80} placeholder="As it appears in SMS" /></Field>
         {['loan', 'card', 'sip', 'rd', 'bank_account'].includes(d.kind) && <Field label={d.kind === 'sip' ? 'Folio (last digits)' : 'Account / card (last 4)'}>
           <input className="fo-in" value={d.ref} onChange={set('ref')} maxLength={20} placeholder="e.g. 4521" /></Field>}
+        {d.kind === 'sip' && <Field label="Mutual fund folio" wide hint={folios.length ? 'The SIP\'s money flows into this folio, and into the Blueprint goal that holds it. Left empty, Kanalyst picks it by folio digits or fund name.' : 'Import your CAS in Mutual Funds to pick the folio this SIP buys into.'}>
+          <select className="fo-in" value={d.linked_id} onChange={set('linked_id')} disabled={!folios.length}>
+            <option value="">{folios.length ? 'Pick automatically' : 'No folios yet'}</option>
+            {folios.map(f => <option key={f.id} value={f.id}>{f.fund_name}{f.folio_number ? ` · ${f.folio_number}` : ''}</option>)}
+          </select></Field>}
         {d.kind !== 'bank_account' && <Field label={d.kind === 'card' ? 'Typical bill' : 'Amount'}><input className="fo-in" type="number" min={0} value={d.amount} onChange={set('amount')} placeholder="₹" /></Field>}
         {d.kind !== 'bank_account' && <Field label="How often"><select className="fo-in" value={d.frequency} onChange={set('frequency')}>{FREQ.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field>}
         {d.kind !== 'bank_account' && d.frequency !== 'irregular' && <Field label={d.kind === 'card' ? 'Bill due day' : d.kind === 'income' ? 'Usually arrives on day' : 'Due day of month'}>
@@ -103,7 +110,7 @@ function MasterForm({ master, kind0, onClose, onSaved, notify }) {
   );
 }
 
-function MasterDetail({ id, onClose, onEdit, notify, onChanged }) {
+function MasterDetail({ id, folios = [], onClose, onEdit, notify, onChanged }) {
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
   const load = useCallback(async () => {
@@ -129,6 +136,7 @@ function MasterDetail({ id, onClose, onEdit, notify, onChanged }) {
           <div><div className="fm-d-amt">{m.amount ? inrShort(m.amount) : '—'}</div><div className="fm-d-sub">{whenText(m)}{m.institution ? ` · ${m.institution}` : ''}{m.ref ? ` ••${m.ref}` : ''}</div></div>
           {d.next_due && <div className="fm-d-next"><small>Next expected</small><b>{fmtDate(d.next_due)}</b></div>}
         </div>
+        {m.kind === 'sip' && <div className="fm-none">{m.linked_id ? <>Buys into <b>{folios.find(f => f.id === String(m.linked_id))?.fund_name || 'a linked folio'}</b>. Its monthly amount shows on the Blueprint goal that holds this folio.</> : 'Not tied to a folio yet. Edit to pick one.'}</div>}
         <div className="fm-sec">Event · last 12 months</div>
         <div className="fm-months">{months.map(x => {
           const key = `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}`;
@@ -150,12 +158,13 @@ function MasterDetail({ id, onClose, onEdit, notify, onChanged }) {
 
 export default function Masters({ notify, go }) {
   const [list, setList] = useState(null);
+  const [folios, setFolios] = useState([]);
   const [err, setErr] = useState('');
   const [tab, setTab] = useState('all');
   const [form, setForm] = useState(null);       // { master } | { kind }
   const [detail, setDetail] = useState(null);
   const load = useCallback(async () => {
-    try { const r = await mastersAPI.list(); setList(r.data.masters || []); setErr(''); }
+    try { const r = await mastersAPI.list(); setList(r.data.masters || []); setFolios(r.data.folios || []); setErr(''); }
     catch (e) { setErr(errMsg(e)); setList([]); }
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -191,13 +200,13 @@ export default function Masters({ notify, go }) {
             return (
               <button key={m.id} type="button" className={`fm-card${m.status === 'closed' ? ' closed' : ''}`} style={{ '--c': kindOf(vk).c }} onClick={() => setDetail(m.id)}>
                 <span className="fm-ic"><KindIcon kind={vk} size={20} color="#faf5e8" /></span>
-                <span className="fm-main"><b>{m.title}</b><small>{kindOf(vk).label}{m.institution && m.institution !== m.title ? ` · ${m.institution}` : ''}{m.ref ? ` ••${m.ref}` : ''}</small><small>{whenText(m)}</small></span>
+                <span className="fm-main"><b>{m.title}</b><small>{kindOf(vk).label}{m.institution && m.institution !== m.title ? ` · ${m.institution}` : ''}{m.ref ? ` ••${m.ref}` : ''}</small><small>{whenText(m)}</small>{m.kind === 'sip' && m.linked_id && <small className="fm-folio">↻ {folios.find(f => f.id === String(m.linked_id))?.fund_name || 'Folio linked'}</small>}</span>
                 <span className={`fm-amt${m.kind === 'income' ? ' in' : ''}`}>{m.amount ? inrShort(m.amount) : ''}</span>
                 {m.source === 'discover' && <span className="fm-src">from SMS</span>}
               </button>);
           })}</div>}
-      {form && <MasterForm master={form.master} kind0={form.kind} onClose={() => setForm(null)} onSaved={load} notify={notify} />}
-      {detail && <MasterDetail id={detail} notify={notify} onChanged={load} onClose={() => setDetail(null)}
+      {form && <MasterForm master={form.master} kind0={form.kind} folios={folios} onClose={() => setForm(null)} onSaved={load} notify={notify} />}
+      {detail && <MasterDetail id={detail} folios={folios} notify={notify} onChanged={load} onClose={() => setDetail(null)}
         onEdit={(m) => { setDetail(null); setForm({ master: m }); }} />}
     </div>
   );

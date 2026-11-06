@@ -584,8 +584,9 @@ export default function Blueprint() {
     const target = open.reduce((s, b) => s + num(b.target_amount), 0);
     const funded = open.reduce((s, b) => s + Math.min(num(b.current_value), num(b.target_amount) || 0), 0);
     const income = data.buckets.filter(b => b.kind === 'income').reduce((s, b) => s + num(b.inflow?.monthly), 0);
+    const sip = goals.reduce((s, b) => s + num(b.sip_monthly), 0);
     return {
-      open: open.length, completed: goals.length - open.length, target, funded, income,
+      open: open.length, completed: goals.length - open.length, target, funded, income, sip,
       overdue: open.filter(isOverdue).length,
       pct: target > 0 ? Math.round(funded / target * 100) : 0,
     };
@@ -611,7 +612,8 @@ export default function Blueprint() {
     const { d, mid } = linkPath(a, b);
     const on = sel?.type === 'link' && sel.id === l.id;
     const related = sel?.type === 'bucket' && (l.from_bucket_id === sel.id || l.to_bucket_id === sel.id);
-    const text = l.label || (l.amount ? `${fmtINR(l.amount)}/mo` : l.link_type === 'backup' ? 'backup' : l.link_type === 'emi' ? 'EMI → loan' : '');
+    const toSip = l.to_bucket_id ? num(bucketsById[l.to_bucket_id]?.sip_monthly) : 0;
+    const text = l.label || (l.amount ? `${fmtINR(l.amount)}/mo` : toSip > 0 && l.link_type === 'funds' ? `SIP ${fmtINR(toSip)}/mo` : l.link_type === 'backup' ? 'backup' : l.link_type === 'emi' ? 'EMI → loan' : '');
     const pick = (e) => { e.stopPropagation(); setSel({ type: 'link', id: l.id }); };
     return {
       id: l.id, link: l, mid, on,
@@ -669,6 +671,7 @@ export default function Blueprint() {
               <span className="bp-stat-v">{stats.pct}%</span>
             </div>
             <div className="bp-stat"><span className="bp-stat-k">Income</span><span className="bp-stat-v">{fmtINR(stats.income)}<em>/mo</em></span></div>
+            {stats.sip > 0 && <div className="bp-stat" title="SIPs from your Masters, linked to folios mapped into goals"><span className="bp-stat-k">SIPs</span><span className="bp-stat-v">{fmtINR(stats.sip)}<em>/mo</em></span></div>}
             {stats.overdue > 0 && <div className="bp-stat warn"><span className="bp-stat-k">Overdue</span><span className="bp-stat-v">{stats.overdue}</span></div>}
           </div>
         )}
@@ -922,6 +925,8 @@ function Board({ board, L, buckets, selected, dropLayer, linkTarget, onHeaderDow
 // ═══════════════════════════════════════════════════════════════════
 const RING_R = 18;
 const RING_C = 2 * Math.PI * RING_R;
+const ordinal = (n) => n + (['th', 'st', 'nd', 'rd'][((n % 100) - 20) % 10] || ['th', 'st', 'nd', 'rd'][n % 100] || 'th');
+
 function BucketCard({ bucket: b, rect, selected, dragging, linkTarget, external, onDown, onLinkDown, editing, leaving, stray }) {
   if (!rect) return null;
   const hex = colorHex(b.color);
@@ -983,6 +988,11 @@ function BucketCard({ bucket: b, rect, selected, dragging, linkTarget, external,
           </svg>
         )}
       </div>
+      {num(b.sip_monthly) > 0 && (
+        <div className="bp-sip-in" title={(b.sips || []).map(x => `${x.title}: ${fmtINR(x.amount, { compact: false })}${x.due_day ? ' on day ' + x.due_day : ''} → ${x.fund}`).join('\n')}>
+          <i aria-hidden="true" />SIP {fmtINR(b.sip_monthly)}/mo{(b.sips || [])[0]?.due_day ? ` · ${ordinal(b.sips[0].due_day)}` : ''}
+        </div>
+      )}
       <div className="bp-bucket-foot">
         <span className={overdue ? 'overdue' : att === 'soon' ? 'soon' : ''} title={stray ? 'This date is outside the lane it sits in' : undefined}>
           {stray && <span className="bp-stray" aria-label="Date outside this lane">⇅ </span>}

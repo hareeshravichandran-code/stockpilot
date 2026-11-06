@@ -86,13 +86,24 @@ async function loadUniverse(userId) {
 }
 
 async function loadMemberUniverse(userId, prefix, member) {
-  const [hRes, mfRes, fdRes, rdRes, npsRes] = await Promise.all([
+  const [hRes, mfRes, fdRes, rdRes, npsRes, sipRes] = await Promise.all([
     supabase.from('holdings').select('*').eq('user_id', userId),
     supabase.from('mf_holdings').select('*').eq('user_id', userId),
     supabase.from('fixed_deposits').select('*').eq('user_id', userId),
     supabase.from('recurring_deposits').select('*').eq('user_id', userId),
     supabase.from('nps_holdings').select('*').eq('user_id', userId).order('statement_to', { ascending: false }),
+    // SIP masters tied to a folio (Masters / Discover) feed money into the goal that holds it
+    supabase.from('money_masters').select('id, title, amount, frequency, due_day, linked_id').eq('owner_id', userId)
+      .eq('kind', 'sip').eq('status', 'active').eq('linked_table', 'mf_holdings'),
   ]);
+  const sipsByFolio = {};
+  for (const m of sipRes.data || []) {
+    if (!m.linked_id) continue;
+    const per = { quarterly: 3, half_yearly: 6, yearly: 12 }[m.frequency] || 1;
+    (sipsByFolio[m.linked_id] = sipsByFolio[m.linked_id] || []).push({
+      master_id: m.id, title: m.title, amount: num(m.amount), monthly: round2(num(m.amount) / per), due_day: m.due_day || null, frequency: m.frequency,
+    });
+  }
 
   const items = [];
 
@@ -123,11 +134,15 @@ async function loadMemberUniverse(userId, prefix, member) {
 
   // Mutual fund folios
   for (const m of mfRes.data || []) {
-    if (num(m.units) <= 0 && num(m.current_value) <= 0) continue;
+    if (num(m.units) <= 0 && num(m.current_value) <= 0 && !(sipsByFolio[String(m.id)] || []).length) continue;
+    const sips = sipsByFolio[String(m.id)] || [];
+    const sipMonthly = round2(sips.reduce((t, x) => t + x.monthly, 0));
     items.push({
       asset_type: 'mf', asset_ref: `${m.folio_number || ''}|${m.isin || ''}`,
-      label: m.fund_name || m.isin, sub: `Folio ${m.folio_number || '—'}${m.fund_category ? ' · ' + m.fund_category : ''}`,
+      label: m.fund_name || m.isin,
+      sub: `Folio ${m.folio_number || '—'}${m.fund_category ? ' · ' + m.fund_category : ''}${sipMonthly ? ` · SIP ₹${sipMonthly.toLocaleString('en-IN')}/mo` : ''}`,
       value: round2(num(m.current_value)),
+      ...(sips.length ? { sip_monthly: sipMonthly, sips } : {}),
     });
   }
 
@@ -256,6 +271,8 @@ router.get('/', requireAuth, async (req, res) => {
         sub: live?.sub || 'No longer found in your holdings',
         value: live ? live.value : 0,
         missing: !live,
+        sip_monthly: live?.sip_monthly || 0,
+        sips: live?.sips || [],
       });
     }
 
@@ -277,6 +294,8 @@ router.get('/', requireAuth, async (req, res) => {
         current_value: current,
         progress: target > 0 ? Math.round(Math.min(999, (current / target) * 100) * 10) / 10 : 0,
         inflow: inflows[b.id] || null,
+        sip_monthly: round2(assets.reduce((s, a) => s + num(a.sip_monthly), 0)),
+        sips: assets.flatMap(a => (a.sips || []).map(x => ({ ...x, fund: a.label }))),
         comment_count: commentCount[b.id] || 0,
         attachment_count: attachCount[b.id] || 0,
       };
