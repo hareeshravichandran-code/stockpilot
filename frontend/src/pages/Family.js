@@ -8,6 +8,7 @@ import Insurance from '../family/Insurance';
 import Documents from '../family/Documents';
 import CalendarView from '../family/Calendar';
 import Masters from '../family/Masters';
+import Events from '../family/Events';
 import './Family.css';
 
 const TABS = [
@@ -17,6 +18,7 @@ const TABS = [
   ['documents', 'Documents', 'var(--fo-mulberry)'],
   ['calendar', 'Calendar', 'var(--fo-moss)'],
   ['masters', 'Masters', 'var(--fo-terracotta)'],
+  ['events', 'Events', 'var(--fo-coral, #a82c2c)'],
 ];
 
 export default function Family() {
@@ -67,6 +69,7 @@ export default function Family() {
             {tab === 'documents' && <Documents {...shared} />}
             {tab === 'calendar' && <CalendarView {...shared} />}
             {tab === 'masters' && <Masters {...shared} />}
+            {tab === 'events' && <Events {...shared} />}
           </>
         )}
       </main>

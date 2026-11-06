@@ -89,3 +89,23 @@
   .mc-row { grid-template-columns: 30px 1fr auto; } .mc-row .mc-st { display: none; }
   .mc-up-list { grid-template-columns: 1fr; }
 }
+
+/* Alert levels: very high (EMI, card) red · high (insurance) amber · medium (subscriptions) marigold */
+.mc { --lv-vh: #a82c2c; --lv-h: #d9822b; --lv-m: #c99a12; }
+.mc-chip.blink { animation: mc-blink .8s ease-in-out infinite alternate; }
+.mc-chip.blink.lv-very_high { background: var(--lv-vh); border-color: var(--lv-vh); }
+.mc-chip.blink.lv-high { background: var(--lv-h); border-color: var(--lv-h); animation-duration: 1.2s; }
+.mc-chip.blink.lv-medium { background: var(--lv-m); border-color: var(--lv-m); animation-duration: 1.6s; }
+.mc-chip.declared { border-style: dashed; }
+.mc-d.hot.lv-high::after { box-shadow: inset 0 0 0 1.5px var(--lv-h); animation-duration: 1.2s; }
+.mc-d.hot.lv-medium::after { box-shadow: inset 0 0 0 1.5px var(--lv-m); animation-duration: 1.6s; }
+.mc-row.urgent.lv-high .mc-ic { background: var(--lv-h); }
+.mc-row.urgent.lv-medium .mc-ic { background: var(--lv-m); }
+.mc-card.hot.lv-high { border-color: #f0cfa8; border-left-color: var(--lv-h); background: #fdf3e6; }
+.mc-card.hot.lv-high .mc-ic { background: var(--lv-h); animation-duration: 1.2s; }
+.mc-card.hot.lv-high .mc-card-r small { color: var(--lv-h); }
+.mc-card.hot.lv-medium { border-color: #ecdcaa; border-left-color: var(--lv-m); background: #fcf6e3; }
+.mc-card.hot.lv-medium .mc-ic { background: var(--lv-m); animation-duration: 1.6s; }
+.mc-card.hot.lv-medium .mc-card-r small { color: #9a7410; }
+.mc-st.declared { background: #fbf0d0; color: #8a6510; }
+.mc-foot-links { display: inline-flex; gap: 12px; }

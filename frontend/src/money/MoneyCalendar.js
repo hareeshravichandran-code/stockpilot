@@ -6,6 +6,7 @@ import './MoneyCalendar.css';
 const WD = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 const pad = (n) => String(n).padStart(2, '0');
 const monthKey = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+const LV_RANK = { very_high: 0, high: 1, medium: 2, low: 3, undefined: 0 };
 const STATUS = { overdue: 'Overdue', due_soon: 'Due soon', expected: 'Expected', past: 'Not seen' };
 // Compact amount for a 36px column: 950, 18K, 1.2L, 2Cr
 const tiny = (v) => {
@@ -21,7 +22,7 @@ const tiny = (v) => {
  * with a colour bar by kind) and what's expected (chips). Below: the next things coming up.
  * An expected item disappears once its actual money arrives.
  */
-export default function MoneyCalendar({ hideValues, onOpenMasters }) {
+export default function MoneyCalendar({ hideValues, onOpenMasters, onOpenEvents, hideDividends }) {
   const [cursor, setCursor] = useState(() => { const d = new Date(); d.setDate(1); return d; });
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
@@ -33,10 +34,10 @@ export default function MoneyCalendar({ hideValues, onOpenMasters }) {
   useEffect(() => {
     let live = true;
     setData(null); setErr(''); setPick(null);
-    mastersAPI.month(month).then(r => { if (live) setData(r.data); })
+    mastersAPI.month(month, hideDividends ? { dividends: 0 } : {}).then(r => { if (live) setData(r.data); })
       .catch(e => { if (live) setErr(e?.response?.data?.error || 'Could not load this month'); });
     return () => { live = false; };
-  }, [month]);
+  }, [month, hideDividends]);
 
   const byDay = useMemo(() => {
     const out = {};
@@ -64,7 +65,8 @@ export default function MoneyCalendar({ hideValues, onOpenMasters }) {
 
   const money = (v) => (hideValues ? '••' : inrShort(v));
   const small = (v) => (hideValues ? '••' : tiny(v));
-  const urgent = data ? data.events.filter(e => e.urgent) : [];
+  const isHot = (e) => e.blink || e.urgent || e.status === 'overdue';
+  const urgent = data ? data.events.filter(isHot) : [];
   const sel = pick && byDay[pick];
 
   const upcoming = useMemo(() => {
@@ -120,8 +122,9 @@ export default function MoneyCalendar({ hideValues, onOpenMasters }) {
               const dt = new Date(cursor.getFullYear(), cursor.getMonth(), dn);
               const sun = dt.getDay() === 0;
               const past = todayD && dn < todayD;
-              const hot = x.events.some(e => e.urgent || e.status === 'overdue');
-              const cls = ['mc-d', sun && 'sun', dn === todayD && 'today', past && 'past', dn === pick && 'on', hot && 'hot'].filter(Boolean).join(' ');
+              const hotEv = x.events.filter(isHot).sort((a, b) => LV_RANK[a.level] - LV_RANK[b.level])[0];
+              const hot = !!hotEv;
+              const cls = ['mc-d', sun && 'sun', dn === todayD && 'today', past && 'past', dn === pick && 'on', hot && `hot lv-${hotEv.level || 'very_high'}`].filter(Boolean).join(' ');
               return (
                 <button key={d} type="button" className={cls} onClick={() => setPick(p => (p === dn ? null : dn))}
                   aria-label={`${dt.toDateString()}${x.inn ? ', in ' + inrShort(x.inn) : ''}${x.out ? ', out ' + inrShort(x.out) : ''}${x.events.length ? ', ' + x.events.length + ' expected' : ''}`}>
@@ -134,8 +137,8 @@ export default function MoneyCalendar({ hideValues, onOpenMasters }) {
                   </span>
                   <span className="mc-chips">
                     {x.events.slice(0, 2).map((e, i) => (
-                      <span key={i} className={`mc-chip ${e.status}${e.urgent ? ' urgent' : ''}`} style={{ '--c': kindOf(e.kind).c }} title={`${e.title} · ${STATUS[e.status] || ''}`}>
-                        <KindIcon kind={e.kind} size={12} color={e.urgent || e.status === 'overdue' ? '#fff' : undefined} />
+                      <span key={i} className={`mc-chip ${e.status}${isHot(e) ? ` blink lv-${e.level || 'very_high'}` : ''}${e.declared ? ' declared' : ''}`} style={{ '--c': kindOf(e.kind).c }} title={`${e.title} · ${e.declared ? 'Declared, not credited yet' : STATUS[e.status] || ''}`}>
+                        <KindIcon kind={e.kind} size={12} color={isHot(e) ? '#fff' : undefined} />
                       </span>
                     ))}
                     {x.events.length > 2 && <span className="mc-more">+{x.events.length - 2}</span>}
@@ -155,10 +158,10 @@ export default function MoneyCalendar({ hideValues, onOpenMasters }) {
           </div>
           {!sel.flow.length && !sel.events.length && <div className="mc-none">Nothing moved and nothing is due.</div>}
           {sel.events.map((e, i) => (
-            <div key={'de' + i} className={`mc-row ${e.status}${e.urgent ? ' urgent' : ''}`} style={{ '--c': kindOf(e.kind).c }}>
+            <div key={'de' + i} className={`mc-row ${e.status}${isHot(e) ? ` urgent lv-${e.level || 'very_high'}` : ''}`} style={{ '--c': kindOf(e.kind).c }}>
               <span className="mc-ic"><KindIcon kind={e.kind} size={16} /></span>
               <span className="mc-t">{e.title}<small>{kindOf(e.kind).label}{e.sub ? ' · ' + e.sub : ''}</small></span>
-              <span className={`mc-st ${e.status}`}>{STATUS[e.status] || ''}</span>
+              <span className={`mc-st ${e.declared ? 'declared' : e.status}`}>{e.declared ? 'Declared' : STATUS[e.status] || ''}</span>
               <span className="mc-amt">{e.amount ? money(e.amount) : ''}</span>
             </div>
           ))}
@@ -177,16 +180,19 @@ export default function MoneyCalendar({ hideValues, onOpenMasters }) {
         <div className="mc-foot">
           <div className="mc-foot-h">
             <span>{isNow ? 'Coming up' : 'Expected this month'}</span>
-            {onOpenMasters && <button type="button" className="mc-link" onClick={onOpenMasters}>Manage masters ›</button>}
+            <span className="mc-foot-links">
+              {onOpenEvents && <button type="button" className="mc-link" onClick={onOpenEvents}>Events & alerts ›</button>}
+              {onOpenMasters && <button type="button" className="mc-link" onClick={onOpenMasters}>Masters ›</button>}
+            </span>
           </div>
           {upcoming.length === 0
             ? <div className="mc-none">Nothing else expected this month. Add loans, cards, SIPs or rent in Masters to see them here.</div>
             : <div className="mc-up-list">
                 {upcoming.map((e, i) => {
                   const k = kindOf(e.kind);
-                  const hot = e.urgent || e.status === 'overdue';
+                  const hot = isHot(e);
                   return (
-                    <button key={i} type="button" className={`mc-card${hot ? ' hot' : ''}`} style={{ '--c': k.c }}
+                    <button key={i} type="button" className={`mc-card${hot ? ` hot lv-${e.level || 'very_high'}` : ''}`} style={{ '--c': k.c }}
                       onClick={() => setPick(+e.date.slice(8, 10))}>
                       <span className="mc-ic"><KindIcon kind={e.kind} size={16} color={hot ? '#fff' : undefined} /></span>
                       <span className="mc-card-t">

@@ -21,7 +21,8 @@ const KINDS = ['loan', 'card', 'bank_account', 'sip', 'subscription', 'income', 
 const SUBTYPES = { income: ['salary', 'dividend', 'rental', 'interest', 'freelance', 'other'], expense: ['rent', 'school_fee', 'maid', 'utility', 'other'] };
 const FREQS = ['monthly', 'quarterly', 'half_yearly', 'yearly', 'once', 'irregular'];
 const EVENT_FREQS = ['monthly', 'quarterly', 'half_yearly', 'yearly', 'once'];
-const EVENT_KINDS = ['emi', 'sip', 'card_due', 'premium', 'subscription', 'rd_instalment', 'salary', 'bill', 'maturity', 'rent', 'income', 'dividend'];
+const EVENT_KINDS = ['emi', 'sip', 'card_due', 'premium', 'subscription', 'rd_instalment', 'salary', 'bill', 'maturity', 'rent', 'income', 'dividend', 'school_fee', 'other'];
+const { alertOf, levelOf, LEVELS, RANK } = require('../services/alerts');
 const POLICY_KINDS = ['term', 'life', 'health', 'vehicle', 'home', 'accident', 'travel', 'other'];
 const STEP = { monthly: 1, quarterly: 3, half_yearly: 6, yearly: 12 };
 
@@ -485,7 +486,135 @@ const FLOW_KIND = (t, m) => {
   if (['rent_house', 'p_rent'].includes(c)) return 'rent';
   return 'expense';
 };
-const MONEY_EVENT_KINDS = ['emi', 'sip', 'card_due', 'premium', 'subscription', 'rd_instalment', 'salary', 'bill', 'maturity', 'instalment', 'rent', 'income', 'dividend'];
+// ── Events master: every expected payment/receipt, its alert level and the master it belongs to ──
+const MASTER_FOR_EVENT = { money_masters: 'master', insurance_policies: 'insurance', recurring_deposits: 'rd', manual: 'manual' };
+router.get('/events/all', requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.id;
+    const [ev, ms, pol, rds, pays] = await Promise.all([
+      supabase.from('recurring_events').select('*').eq('owner_id', uid).neq('status', 'deleted'),
+      supabase.from('money_masters').select('id, kind, subtype, title, institution, ref, linked_table, linked_id').eq('owner_id', uid),
+      supabase.from('insurance_policies').select('id, kind, insurer, plan_name, premium, premium_frequency, renewal_date, status, alert_level').eq('owner_id', uid),
+      supabase.from('recurring_deposits').select('rd_id, institution_name, nickname, monthly_installment, start_date').eq('user_id', uid),
+      supabase.from('event_payments').select('event_id, period, status').eq('owner_id', uid).order('period', { ascending: false }).limit(500),
+    ]);
+    const mById = Object.fromEntries((ms.data || []).map(m => [m.id, m]));
+    const lastPaid = {};
+    for (const p of pays.data || []) if (p.status === 'paid' && !lastPaid[p.event_id]) lastPaid[p.event_id] = p.period;
+    const today = todayStr();
+    const out = [];
+    const add = (o) => {
+      // Already paid for this period: the next one is due a step later
+      if (o.next_due && o.last_paid && Math.abs(Date.parse(o.next_due) - Date.parse(o.last_paid)) <= 6 * 86400000 && o.frequency !== 'once') {
+        const d = new Date(o.next_due + 'T00:00:00Z');
+        o.next_due = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + (STEP[o.frequency] || 1), d.getUTCDate())).toISOString().slice(0, 10);
+        o.paid_this_period = true;
+      }
+      const next = o.next_due;
+      const days = next ? Math.round((Date.parse(next) - Date.parse(today)) / 86400000) : null;
+      const a = alertOf(o.kind, o.alert_level, days ?? 999, false);
+      out.push({ ...o, days, level: a.level, default_level: levelOf(o.kind, null), blink: a.blink });
+    };
+    for (const e of ev.data || []) {
+      if (e.master_table === 'insurance_policies' || e.master_table === 'recurring_deposits') continue;  // listed from their own tables below
+      const m = e.master_table === 'money_masters' ? mById[e.master_id] : null;
+      add({ id: e.id, source: e.master_table === 'manual' ? 'manual' : 'event', kind: e.kind, title: e.title, amount: num(e.amount),
+        frequency: e.frequency, due_day: e.due_day, due_month: e.due_month, direction: e.direction, status: e.status,
+        alert_level: e.alert_level, notes: e.notes || null, last_paid: lastPaid[e.id] || null,
+        next_due: e.status === 'active' ? (e.frequency === 'once' ? (e.end_date || e.start_date) : nextDue(e.frequency, e.due_day, e.due_month, e.start_date)) : null,
+        linked: m ? { type: m.kind, subtype: m.subtype, id: m.id, title: m.title, institution: m.institution, ref: m.ref, folio: m.linked_table === 'mf_holdings' ? m.linked_id : null }
+          : e.master_table === 'manual' && e.master_id && mById[e.master_id] ? { type: mById[e.master_id].kind, id: e.master_id, title: mById[e.master_id].title } : null });
+    }
+    for (const p of pol.data || []) {
+      if (p.status && p.status !== 'active') continue;
+      const freq = { monthly: 'monthly', quarterly: 'quarterly', half_yearly: 'half_yearly', yearly: 'yearly', annual: 'yearly', single: 'once' }[p.premium_frequency] || 'yearly';
+      const r = p.renewal_date;
+      add({ id: 'policy:' + p.id, policy_id: p.id, source: 'insurance', kind: 'premium', title: `${p.plan_name || p.insurer || p.kind} premium`, amount: num(p.premium),
+        frequency: freq, due_day: r ? +r.slice(8, 10) : null, due_month: r ? +r.slice(5, 7) : null, direction: 'out', status: 'active',
+        alert_level: p.alert_level, next_due: r ? (r >= today ? r : nextDue(freq, +r.slice(8, 10), +r.slice(5, 7), r)) : null,
+        linked: { type: 'insurance', subtype: p.kind, id: p.id, title: p.plan_name || p.insurer, institution: p.insurer } });
+    }
+    for (const r of rds.data || []) {
+      if (!num(r.monthly_installment)) continue;
+      add({ id: 'rd:' + r.rd_id, source: 'rd', kind: 'rd_instalment', title: `${r.nickname || r.institution_name || 'RD'} instalment`, amount: num(r.monthly_installment),
+        frequency: 'monthly', due_day: r.start_date ? +r.start_date.slice(8, 10) : null, direction: 'out', status: 'active', alert_level: null,
+        next_due: nextDue('monthly', null, null, r.start_date), linked: { type: 'rd', id: r.rd_id, title: r.nickname || r.institution_name, institution: r.institution_name } });
+    }
+    out.sort((a, b) => (RANK[a.level] - RANK[b.level]) || String(a.next_due || '9').localeCompare(String(b.next_due || '9')));
+    res.json({ events: out, levels: LEVELS });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Manual event (rent, school fee, a reminder...) with its own alert level; optionally tied to a master
+router.post('/events', requireAuth, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const title = str(b.title, 120);
+    if (!title) return res.status(400).json({ error: 'Give the event a name' });
+    const freq = EVENT_FREQS.includes(b.frequency) ? b.frequency : 'monthly';
+    const kind = EVENT_KINDS.includes(b.kind) ? b.kind : 'other';
+    const day = num(b.due_day), mon = num(b.due_month);
+    if (freq !== 'once' && !(day >= 1 && day <= 31)) return res.status(400).json({ error: 'Pick the day it is due (1–31)' });
+    if (freq === 'once' && !isDate(b.date)) return res.status(400).json({ error: 'Pick the date' });
+    let masterId = null;
+    if (b.master_id) {
+      const { data: m } = await supabase.from('money_masters').select('id').eq('id', b.master_id).eq('owner_id', req.user.id).maybeSingle();
+      masterId = m?.id || null;
+    }
+    const row = {
+      owner_id: req.user.id, master_table: 'manual', master_id: masterId || `m-${Date.now()}`, kind, title, amount: num(b.amount),
+      frequency: freq, due_day: freq === 'once' ? +b.date.slice(8, 10) : Math.min(31, day), due_month: freq === 'once' ? +b.date.slice(5, 7) : (freq === 'monthly' ? null : mon),
+      start_date: freq === 'once' ? b.date : (isDate(b.start_date) ? b.start_date : todayStr()), end_date: freq === 'once' ? b.date : null,
+      direction: b.direction === 'in' ? 'in' : 'out', source: 'manual', status: 'active',
+      alert_level: LEVELS.includes(b.alert_level) ? b.alert_level : null, notes: str(b.notes, 400),
+    };
+    const { data, error } = await supabase.from('recurring_events').insert(row).select().single();
+    if (error) throw error;
+    res.json({ event: data });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.put('/events/:id', requireAuth, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const id = req.params.id;
+    if (id.startsWith('policy:')) {
+      const { error } = await supabase.from('insurance_policies').update({ alert_level: LEVELS.includes(b.alert_level) ? b.alert_level : null })
+        .eq('id', id.slice(7)).eq('owner_id', req.user.id);
+      if (error) throw error;
+      return res.json({ ok: true });
+    }
+    const { data: e } = await supabase.from('recurring_events').select('*').eq('id', id).eq('owner_id', req.user.id).maybeSingle();
+    if (!e) return res.status(404).json({ error: 'Event not found' });
+    const patch = { updated_at: nowIso() };
+    if (b.alert_level !== undefined) patch.alert_level = LEVELS.includes(b.alert_level) ? b.alert_level : null;
+    if (b.status && ['active', 'paused'].includes(b.status)) patch.status = b.status;
+    if (b.notes !== undefined) patch.notes = str(b.notes, 400);
+    if (e.master_table === 'manual') {                             // linked events follow their master; manual ones are edited here
+      if (str(b.title)) patch.title = str(b.title, 120);
+      if (b.amount !== undefined) patch.amount = num(b.amount);
+      if (EVENT_FREQS.includes(b.frequency)) patch.frequency = b.frequency;
+      if (num(b.due_day)) patch.due_day = Math.min(31, num(b.due_day));
+      if (b.due_month !== undefined) patch.due_month = num(b.due_month);
+      if (EVENT_KINDS.includes(b.kind)) patch.kind = b.kind;
+    }
+    const { error } = await supabase.from('recurring_events').update(patch).eq('id', id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.delete('/events/:id', requireAuth, async (req, res) => {
+  try {
+    const { data: e } = await supabase.from('recurring_events').select('id, master_table').eq('id', req.params.id).eq('owner_id', req.user.id).maybeSingle();
+    if (!e) return res.status(404).json({ error: 'Event not found' });
+    if (e.master_table !== 'manual') return res.status(400).json({ error: 'This event belongs to a master. Pause it, or close the master.' });
+    await supabase.from('recurring_events').delete().eq('id', e.id);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+const MONEY_EVENT_KINDS = ['emi', 'sip', 'card_due', 'premium', 'subscription', 'rd_instalment', 'salary', 'bill', 'maturity', 'instalment', 'rent', 'income', 'dividend', 'school_fee', 'other'];
 
 router.get('/month', requireAuth, async (req, res) => {
   try {
@@ -520,7 +649,8 @@ router.get('/month', requireAuth, async (req, res) => {
       const words = [d.symbol, (d.company || '').split(/\s+/)[0]].filter(w => w && w.length > 2).map(w => w.toLowerCase());
       const got = credits.find(t => /div/.test(txnText(t)) && (words.some(w => txnText(t).includes(w)) || (num(d.total_dividend) && Math.abs(num(t.amount) - num(d.total_dividend)) <= num(d.total_dividend) * 0.15)));
       if (got) { const f = flow.find(x => x.id === got.id); if (f) { f.kind = 'dividend'; f.master_title = `${d.symbol} dividend`; } continue; }
-      if (d.ex_date >= from && d.ex_date <= to) events.push({ date: d.ex_date, kind: 'dividend', title: `${d.symbol} dividend`, sub: 'Record / ex-date', amount: num(d.total_dividend), status: 'expected', dir: 'in' });
+      if (req.query.dividends === '0') continue;                   // dashboard: declared dividends stay off the strip
+      if (d.ex_date >= from && d.ex_date <= to) events.push({ date: d.ex_date, kind: 'dividend', title: `${d.symbol} dividend`, sub: 'Declared · not credited yet', amount: num(d.total_dividend), status: 'expected', dir: 'in', level: 'low', blink: false, declared: true });
     }
     const today = todayStr();
     for (const it of (cal.items || [])) {
@@ -528,8 +658,9 @@ router.get('/month', requireAuth, async (req, res) => {
       if (it.paid) continue;                                       // actual arrived: expected marker goes away
       const days = Math.round((new Date(it.date + 'T00:00:00Z') - new Date(today + 'T00:00:00Z')) / 86400000);
       const status = it.overdue ? 'overdue' : (days >= 0 && days <= 5 ? 'due_soon' : days < 0 ? 'past' : 'expected');
+      const al = alertOf(it.kind, it.alert_level, days, status === 'overdue');
       events.push({ date: it.date, kind: it.kind, title: it.title, sub: it.sub || null, amount: it.amount || null, status,
-        urgent: ['emi', 'card_due'].includes(it.kind) && (status === 'overdue' || status === 'due_soon'),
+        level: al.level, blink: al.blink, urgent: al.blink && al.level === 'very_high',
         dir: it.direction === 'in' || ['salary', 'income', 'dividend', 'maturity'].includes(it.kind) ? 'in' : 'out', event_id: it.event_id || null, module: it.module });
     }
     events.sort((a, b) => a.date.localeCompare(b.date));

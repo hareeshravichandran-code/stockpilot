@@ -205,7 +205,11 @@ export const mastersAPI = {
   link:    (id, txnIds)  => api.post(`/api/masters/${id}/link`, { txn_ids: txnIds }),
   unlink:  (id, txnId)   => api.delete(`/api/masters/${id}/link/${txnId}`),
   linkRun: ()            => api.post('/api/masters/link-run', {}, { timeout: 45000 }),
-  month:   (month)       => api.get('/api/masters/month', { params: { month }, timeout: 45000 }),
+  month:   (month, opts = {}) => api.get('/api/masters/month', { params: { month, ...opts }, timeout: 45000 }),
+  events:      ()         => api.get('/api/masters/events/all'),
+  createEvent: (data)     => api.post('/api/masters/events', data),
+  updateEvent: (id, data) => api.put(`/api/masters/events/${encodeURIComponent(id)}`, data),
+  removeEvent: (id)       => api.delete(`/api/masters/events/${encodeURIComponent(id)}`),
 };
 
 export const blueprintAPI = {

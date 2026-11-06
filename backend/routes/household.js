@@ -247,7 +247,7 @@ async function buildCalendar(uid, from, to) {
   for (const p of pol.data || []) {
     const name = p.plan_name || `${p.insurer ? p.insurer + ' ' : ''}${POLICY_LABEL[p.kind] || 'Policy'}`;
     const freq = p.premium_frequency === 'single' ? 'none' : p.premium_frequency;
-    for (const d of occurrences(p.renewal_date, freq, from, to)) push({ module: 'insurance', kind: 'premium', ref: p.id, date: d, title: `${name} premium`, amount: num(p.premium) || null, member_ids: p.member_ids || [] });
+    for (const d of occurrences(p.renewal_date, freq, from, to)) push({ module: 'insurance', kind: 'premium', ref: p.id, date: d, title: `${name} premium`, amount: num(p.premium) || null, member_ids: p.member_ids || [], alert_level: p.alert_level || null, policy_id: p.id });
     if (p.end_date && p.end_date >= from && p.end_date <= to) push({ module: 'insurance', kind: 'cover_end', ref: p.id, date: p.end_date, title: `${name} cover ends`, member_ids: p.member_ids || [] });
   }
   // Documents and renewals (overdue ones show on the first day so they aren't lost)
@@ -331,7 +331,7 @@ async function buildCalendar(uid, from, to) {
         const paid = isPaid(e.id, d);
         push({ module: MODULE[e.kind] || 'calendar', kind: e.kind, ref: e.id, date: d, title: e.title, amount: num(e.amount) || null,
           sub: paid ? 'Paid' : null, paid, overdue: !paid && d < today && d >= trackedFrom, direction: e.direction,
-          member_ids: e.member_id ? [e.member_id] : (om ? [om.id] : []), event_id: e.id });
+          member_ids: e.member_id ? [e.member_id] : (om ? [om.id] : []), event_id: e.id, alert_level: e.alert_level || null, manual: e.master_table === 'manual' });
       }
     }
   }
@@ -390,9 +390,15 @@ router.get('/overview', requireAuth, async (req, res) => {
     }
     for (const it of cal.items) {
       if (['birthday', 'maturity', 'retirement', 'goal_target', 'anniversary', 'event'].includes(it.kind) && daysTo(it.date) <= 21) attention.push({ ...it, days: daysTo(it.date) });
-      else if (['emi', 'card_due', 'sip', 'subscription', 'rd_instalment', 'bill'].includes(it.kind) && !it.paid && daysTo(it.date) <= 5) attention.push({ ...it, days: daysTo(it.date) });
+      else if (['emi', 'card_due', 'sip', 'subscription', 'rd_instalment', 'bill', 'rent', 'school_fee', 'premium'].includes(it.kind) && !it.paid) {
+        const { alertOf } = require('../services/alerts');
+        const n = daysTo(it.date);
+        const a = alertOf(it.kind, it.alert_level, n, !!it.overdue);
+        if (a.blink || (n >= 0 && n <= 5)) attention.push({ ...it, days: n, level: a.level, blink: a.blink });
+      }
     }
-    attention.sort((a, b) => a.days - b.days);
+    { const { RANK } = require('../services/alerts');
+      attention.sort((a, b) => ((b.blink ? 1 : 0) - (a.blink ? 1 : 0)) || ((RANK[a.level] ?? 4) - (RANK[b.level] ?? 4)) || a.days - b.days); }
     // Gaps worth pointing out
     const gaps = [];
     for (const c of cover) {

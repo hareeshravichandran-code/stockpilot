@@ -1345,7 +1345,7 @@ export default function Dashboard() {
 
                     <NetWorthHero parts={parts} liabilities={owed} hideValues={hideValues} asOf={asOf}
                       onUpdateBalances={() => setShowAssetModal(true)} />
-                    <MoneyCalendar hideValues={hideValues} onOpenMasters={() => nav('/family?tab=masters')} />
+                    <MoneyCalendar hideValues={hideValues} hideDividends onOpenMasters={() => nav('/family?tab=masters')} onOpenEvents={() => nav('/family?tab=events')} />
                     <FamilyStrip onOpen={(t) => nav(t === 'home' ? '/family' : `/family?tab=${t}`)} />
                     <MoneyTiles income={monthlyIncome} spent={monthlyExpenses} dividends={dividendTotal}
                       yieldPct={s.yieldOnMarket} hideValues={hideValues} />
