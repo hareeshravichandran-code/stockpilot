@@ -222,19 +222,85 @@ async function incomeInflows(userId, incomeBuckets) {
     }
   }
 
+  // Salary boxes: income entries first, else the salary master's credits, else the detected month-end salary credit
+  const wantsSalary = incomeBuckets.some(b => /salary/i.test(`${b.income_category || ''} ${b.name || ''}`) && b.income_source !== 'manual');
+  const salary = wantsSalary ? await require('../services/salary').salaryOf(userId).catch(() => null) : null;
+  const SAL_BASIS = { master: 'Salary master · avg of last 3 months', category: 'Salary category · avg of last 3 months', detected: 'Detected from bank SMS · avg of last 3 months' };
+
   for (const b of incomeBuckets) {
+    const isSalary = /salary/i.test(`${b.income_category || ''} ${b.name || ''}`) && b.income_source !== 'manual';
     if (b.income_source === 'income_category' && b.income_category) {
       const cat = b.income_category.toLowerCase();
       const total = entries.filter(e => (e.category || '').toLowerCase() === cat).reduce((s, e) => s + num(e.amount), 0);
       out[b.id] = { monthly: round2(total / 3), basis: 'Avg of last 90 days' };
+      if (isSalary && salary && !total) out[b.id] = { monthly: salary.monthly, basis: SAL_BASIS[salary.source], last: salary.last, months: salary.months.slice(0, 6) };
+      else if (isSalary && salary) out[b.id].last = salary.last;
     } else if (b.income_source === 'dividends') {
       const total = divs.reduce((s, d) => s + num(d.total_amount), 0);
       out[b.id] = { monthly: round2(total / 12), basis: 'Avg of last 12 months' };
     } else {
       out[b.id] = { monthly: num(b.expected_amount), basis: 'Expected (manual)' };
+      if (isSalary && salary) out[b.id].last = salary.last;
     }
   }
   return out;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  Insurance → Blueprint: each health / term / life policy gets a goal for its premium.
+//  An existing goal that clearly is that policy (name says insurance/premium + health/term/life,
+//  or the same renewal month) is linked instead of creating a duplicate. Runs once per policy.
+// ═══════════════════════════════════════════════════════════════════
+const POLICY_WORDS = { health: /health|medical|mediclaim|family floater/i, term: /term|life/i, life: /life|term|endow|lic/i };
+async function linkPolicies(uid, buckets) {
+  const { data: pols } = await supabase.from('insurance_policies').select('id, kind, insurer, plan_name, premium, premium_frequency, renewal_date, bp_auto, status')
+    .eq('owner_id', uid).eq('status', 'active').in('kind', ['health', 'term', 'life']).not('bp_auto', 'is', true);
+  if (!pols || !pols.length) return false;
+  let changed = false;
+  const free = buckets.filter(b => b.kind === 'goal' && !b.policy_id && b.status !== 'completed');
+  for (const p of pols) {
+    const month = p.renewal_date ? +p.renewal_date.slice(5, 7) : null;
+    const scored = free.map(b => {
+      const name = b.name || '';
+      let sc = 0;
+      if (/insur|premium|policy|cover/i.test(name)) sc += 2;
+      if (POLICY_WORDS[p.kind]?.test(name)) sc += 3;
+      const ins = (p.insurer || '').split(/\s+/)[0];
+      if (ins && ins.length > 2 && new RegExp(ins, 'i').test(name)) sc += 3;
+      if (month && b.recurrence === 'yearly' && b.recurrence_month === month) sc += 2;
+      return { b, sc };
+    }).filter(x => x.sc >= 5).sort((a, b) => b.sc - a.sc);
+    const pick = scored[0] && (!scored[1] || scored[1].sc < scored[0].sc) ? scored[0].b : null;
+    if (pick) {
+      await supabase.from('bp_buckets').update({ policy_id: p.id, updated_at: new Date().toISOString() }).eq('id', pick.id);
+      pick.policy_id = p.id;
+      free.splice(free.indexOf(pick), 1);
+    } else {
+      // New goal next to the other insurance goals (or in the first layer)
+      const near = buckets.find(b => /insur|premium/i.test(b.name || '')) || buckets.find(b => b.kind === 'goal');
+      let layer = near?.layer_id, board = near?.board_id;
+      if (!layer) {
+        const { data: ly } = await supabase.from('bp_layers').select('id, board_id').eq('user_id', uid).order('sort_order').limit(1);
+        layer = ly?.[0]?.id; board = ly?.[0]?.board_id;
+      }
+      if (!layer) continue;                                           // no Blueprint yet
+      const inLayer = buckets.filter(b => b.layer_id === layer);
+      const x = inLayer.reduce((mx, b) => Math.max(mx, num(b.x) + num(b.w || 200)), 0) + 20;
+      const short = (p.plan_name || p.insurer || 'Insurance').replace(/\s+(insurance|insu|company|co\.?|limited|ltd|general|life)\b.*$/i, '').trim() || 'Insurance';
+      const kw = p.kind === 'health' ? 'health' : 'term';
+      const name = new RegExp(kw, 'i').test(short) ? `${short} premium` : `${short} ${kw} premium`;
+      const r = p.renewal_date;
+      const { data: nb } = await supabase.from('bp_buckets').insert({
+        user_id: uid, board_id: board, layer_id: layer, kind: 'goal', name: name.slice(0, 80), target_amount: num(p.premium) || 0,
+        recurrence: p.premium_frequency === 'monthly' ? 'monthly' : 'yearly', recurrence_day: r ? +r.slice(8, 10) : 1, recurrence_month: r ? +r.slice(5, 7) : null,
+        x, y: 16, w: 200, h: 112, status: 'active', policy_id: p.id,
+      }).select().single();
+      if (nb) buckets.push(nb);
+    }
+    await supabase.from('insurance_policies').update({ bp_auto: true }).eq('id', p.id);
+    changed = true;
+  }
+  return changed;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -281,6 +347,13 @@ router.get('/', requireAuth, async (req, res) => {
     const attachCount  = countBy(atRes.data);
 
     const buckets = kRes.data || [];
+    await linkPolicies(uid, buckets).catch(e => console.error(JSON.stringify({ event: 'BP_POLICY_LINK_ERROR', error: e.message })));
+    const policyIds = [...new Set(buckets.map(b => b.policy_id).filter(Boolean))];
+    const { data: polRows } = policyIds.length
+      ? await supabase.from('insurance_policies').select('id, kind, insurer, plan_name, premium, premium_frequency, renewal_date, alert_level').in('id', policyIds)
+      : { data: [] };
+    const polById = Object.fromEntries((polRows || []).map(p => [p.id, p]));
+    const { alertOf } = require('../services/alerts');
     const inflows = await incomeInflows(uid, buckets.filter(b => b.kind === 'income'));
 
     const enriched = buckets.map(b => {
@@ -294,6 +367,16 @@ router.get('/', requireAuth, async (req, res) => {
         current_value: current,
         progress: target > 0 ? Math.round(Math.min(999, (current / target) * 100) * 10) / 10 : 0,
         inflow: inflows[b.id] || null,
+        policy: (() => {
+          const p = polById[b.policy_id];
+          if (!p) return null;
+          const today = new Date().toISOString().slice(0, 10);
+          let due = p.renewal_date;
+          while (due && due < today) { const d = new Date(due + 'T00:00:00Z'); d.setUTCMonth(d.getUTCMonth() + (p.premium_frequency === 'monthly' ? 1 : p.premium_frequency === 'quarterly' ? 3 : p.premium_frequency === 'half_yearly' ? 6 : 12)); due = d.toISOString().slice(0, 10); }
+          const days = due ? Math.round((Date.parse(due) - Date.parse(today)) / 864e5) : null;
+          const a = alertOf('premium', p.alert_level, days ?? 999, false);
+          return { id: p.id, kind: p.kind, insurer: p.insurer, plan: p.plan_name, premium: num(p.premium), due, days, level: a.level, blink: a.blink };
+        })(),
         sip_monthly: round2(assets.reduce((s, a) => s + num(a.sip_monthly), 0)),
         sips: assets.flatMap(a => (a.sips || []).map(x => ({ ...x, fund: a.label }))),
         comment_count: commentCount[b.id] || 0,

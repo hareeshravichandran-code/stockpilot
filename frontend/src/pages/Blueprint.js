@@ -943,7 +943,9 @@ function BucketCard({ bucket: b, rect, selected, dragging, linkTarget, external,
         <div className="bp-income-main">
           <div className="bp-bucket-name">{b.name}</div>
           <div className="bp-income-val">{fmtINR(b.inflow?.monthly)}<em>/mo</em></div>
-          <div className="bp-income-src">{b.income_source === 'dividends' ? 'From your dividends' : b.income_source === 'income_category' ? (b.income_category || 'Pick a category') : 'Entered manually'}</div>
+          {b.inflow?.last
+            ? <div className="bp-income-last" title={b.inflow.basis || ''}>Last credited <b>{fmtINR(b.inflow.last.amount)}</b> · {new Date(b.inflow.last.date + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</div>
+            : <div className="bp-income-src">{b.income_source === 'dividends' ? 'From your dividends' : b.income_source === 'income_category' ? (b.income_category || 'Pick a category') : 'Entered manually'}</div>}
         </div>
         {handle}
       </div>
@@ -988,6 +990,13 @@ function BucketCard({ bucket: b, rect, selected, dragging, linkTarget, external,
           </svg>
         )}
       </div>
+      {b.policy && (
+        <div className={`bp-policy-in lv-${b.policy.level}${b.policy.blink ? ' blink' : ''}`}
+          title={`${b.policy.insurer || 'Insurance'} ${b.policy.kind} policy · premium ${fmtINR(b.policy.premium, { compact: false })}${b.policy.due ? ' due ' + b.policy.due : ''}`}>
+          <svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6l7-3z" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinejoin="round" /></svg>
+          {fmtINR(b.policy.premium)}{b.policy.due ? ` · ${b.policy.days === 0 ? 'today' : b.policy.days === 1 ? 'tomorrow' : new Date(b.policy.due + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}` : ''}
+        </div>
+      )}
       {num(b.sip_monthly) > 0 && (
         <div className="bp-sip-in" title={(b.sips || []).map(x => `${x.title}: ${fmtINR(x.amount, { compact: false })}${x.due_day ? ' on day ' + x.due_day : ''} → ${x.fund}`).join('\n')}>
           <i aria-hidden="true" />SIP {fmtINR(b.sip_monthly)}/mo{(b.sips || [])[0]?.due_day ? ` · ${ordinal(b.sips[0].due_day)}` : ''}

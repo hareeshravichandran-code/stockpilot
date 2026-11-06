@@ -936,3 +936,16 @@ textarea.bp-input { resize: vertical; line-height: 1.45; }
 .bp-sip-in i { width: 12px; height: 12px; border-radius: 50%; border: 2px solid rgba(255,255,255,.85); border-top-color: transparent; animation: bp-sip-spin 1.6s linear infinite; }
 @keyframes bp-sip-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .bp-sip-in i { animation: none; } }
+
+.bp-income-last { font-size: 11.5px; color: #4d6a16; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bp-income-last b { font-weight: 700; }
+
+/* Insurance policy behind a goal: premium + due date, blinks by alert level */
+.bp-policy-in { position: absolute; right: 12px; top: -11px; display: inline-flex; align-items: center; gap: 5px; height: 21px; padding: 0 9px;
+  border-radius: 999px; background: #2f4577; color: #fff; font-size: 11px; font-weight: 600; white-space: nowrap; pointer-events: none; z-index: 2;
+  box-shadow: 0 2px 6px rgba(47,69,119,.25); }
+.bp-policy-in.blink.lv-very_high { background: #a82c2c; animation: bp-pol-blink .8s ease-in-out infinite alternate; }
+.bp-policy-in.blink.lv-high { background: #d9822b; animation: bp-pol-blink 1.2s ease-in-out infinite alternate; }
+.bp-policy-in.blink.lv-medium { background: #c99a12; animation: bp-pol-blink 1.6s ease-in-out infinite alternate; }
+@keyframes bp-pol-blink { from { opacity: 1; } to { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .bp-policy-in.blink { animation: none; } }

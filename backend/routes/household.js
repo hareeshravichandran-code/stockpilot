@@ -285,6 +285,7 @@ async function buildCalendar(uid, from, to) {
   // Blueprint goals: target dates, monthly / yearly goals and EMIs
   for (const b of bks.data || []) {
     if (b.is_loan) continue;
+    if (b.policy_id && b.recurrence !== 'none') continue;          // its premium is already on the calendar from the policy
     const om = ownerMember(b.user_id);
     const base = { module: b.is_emi ? 'loans' : 'goals', ref: b.id, member_ids: om ? [om.id] : [] };
     if (b.recurrence === 'monthly' && b.recurrence_day) {
