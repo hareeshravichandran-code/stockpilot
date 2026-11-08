@@ -139,6 +139,7 @@ async function monthFlow(uid, month, opts = {}) {
 
   const per = {};   // month -> section -> key -> {actual,count,name,color}
   const left = { duplicates: 0, transfers: 0, duplicate_amount: 0, transfer_amount: 0 };
+  const items = [];
   for (const t of rows) {
     const mo = monthOf(t.date_time);
     if (mo < months[0] || mo > month) continue;
@@ -151,6 +152,8 @@ async function monthFlow(uid, month, opts = {}) {
     const S = ((per[mo] = per[mo] || {})[g.section] = per[mo][g.section] || {});
     const G = (S[g.key] = S[g.key] || { key: g.key, name: g.name, color: g.color, actual: 0, count: 0, uncategorised: !!g.uncategorised, inferred: 0 });
     G.actual += num(t.amount); G.count++; if (g.inferred) G.inferred++;
+    if (opts.items && mo === month && g.section === 'expense')
+      items.push({ id: t.id, date: dayOf(t.date_time), merchant: t.merchant || null, amount: Math.round(num(t.amount)), key: g.key, group: g.name, color: g.color });
   }
 
   const prev = months.slice(3, 6);                                                 // the 3 months before this one
@@ -218,6 +221,7 @@ async function monthFlow(uid, month, opts = {}) {
     left_out: { ...left, duplicate_amount: Math.round(left.duplicate_amount), transfer_amount: Math.round(left.transfer_amount) },
     uncategorised: (exp.groups.find(g => g.key === 'u_out') || {}).actual || 0,
     subscriptions,
+    items: opts.items ? items.sort((a, b) => b.date.localeCompare(a.date)) : undefined,
     expected_basis: active.length ? `Average of ${active.length === 1 ? active[0] : `${active[0]} to ${active[active.length - 1]}`}` : 'No earlier months yet',
   };
 }

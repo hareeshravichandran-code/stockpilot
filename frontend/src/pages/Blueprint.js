@@ -927,6 +927,27 @@ const RING_R = 18;
 const RING_C = 2 * Math.PI * RING_R;
 const ordinal = (n) => n + (['th', 'st', 'nd', 'rd'][((n % 100) - 20) % 10] || ['th', 'st', 'nd', 'rd'][n % 100] || 'th');
 
+// Special cards: a small tag naming what the card is derived from, and one line of live numbers
+const SPEC_NAME = { salary: 'Salary', card_due: 'Card', loan_emi: 'Loan EMI', loan: 'Loan', emergency: 'Emergency', monthly_expense: 'Expenses', insurance: 'Insurance', retirement: 'Retirement' };
+const dd = (d) => d ? new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '';
+const SPEC_LINE = {
+  card_due: (s) => <>Pay <b>{fmtINR(s.due_amount)}</b>{s.due_date ? <> by {dd(s.due_date)}</> : null}</>,
+  loan_emi: (s) => <>EMI <b>{fmtINR(s.emi)}</b>{s.due_date ? <> · {dd(s.due_date)}</> : null}</>,
+  loan: (s) => <>Left <b>{fmtINR(s.outstanding)}</b>{s.years_left ? <> · ~{s.years_left} yrs</> : null}</>,
+  emergency: (s) => s.base === 'salary' && s.salary ? <>{s.months} × salary <b>{fmtINR(s.salary)}</b></> : <>Fixed target</>,
+};
+function SpecTag({ b }) {
+  const s = b.special;
+  if (!s || s.kind === 'retirement' || s.kind === 'monthly_expense') return null;
+  const src = s.master?.title;
+  return (
+    <span className={`bp-spec-tag sp-${s.kind}`} title={src ? `Special card from ${src}` : 'Special card'}>
+      <svg viewBox="0 0 24 24" width="9" height="9" aria-hidden="true"><path d="M12 2l2.9 6.6 7.1.6-5.4 4.7 1.6 7-6.2-3.8-6.2 3.8 1.6-7L2 9.2l7.1-.6z" fill="currentColor" /></svg>
+      {SPEC_NAME[s.kind]}{src ? <i> · {src}</i> : null}
+    </span>
+  );
+}
+
 function BucketCard({ bucket: b, rect, selected, dragging, linkTarget, external, onDown, onLinkDown, editing, leaving, stray }) {
   if (!rect) return null;
   const hex = colorHex(b.color);
@@ -939,11 +960,14 @@ function BucketCard({ bucket: b, rect, selected, dragging, linkTarget, external,
     return (
       <div data-bucket-id={b.id} className={`bp-bucket income ${leaving ? 'leaving' : ''} ${selected ? 'selected' : ''} ${dragging ? 'dragging' : ''} ${linkTarget ? 'link-target' : ''}`}
         style={style} onPointerDown={onDown}>
+        <SpecTag b={b} />
         <div className="bp-income-icon">₹</div>
         <div className="bp-income-main">
           <div className="bp-bucket-name">{b.name}</div>
           <div className="bp-income-val">{fmtINR(b.inflow?.monthly)}<em>/mo</em></div>
-          {b.inflow?.last
+          {b.special?.kind === 'salary' && b.special.bank?.balance != null
+            ? <div className="bp-income-last" title={`${b.special.bank.title} balance as of ${b.special.bank.balance_at || ''}`}>Last <b>{fmtINR(b.special.last_amount)}</b> · Bal <b>{fmtINR(b.special.bank.balance)}</b></div>
+            : b.inflow?.last
             ? <div className="bp-income-last" title={b.inflow.basis || ''}>Last credited <b>{fmtINR(b.inflow.last.amount)}</b> · {new Date(b.inflow.last.date + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</div>
             : <div className="bp-income-src">{b.income_source === 'dividends' ? 'From your dividends' : b.income_source === 'income_category' ? (b.income_category || 'Pick a category') : 'Entered manually'}</div>}
         </div>
@@ -965,8 +989,9 @@ function BucketCard({ bucket: b, rect, selected, dragging, linkTarget, external,
 
   return (
     <div data-bucket-id={b.id}
-      className={`bp-bucket goal tone-${tone} ${b.special_kind === 'monthly_expense' && b.flow ? 'flow-goal' : ''} ${b.is_loan ? 'loan' : ''} ${b.is_emi ? 'emi' : ''} ${leaving ? 'leaving' : ''} ${hex ? 'colored' : ''} ${att ? `att-${att}` : ''} ${selected ? 'selected' : ''} ${dragging ? 'dragging' : ''} ${done ? 'done' : ''} ${external ? 'external' : ''} ${linkTarget ? 'link-target' : ''}`}
+      className={`bp-bucket goal tone-${tone} ${b.special_kind === 'monthly_expense' && b.flow ? 'flow-goal' : ''} ${SPEC_LINE[b.special?.kind] ? 'spec-goal' : ''} ${b.is_loan ? 'loan' : ''} ${b.is_emi ? 'emi' : ''} ${leaving ? 'leaving' : ''} ${hex ? 'colored' : ''} ${att ? `att-${att}` : ''} ${selected ? 'selected' : ''} ${dragging ? 'dragging' : ''} ${done ? 'done' : ''} ${external ? 'external' : ''} ${linkTarget ? 'link-target' : ''}`}
       style={style} onPointerDown={onDown}>
+      <SpecTag b={b} />
       <div className="bp-bucket-top">
         <span className="bp-bucket-name" title={b.name}>{done && '✓ '}{b.name}</span>
         {b.special_kind === 'retirement' ? <span className="bp-rec ret" title="Target comes from the Retirement plan">Retire</span>
@@ -1018,7 +1043,9 @@ function BucketCard({ bucket: b, rect, selected, dragging, linkTarget, external,
       <div className="bp-bucket-foot">
         <span className={overdue ? 'overdue' : att === 'soon' ? 'soon' : ''} title={stray ? 'This date is outside the lane it sits in' : undefined}>
           {stray && <span className="bp-stray" aria-label="Date outside this lane">⇅ </span>}
-          {due ? <>{b.recurrence !== 'none' ? 'Next ' : ''}{fmtShortDate(due)}<span className="bp-rel">, {relTime(days)}</span></> : 'No date set'}
+          {SPEC_LINE[b.special?.kind]
+            ? <span className={`bp-spec-line lv-${b.special.level || 'none'}${b.special.blink ? ' blink' : ''}`}>{SPEC_LINE[b.special.kind](b.special)}</span>
+            : due ? <>{b.recurrence !== 'none' ? 'Next ' : ''}{fmtShortDate(due)}<span className="bp-rel">, {relTime(days)}</span></> : 'No date set'}
         </span>
         {pace && <span className={`bp-pace ${pace}`}>{pace === 'on' ? 'On track' : pace === 'ahead' ? 'Ahead' : 'Behind'}</span>}
         <span className="bp-badges">

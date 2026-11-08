@@ -17,7 +17,7 @@ const router = require('express').Router();
 const requireAuth = require('../middleware/requireAuth');
 const supabase = require('../services/supabase');
 
-const KINDS = ['loan', 'card', 'bank_account', 'sip', 'subscription', 'income', 'expense', 'rd', 'insurance'];
+const KINDS = ['loan', 'card', 'bank_account', 'sip', 'subscription', 'income', 'expense', 'rd', 'insurance', 'epf'];
 const SUBTYPES = { income: ['salary', 'dividend', 'rental', 'interest', 'freelance', 'other'], expense: ['rent', 'school_fee', 'maid', 'utility', 'other'] };
 const FREQS = ['monthly', 'quarterly', 'half_yearly', 'yearly', 'once', 'irregular'];
 const EVENT_FREQS = ['monthly', 'quarterly', 'half_yearly', 'yearly', 'once'];
@@ -715,3 +715,6 @@ router.delete('/:id', requireAuth, async (req, res) => {
 module.exports = router;
 module.exports._test = { folioScore, monthlyOf, fundWords, instKey, refKey, refMatch, nextDue, matches, nearestPeriod, defaultEvent, FLOW_KIND };
 module.exports.linkActuals = linkActuals;
+module.exports.upsertMaster = upsertMaster;
+module.exports.syncEvent = syncEvent;
+module.exports.linkFolios = linkFolios;

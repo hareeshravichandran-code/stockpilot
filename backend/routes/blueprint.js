@@ -333,6 +333,192 @@ async function linkPolicies(uid, buckets) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+//  Special cards derived from masters: salary, card dues, loan pairs (EMI box + loan box), emergency fund.
+//  Each is created once (users.bp_special remembers it, so a card the user deletes stays deleted);
+//  an existing box that clearly is that thing is adopted instead of creating a duplicate.
+// ═══════════════════════════════════════════════════════════════════
+const EMI_EXCLUDE = (g) => g.key === 'g_emi' || /loan|emi/i.test(g.key) || /\b(loans?|emis?)\b/i.test(g.name || '') || /\b(loan|emi)\b/i.test(g.merchant || '');
+
+function spendOnly(f) {
+  const cut = {};
+  const items = (f.items || []).filter(t => {
+    if (EMI_EXCLUDE({ key: t.key, name: t.group, merchant: t.merchant })) { cut[t.key] = (cut[t.key] || 0) + t.amount; return false; }
+    return true;
+  });
+  const groups = f.sections.expense.groups.filter(g => !EMI_EXCLUDE(g)).map(g => ({ ...g, actual: Math.max(0, g.actual - (cut[g.key] || 0)) }))
+    .filter(g => g.actual > 0 || g.expected > 0).sort((a, b) => (b.actual - a.actual) || (b.expected - a.expected));
+  return { groups, items, actual: groups.reduce((s, g) => s + g.actual, 0), expected: groups.reduce((s, g) => s + g.expected, 0) };
+}
+
+/** A free spot outside the first board: income boxes in a row above it, loan boxes stacked to its right. */
+async function offBoardSpot(uid, buckets, side) {
+  const { data: bd } = await supabase.from('bp_boards').select('x, y, w').eq('user_id', uid).order('created_at').limit(1);
+  const b = bd?.[0] || { x: 0, y: 0, w: 1200 };
+  const outside = buckets.filter(k => !k.layer_id && (side === 'left' ? k.kind === 'income' : k.is_loan));
+  return side === 'left'
+    ? { x: Math.round(num(b.x) + outside.length * 240), y: Math.round(num(b.y) - 130) }
+    : { x: Math.round(num(b.x) + num(b.w || 1200) + 40), y: Math.round(num(b.y) + outside.length * 140) };
+}
+
+async function firstLayerSpot(uid, buckets) {
+  const { data: ly } = await supabase.from('bp_layers').select('id, board_id').eq('user_id', uid).order('sort_order').limit(1);
+  if (!ly || !ly.length) return null;
+  const inLayer = buckets.filter(b => b.layer_id === ly[0].id);
+  return { layer_id: ly[0].id, board_id: ly[0].board_id, x: inLayer.reduce((mx, b) => Math.max(mx, num(b.x) + num(b.w || 200)), 0) + 20, y: 16 };
+}
+
+async function ensureSpecialCards(uid, buckets) {
+  const [{ data: ms }, { data: u }] = await Promise.all([
+    supabase.from('money_masters').select('id, kind, subtype, title, institution, ref, amount, due_day, meta, status').eq('owner_id', uid).neq('status', 'closed'),
+    supabase.from('users').select('bp_special').eq('id', uid).maybeSingle(),
+  ]);
+  const masters = ms || [];
+  const done = { ...(u?.bp_special || {}) };
+  let dirty = false;
+  const flag = (k) => { done[k] = true; dirty = true; };
+  const patch = async (b, fields) => { Object.assign(b, fields); await supabase.from('bp_buckets').update({ ...fields, updated_at: nowIso() }).eq('id', b.id).eq('user_id', uid); };
+  const insert = async (row) => {
+    const { data, error } = await supabase.from('bp_buckets').insert({ user_id: uid, status: 'active', w: 200, h: 112, ...row }).select().single();
+    if (error) throw error;
+    buckets.push(data);
+    return data;
+  };
+
+  // Salary: the income box tied to the salary master
+  const salM = masters.find(m => m.kind === 'income' && m.subtype === 'salary');
+  let salB = buckets.find(b => b.special_kind === 'salary');
+  if (!salB && !done.salary) {
+    salB = buckets.find(b => b.kind === 'income' && !b.special_kind && b.income_source !== 'manual' && /salary/i.test(`${b.name} ${b.income_category || ''}`));
+    if (salB) await patch(salB, { special_kind: 'salary', master_id: salM?.id || null });
+    else if (salM) {
+      const spot = await firstLayerSpot(uid, buckets);
+      salB = await insert({ kind: 'income', name: salM.title || 'Salary', special_kind: 'salary', master_id: salM.id, income_source: 'income_category',
+        income_category: 'Salary', target_amount: 0, recurrence: 'none', board_id: null, layer_id: null, ...(await offBoardSpot(uid, buckets, 'left')) });
+    }
+    if (salB) flag('salary');
+  }
+  if (salB && salM && salB.master_id !== salM.id) await patch(salB, { master_id: salM.id });
+
+  // Credit cards: one goal per card master that has a bill (due amount or date)
+  for (const m of masters.filter(m => m.kind === 'card')) {
+    const key = `card:${m.id}`;
+    if (buckets.some(b => b.master_id === m.id) || done[key]) continue;
+    if (!(num(m.meta?.due_amount) > 0 || m.meta?.due_date)) continue;
+    const spot = await firstLayerSpot(uid, buckets);
+    if (!spot) continue;
+    await insert({ ...spot, kind: 'goal', name: `${m.title || 'Credit card'} bill`.slice(0, 80), special_kind: 'card_due', master_id: m.id,
+      target_amount: num(m.meta?.due_amount) || num(m.amount) || 0, recurrence: 'monthly', recurrence_day: m.due_day || (m.meta?.due_date ? +m.meta.due_date.slice(8, 10) : 1) });
+    flag(key);
+  }
+
+  // Loans: an EMI box on the board plus the loan box outside it, joined by an 'emi' link
+  for (const m of masters.filter(m => m.kind === 'loan')) {
+    const key = `loan:${m.id}`;
+    let emi = buckets.find(b => b.master_id === m.id && !b.is_loan);
+    if (!emi && !done[key]) {
+      const word = (m.meta?.loan_type || (m.title || '').match(/home|car|personal|education|gold|vehicle|two.?wheeler/i)?.[0] || '').toLowerCase();
+      emi = buckets.find(b => b.kind === 'goal' && b.is_emi && !b.master_id && (
+        (word && new RegExp(word, 'i').test(b.name || '')) || (num(m.amount) > 0 && Math.abs(num(b.target_amount) - num(m.amount)) <= num(m.amount) * 0.05)));
+      if (emi) await patch(emi, { special_kind: 'loan_emi', master_id: m.id });
+      else {
+        const spot = await firstLayerSpot(uid, buckets);
+        if (!spot) continue;
+        emi = await insert({ ...spot, kind: 'goal', name: `${m.title || 'Loan'} EMI`.slice(0, 80), special_kind: 'loan_emi', master_id: m.id, is_emi: true,
+          target_amount: num(m.amount) || 0, recurrence: 'monthly', recurrence_day: m.due_day || 5, cycle_start: new Date().toISOString().slice(0, 10) });
+      }
+      flag(key);
+    }
+    if (!emi) continue;
+    const principal = num(m.meta?.principal), outstanding = num(m.meta?.outstanding);
+    let loan = emi.emi_loan_id ? buckets.find(b => b.id === emi.emi_loan_id) : null;
+    if (!loan && principal > 0) {
+      loan = await insert({ kind: 'goal', is_loan: true, status: 'inprogress', recurrence: 'none', name: `${m.title || 'Loan'}`.slice(0, 80), master_id: m.id,
+        special_kind: 'loan', target_amount: principal, manual_value: outstanding > 0 ? Math.max(0, principal - outstanding) : 0,
+        board_id: null, layer_id: null, ...(await offBoardSpot(uid, buckets, 'right')), w: 230 });
+      await supabase.from('bp_links').insert({ user_id: uid, from_bucket_id: emi.id, to_bucket_id: loan.id, link_type: 'emi', label: null });
+      await patch(emi, { is_emi: true, emi_loan_id: loan.id });
+    } else if (loan) {
+      const f = { master_id: m.id, special_kind: 'loan' };
+      if (principal > 0) f.target_amount = principal;
+      if (principal > 0 && outstanding > 0) f.manual_value = Math.max(0, principal - outstanding);
+      if (loan.master_id !== m.id || (f.target_amount && num(loan.target_amount) !== f.target_amount) || (f.manual_value !== undefined && num(loan.manual_value) !== f.manual_value)) await patch(loan, f);
+    }
+    if (num(m.amount) > 0 && Math.abs(num(emi.target_amount) - num(m.amount)) >= 1 && emi.master_id === m.id) await patch(emi, { target_amount: num(m.amount) });
+  }
+
+  // Emergency fund: last salary x months (6 by default), linkable to a bank account, folio or asset like any goal
+  let ef = buckets.find(b => b.special_kind === 'emergency');
+  if (!ef && !done.emergency) {
+    ef = buckets.find(b => b.kind === 'goal' && !b.special_kind && /emergenc|rainy day|contingen/i.test(b.name || ''));
+    if (ef) await patch(ef, { special_kind: 'emergency', special_cfg: { base: 'salary', months: 6, ...(ef.special_cfg || {}) } });
+    else {
+      const spot = await firstLayerSpot(uid, buckets);
+      if (spot) ef = await insert({ ...spot, kind: 'goal', name: 'Emergency fund', special_kind: 'emergency', special_cfg: { base: 'salary', months: 6 }, target_amount: 0, recurrence: 'none' });
+    }
+    if (ef) flag('emergency');
+  }
+
+  if (dirty) await supabase.from('users').update({ bp_special: done }).eq('id', uid);
+  return masters;
+}
+
+/** What a special card shows: its tag, the master it belongs to, and that master's live numbers. */
+function specialOf(b, ctx) {
+  const m = b.master_id ? ctx.masterById[b.master_id] : null;
+  const master = m ? { id: m.id, kind: m.kind, title: m.title } : null;
+  const today = new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
+  const nextOn = (day) => {
+    if (!day) return null;
+    const t = new Date(today + 'T00:00:00Z');
+    const mk = (y, mo) => { const last = new Date(Date.UTC(y, mo + 1, 0)).getUTCDate(); return new Date(Date.UTC(y, mo, Math.min(day, last))).toISOString().slice(0, 10); };
+    let d = mk(t.getUTCFullYear(), t.getUTCMonth());
+    if (d < today) d = mk(t.getUTCFullYear(), t.getUTCMonth() + 1);
+    return d;
+  };
+  const days = (d) => d ? Math.round((Date.parse(d) - Date.parse(today)) / 864e5) : null;
+  const { alertOf } = require('../services/alerts');
+  switch (b.special_kind) {
+    case 'salary': {
+      const bank = m?.meta?.bank_master_id ? ctx.masterById[m.meta.bank_master_id] : null;
+      const s = ctx.salary;
+      return { kind: 'salary', tag: 'Salary', master,
+        last_amount: num(m?.meta?.last_amount) || s?.last?.amount || null, last_date: m?.meta?.last_date || s?.last?.date || null,
+        bank: bank ? { id: bank.id, title: bank.title, balance: num(bank.meta?.balance), balance_at: bank.meta?.balance_at || null } : null };
+    }
+    case 'card_due': {
+      const due = m?.meta?.due_date && m.meta.due_date >= today ? m.meta.due_date : nextOn(m?.due_day || b.recurrence_day);
+      const a = alertOf('card_due', null, days(due) ?? 999, false);
+      return { kind: 'card_due', tag: 'Credit card', master, due_date: due, days: days(due), due_amount: num(m?.meta?.due_amount) || num(b.target_amount),
+        min_due: num(m?.meta?.min_due) || null, level: a.level, blink: a.blink };
+    }
+    case 'loan_emi': {
+      const due = nextOn(m?.due_day || b.recurrence_day);
+      const a = alertOf('emi', null, days(due) ?? 999, false);
+      return { kind: 'loan_emi', tag: 'Loan EMI', master, emi: num(m?.amount) || num(b.target_amount), due_date: due, days: days(due), level: a.level, blink: a.blink };
+    }
+    case 'loan': {
+      const emi = num(m?.amount);
+      const out = num(m?.meta?.outstanding) || Math.max(0, num(b.target_amount) - num(b.manual_value));
+      // EMIs left: the tenure the user gave, else outstanding / EMI (ignores interest, so it is a lower bound)
+      const left = num(m?.meta?.tenure_months) || (emi > 0 && out > 0 ? Math.ceil(out / emi) : null);
+      return { kind: 'loan', tag: 'Loan', master, principal: num(m?.meta?.principal) || num(b.target_amount), outstanding: out, emi,
+        months_left: left, years_left: left ? Math.round((left / 12) * 10) / 10 : null };
+    }
+    case 'emergency': {
+      const cfg = { base: 'salary', months: 6, ...(b.special_cfg || {}) };
+      const sal = ctx.salary?.last?.amount || null;
+      return { kind: 'emergency', tag: 'Emergency fund', master, base: cfg.base, months: num(cfg.months) || 6, salary: sal,
+        suggested: cfg.base === 'salary' && sal ? Math.round(sal * (num(cfg.months) || 6)) : null };
+    }
+    case 'monthly_expense': return { kind: 'monthly_expense', tag: 'Monthly expenses', master: null };
+    case 'retirement': return { kind: 'retirement', tag: 'Retirement', master: null };
+    default:
+      if (b.policy_id) return { kind: 'insurance', tag: 'Insurance', master: ctx.polById[b.policy_id] ? { id: b.policy_id, kind: 'insurance', title: ctx.polById[b.policy_id].plan_name || ctx.polById[b.policy_id].insurer } : null };
+      return null;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 //  GET /api/blueprint
 // ═══════════════════════════════════════════════════════════════════
 router.get('/', requireAuth, async (req, res) => {
@@ -378,12 +564,32 @@ router.get('/', requireAuth, async (req, res) => {
     const buckets = kRes.data || [];
     await linkPolicies(uid, buckets).catch(e => console.error(JSON.stringify({ event: 'BP_POLICY_LINK_ERROR', error: e.message })));
     await ensureExpenseGoal(uid, buckets).catch(e => console.error(JSON.stringify({ event: 'BP_EXPENSE_GOAL_ERROR', error: e.message })));
+    const masters = await ensureSpecialCards(uid, buckets).catch(e => { console.error(JSON.stringify({ event: 'BP_SPECIAL_ERROR', error: e.message })); return []; });
+    const masterById = Object.fromEntries((masters || []).map(m => [m.id, m]));
+    let salary = buckets.some(b => b.special_kind === 'salary' || b.special_kind === 'emergency')
+      ? await require('../services/salary').salaryOf(uid).catch(() => null) : null;
+    // The salary master's own last credit (from setup) when no salary credits are linked yet
+    const salM = (masters || []).find(m => m.kind === 'income' && m.subtype === 'salary');
+    if (!salary?.last?.amount && num(salM?.meta?.last_amount) > 0) salary = { ...(salary || {}), last: { amount: num(salM.meta.last_amount), date: salM.meta.last_date || null } };
+    // Emergency fund target follows last salary x months unless the user set the base to manual
+    for (const b of buckets.filter(b => b.special_kind === 'emergency')) {
+      const cfg = { base: 'salary', months: 6, ...(b.special_cfg || {}) };
+      if (cfg.base === 'salary' && salary?.last?.amount) {
+        const t = Math.round(salary.last.amount * (num(cfg.months) || 6));
+        if (Math.abs(num(b.target_amount) - t) >= 1) { b.target_amount = t; await supabase.from('bp_buckets').update({ target_amount: t }).eq('id', b.id).eq('user_id', uid); }
+      }
+    }
+    // Special cards may have added links (EMI box -> loan box)
+    const { data: linksNow } = await supabase.from('bp_links').select('*').eq('user_id', uid);
     let flow = null;
     if (buckets.some(b => b.special_kind === 'monthly_expense')) {
       const mo = new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 7);
-      const f = await require('../services/moneyflow').monthFlow(uid, mo, { light: true }).catch(() => null);
-      if (f) flow = { month: mo, expected: f.totals.expense.expected, actual: f.totals.expense.actual, basis: f.expected_basis,
-        top: f.sections.expense.groups.slice(0, 3).map(g => ({ name: g.name, actual: g.actual })) };
+      const f = await require('../services/moneyflow').monthFlow(uid, mo, { light: true, items: true }).catch(() => null);
+      if (f) {
+        // Monthly expenses = spending only: EMIs are left out (SIPs and investments are already a separate section)
+        const sp = spendOnly(f);
+        flow = { month: mo, expected: sp.expected, actual: sp.actual, basis: f.expected_basis, top: sp.groups.slice(0, 3).map(g => ({ name: g.name, actual: g.actual })) };
+      }
     }
     const policyIds = [...new Set(buckets.map(b => b.policy_id).filter(Boolean))];
     const { data: polRows } = policyIds.length
@@ -405,6 +611,7 @@ router.get('/', requireAuth, async (req, res) => {
         progress: target > 0 ? Math.round(Math.min(999, (current / target) * 100) * 10) / 10 : 0,
         inflow: inflows[b.id] || null,
         flow: b.special_kind === 'monthly_expense' ? flow : undefined,
+        special: specialOf(b, { masterById, salary, polById }),
         policy: (() => {
           const p = polById[b.policy_id];
           if (!p) return null;
@@ -427,7 +634,7 @@ router.get('/', requireAuth, async (req, res) => {
       layers: (lRes.data || []).filter(l => l.board_id === bd.id).sort((a, b) => a.sort_order - b.sort_order),
     }));
 
-    res.json({ boards, buckets: enriched, links: linkRes.data || [] });
+    res.json({ boards, buckets: enriched, links: linksNow || linkRes.data || [] });
   } catch (err) {
     console.error(JSON.stringify({ event: 'BLUEPRINT_GET_ERROR', error: err.message }));
     res.status(500).json({ error: err.message });
@@ -600,6 +807,11 @@ function cleanBucket(body) {
   if (b.color !== undefined && b.color !== null && !/^[a-z_]{2,20}$/.test(b.color)) b.color = null;
   if (b.kind && !['goal', 'income'].includes(b.kind)) b.kind = 'goal';
   if (b.kind === 'income') { b.board_id = null; b.layer_id = null; }
+  // Emergency fund settings: base 'salary' (months x last salary) or 'manual'
+  if (body && body.special_cfg && typeof body.special_cfg === 'object') {
+    const c = body.special_cfg;
+    b.special_cfg = { base: c.base === 'manual' ? 'manual' : 'salary', months: int(c.months, 1, 36) || 6 };
+  }
   return b;
 }
 
@@ -612,6 +824,18 @@ router.post('/buckets', requireAuth, async (req, res) => {
   }).select().single();
   if (error) return res.status(500).json({ error: error.message });
   res.status(201).json(data);
+});
+
+// Monthly expenses card detail: this month's spend groups (no EMIs, SIPs or investments) and recent expenses
+router.get('/expenses', requireAuth, async (req, res) => {
+  try {
+    const mo = /^\d{4}-\d{2}$/.test(req.query.month || '') ? req.query.month : new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 7);
+    const f = await require('../services/moneyflow').monthFlow(req.user.id, mo, { light: true, items: true });
+    const sp = spendOnly(f);
+    res.json({ month: mo, basis: f.expected_basis, actual: sp.actual, expected: sp.expected, groups: sp.groups, items: sp.items.slice(0, 40) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 router.put('/buckets/:id', requireAuth, async (req, res) => {

@@ -233,6 +233,7 @@ export const blueprintAPI = {
   reopen:        (id)           => api.post(`/api/blueprint/buckets/${id}/reopen`),
   closeCycle:    (id, data)     => api.post(`/api/blueprint/buckets/${id}/cycle`, data),
   setEmi:        (id, data)     => api.post(`/api/blueprint/buckets/${id}/emi`, data),
+  expenses:      (month)        => api.get('/api/blueprint/expenses', { params: month ? { month } : {} }),
   mapAsset:      (id, data)     => api.post(`/api/blueprint/buckets/${id}/assets`, data),
   unmapAsset:    (id, assetId)  => api.delete(`/api/blueprint/buckets/${id}/assets/${assetId}`),
   createLink:    (data)         => api.post('/api/blueprint/links', data),

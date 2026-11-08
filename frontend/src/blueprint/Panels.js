@@ -70,6 +70,122 @@ function Tabs({ value, onChange, items }) {
 // ═══════════════════════════════════════════════════════════════════
 //  Goal bucket
 // ═══════════════════════════════════════════════════════════════════
+// ── Special cards: what the card is derived from (a master) and its live numbers ──
+const SPECIAL_ICON = { salary: '₹', card_due: '▭', loan_emi: '⟳', loan: '⌂', emergency: '☂', monthly_expense: '◔', insurance: '⛨', retirement: '◷' };
+const KIND_LABEL = { income: 'Salary master', card: 'Card master', loan: 'Loan master', bank_account: 'Bank account', insurance: 'Insurance policy' };
+const dShort = (d) => d ? new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '';
+
+export function SpecialSection({ bucket, onReload, notify }) {
+  const sp = bucket.special;
+  if (!sp) return null;
+  return (
+    <div className={`bp-special sp-${sp.kind}`}>
+      <div className="bp-special-head">
+        <span className="bp-special-ico" aria-hidden="true">{SPECIAL_ICON[sp.kind] || '★'}</span>
+        <div>
+          <div className="bp-special-tag">Special card · {sp.tag}</div>
+          <div className="bp-special-src">{sp.master ? <>From <b>{sp.master.title}</b> <i>({KIND_LABEL[sp.master.kind] || 'master'})</i></> : sp.kind === 'monthly_expense' ? 'From the Money flow module' : sp.kind === 'emergency' ? 'Built from your salary' : sp.kind === 'retirement' ? 'From the Retirement plan' : 'Not linked to a master yet'}</div>
+        </div>
+      </div>
+      {sp.kind === 'salary' && (
+        <div className="bp-special-grid">
+          <div><span>Last salary</span><b>{fmtINR(sp.last_amount, { compact: false })}</b><em>{dShort(sp.last_date)}</em></div>
+          <div><span>{sp.bank ? sp.bank.title : 'Bank balance'}</span><b>{sp.bank?.balance != null ? fmtINR(sp.bank.balance, { compact: false }) : '—'}</b><em>{sp.bank?.balance_at ? `as of ${dShort(sp.bank.balance_at)}` : 'Link the salary to an account in Masters'}</em></div>
+        </div>
+      )}
+      {sp.kind === 'card_due' && (
+        <div className="bp-special-grid">
+          <div className={`lv-${sp.level}`}><span>To pay</span><b>{fmtINR(sp.due_amount, { compact: false })}</b><em>{sp.min_due ? `Min ${fmtINR(sp.min_due, { compact: false })}` : ''}</em></div>
+          <div><span>Due</span><b>{dShort(sp.due_date) || '—'}</b><em>{sp.days != null ? relTime(sp.days) : ''}</em></div>
+        </div>
+      )}
+      {sp.kind === 'loan_emi' && (
+        <div className="bp-special-grid">
+          <div><span>EMI</span><b>{fmtINR(sp.emi, { compact: false })}</b><em>every month</em></div>
+          <div><span>Next EMI</span><b>{dShort(sp.due_date) || '—'}</b><em>{sp.days != null ? relTime(sp.days) : ''}</em></div>
+        </div>
+      )}
+      {sp.kind === 'loan' && (
+        <div className="bp-special-grid">
+          <div><span>Outstanding</span><b>{fmtINR(sp.outstanding, { compact: false })}</b><em>of {fmtINR(sp.principal)}</em></div>
+          <div><span>EMIs left</span><b>{sp.months_left ? `${sp.months_left}` : '—'}</b><em>{sp.years_left ? `about ${sp.years_left} years` : 'Add the outstanding in Masters'}</em></div>
+        </div>
+      )}
+      {sp.kind === 'emergency' && <EmergencyCfg bucket={bucket} sp={sp} onReload={onReload} notify={notify} />}
+      {sp.kind === 'monthly_expense' && <ExpenseDetail />}
+    </div>
+  );
+}
+
+function EmergencyCfg({ bucket, sp, onReload, notify }) {
+  const [base, setBase] = useState(sp.base || 'salary');
+  const [months, setMonths] = useState(sp.months || 6);
+  const [target, setTarget] = useState(bucket.target_amount ?? '');
+  const [busy, setBusy] = useState(false);
+  const preview = base === 'salary' && sp.salary ? Math.round(sp.salary * (num(months) || 6)) : null;
+  const save = async () => {
+    setBusy(true);
+    try {
+      await blueprintAPI.updateBucket(bucket.id, { special_cfg: { base, months: num(months) || 6 }, ...(base === 'manual' ? { target_amount: target } : {}) });
+      await onReload(); notify('Saved');
+    } catch (e) { notify(errMsg(e), 'error'); } finally { setBusy(false); }
+  };
+  return (
+    <div className="bp-stack" style={{ marginTop: 10 }}>
+      <div className="bp-seg">
+        {[['salary', 'Months of salary'], ['manual', 'Fixed amount']].map(([id, l]) => (
+          <button key={id} type="button" className={base === id ? 'on' : ''} onClick={() => setBase(id)}>{l}</button>))}
+      </div>
+      {base === 'salary' ? (
+        <Field label="Months to keep aside" hint={sp.salary ? `Last salary ${fmtINR(sp.salary, { compact: false })} × ${num(months) || 6} = ${fmtINR(preview, { compact: false })}` : 'No salary found yet: set up from SMS or add a salary master.'}>
+          <input className="bp-input mono" type="number" min="1" max="36" value={months} onChange={e => setMonths(e.target.value)} />
+        </Field>
+      ) : (
+        <Field label="Target (₹)"><input className="bp-input mono" type="number" min="0" value={target} onChange={e => setTarget(e.target.value)} /></Field>
+      )}
+      <div className="bp-row-end"><button className="bp-btn primary" disabled={busy} onClick={save}>Save</button></div>
+      <div className="bp-field-hint">Fund it from the Funding tab: a bank account, a liquid fund folio or any asset.</div>
+    </div>
+  );
+}
+
+function ExpenseDetail() {
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    let alive = true;
+    blueprintAPI.expenses().then(r => { if (alive) setD(r.data); }).catch(e => { if (alive) setErr(errMsg(e)); });
+    return () => { alive = false; };
+  }, []);
+  if (err) return <div className="bp-empty-small">{err}</div>;
+  if (!d) return <div className="bp-empty-small">Loading this month…</div>;
+  const max = Math.max(1, ...d.groups.map(g => Math.max(g.actual, g.expected)));
+  return (
+    <div className="bp-exp">
+      <div className="bp-special-grid">
+        <div className={d.expected > 0 && d.actual > d.expected ? 'lv-very_high' : ''}><span>Spent in {new Date(d.month + '-01T00:00:00').toLocaleDateString('en-IN', { month: 'long' })}</span><b>{fmtINR(d.actual, { compact: false })}</b><em>no EMIs, SIPs or investments</em></div>
+        <div><span>Usual</span><b>{fmtINR(d.expected, { compact: false })}</b><em>{d.basis}</em></div>
+      </div>
+      <div className="bp-section-title">Where it went</div>
+      <div className="bp-exp-groups">
+        {d.groups.slice(0, 8).map(g => (
+          <div key={g.key} className="bp-exp-g">
+            <span className="n" title={g.name}>{g.name}</span>
+            <span className="bar"><i style={{ width: `${(g.actual / max) * 100}%`, background: g.color }} /><u style={{ left: `${(g.expected / max) * 100}%` }} title={`Usual ${fmtINR(g.expected)}`} /></span>
+            <b>{fmtINR(g.actual)}</b>
+          </div>))}
+      </div>
+      <div className="bp-section-title">Recent expenses</div>
+      {d.items.length === 0 ? <div className="bp-empty-small">No expenses this month yet.</div> : (
+        <ul className="bp-exp-items">
+          {d.items.slice(0, 15).map(t => (
+            <li key={t.id}><i style={{ background: t.color }} /><span className="m">{t.merchant || t.group}<em>{t.group} · {dShort(t.date)}</em></span><b>{fmtINR(t.amount, { compact: false })}</b></li>))}
+        </ul>)}
+      <a className="bp-btn" href="/money-flow">Open Money flow →</a>
+    </div>
+  );
+}
+
 export function BucketPanel({ bucket, boardsById, links, bucketsById, onReload, onClose, notify, onSelect, onDelete, editing, onEdit, onEmi }) {
   const [tab, setTab] = useState('details');
   const board = bucket.board_id ? boardsById[bucket.board_id] : null;
@@ -103,6 +219,7 @@ export function BucketPanel({ bucket, boardsById, links, bucketsById, onReload, 
         </div>
       </div>
 
+      <SpecialSection bucket={bucket} onReload={onReload} notify={notify} />
       <Tabs value={tab} onChange={setTab} items={[
         { id: 'details', label: 'Details' },
         { id: 'assets', label: 'Funding', count: bucket.assets.length },
@@ -719,6 +836,7 @@ export function IncomePanel({ bucket, links, bucketsById, boardsById, onReload, 
           </div>
         )}
       </div>
+      <SpecialSection bucket={bucket} onReload={onReload} notify={notify} />
       <div className="bp-stack">
         {!editing && (
           <>
