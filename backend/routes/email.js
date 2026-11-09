@@ -514,6 +514,13 @@ async function saveCASHoldings(userId, holdings, mfHoldings, casDate) {
       }
     }
     saved += savedCount;
+    // Folios first created from SMS (during setup) are now covered by the CAS: drop those placeholders
+    try {
+      const casFolios = new Set(records.map(r => String(r.folio_number || '').replace(/\D/g, '')).filter(Boolean));
+      const { data: smsRows } = await supabase.from('mf_holdings').select('id, folio_number').eq('user_id', userId).eq('source', 'sms');
+      const stale = (smsRows || []).filter(r => casFolios.has(String(r.folio_number || '').replace(/\D/g, ''))).map(r => r.id);
+      if (stale.length) await supabase.from('mf_holdings').delete().in('id', stale);
+    } catch (e) { console.error('[MF_SMS_CLEANUP_ERROR] ' + e.message); }
     const statusMsg = 'Saved ' + savedCount + '/' + records.length + ' MF holdings' + (errors.length ? ' ERRORS: ' + errors.join('; ') : '');
     console.log('[MF_DONE] ' + statusMsg);
     try { await supabase.from('sync_logs').insert({

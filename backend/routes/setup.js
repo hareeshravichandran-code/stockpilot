@@ -19,6 +19,12 @@ const num = (v) => { const x = parseFloat(v); return Number.isFinite(x) ? x : nu
 const str = (v, n = 120) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, n) : null);
 const isDate = (s) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
 const nowIso = () => new Date().toISOString();
+async function pool(items, n, fn) {
+  let i = 0;
+  const run = async () => { while (i < items.length) { const it = items[i++]; await fn(it); } };
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, run));
+}
+
 const STEPS = ['accounts', 'salary', 'cards', 'insurance', 'loans', 'folios', 'epf', 'subscriptions', 'rules'];
 
 async function mergeMeta(id, extra) {
@@ -45,12 +51,14 @@ async function master(uid, f, metaExtra = {}, patchExisting = {}) {
 router.get('/status', requireAuth, async (req, res) => {
   try {
     const uid = req.user.id;
-    const [m, p, u] = await Promise.all([
+    const [m, p, u, f] = await Promise.all([
       supabase.from('money_masters').select('id, kind, subtype, institution, ref, title, amount, due_day, meta, status').eq('owner_id', uid).neq('status', 'closed'),
       supabase.from('insurance_policies').select('id, kind, insurer, policy_ref, premium, renewal_date, status').eq('owner_id', uid),
       supabase.from('users').select('sms_setup_at').eq('id', uid).maybeSingle(),
+      supabase.from('mf_holdings').select('folio_number').eq('user_id', uid),
     ]);
-    res.json({ masters: m.data || [], policies: p.data || [], setup_at: u.data?.sms_setup_at || null });
+    res.json({ masters: m.data || [], policies: p.data || [], setup_at: u.data?.sms_setup_at || null,
+      folios: [...new Set((f.data || []).map(r => String(r.folio_number || '').replace(/\D/g, '')).filter(Boolean))] });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -62,7 +70,7 @@ router.post('/apply', requireAuth, async (req, res) => {
   const out = { created: 0, updated: 0, ids: [] };
   const note = (r) => { if (!r) return; out[r.status === 'created' ? 'created' : 'updated']++; out.ids.push(r.id); };
   try {
-    for (const it of items) {
+    const handle = async (it) => {
       if (step === 'accounts') {
         const r = await master(uid, { kind: 'bank_account', institution: it.bank, ref: it.last4, title: str(it.title) || `${it.bank} ••${refKey(it.last4)}`, frequency: 'irregular' },
           { balance: num(it.balance), balance_at: isDate(it.as_of) ? it.as_of : null, balance_rule: 'sms', account_type: str(it.type, 20) });
@@ -102,10 +110,29 @@ router.post('/apply', requireAuth, async (req, res) => {
         { title: str(it.title), amount: num(it.emi), due_day: num(it.due_day) });
         note(r);
       } else if (step === 'folios') {
-        const r = await master(uid, { kind: 'sip', institution: it.amc, ref: it.folio, title: str(it.title) || `${it.scheme || it.amc} SIP`,
-          amount: num(it.amount), frequency: 'monthly', due_day: num(it.due_day), category_id: 'mf_sip' },
-        { folio: str(it.folio, 30), scheme: str(it.scheme, 160), units: num(it.units), nav: num(it.nav), last_date: isDate(it.last_date) ? it.last_date : null });
-        note(r);
+        // The folio itself goes into mf_holdings, the same table the CAS fills (CAS rows replace these later)
+        const folio = str(it.folio, 30);
+        const digits = String(folio || '').replace(/\D/g, '');
+        if (!digits) return;
+        const { data: have } = await supabase.from('mf_holdings').select('id, folio_number, fund_name').eq('user_id', uid);
+        const sameFolio = (have || []).filter(h => String(h.folio_number || '').replace(/\D/g, '') === digits);
+        const scheme = str(it.scheme, 160);
+        const exists = sameFolio.some(h => !scheme || !h.fund_name || h.fund_name.toLowerCase().slice(0, 12) === scheme.toLowerCase().slice(0, 12)) && sameFolio.length > 0;
+        if (exists) out.updated++;
+        else {
+          const { error } = await supabase.from('mf_holdings').insert({ user_id: uid, folio_number: folio, fund_name: scheme || `${it.amc || 'Mutual fund'} folio ${folio}`,
+            fund_house: str(it.amc, 80), nav: num(it.nav), nav_date: isDate(it.last_date) ? it.last_date : null, statement_date: isDate(it.last_date) ? it.last_date : null,
+            source: 'sms', updated_at: nowIso() });
+          if (error) throw error;
+          out.created++;
+        }
+        // A regular SIP also becomes a master, so its instalments show on the calendar
+        if (num(it.due_day)) {
+          const r = await master(uid, { kind: 'sip', institution: it.amc, ref: folio, title: str(it.title) || `${scheme || it.amc} SIP`,
+            amount: num(it.amount), frequency: 'monthly', due_day: num(it.due_day), category_id: 'mf_sip' },
+          { folio, scheme, last_date: isDate(it.last_date) ? it.last_date : null });
+          out.ids.push(r.id);
+        }
       } else if (step === 'epf') {
         const r = await master(uid, { kind: 'epf', institution: 'EPFO', ref: it.uan_last4 || it.member_id, title: str(it.title) || 'EPF', amount: num(it.monthly), frequency: 'monthly' },
           { balance: num(it.balance), balance_at: isDate(it.as_of) ? it.as_of : null, last_contribution: num(it.monthly), wage_month: str(it.wage_month, 10) });
@@ -120,7 +147,7 @@ router.post('/apply', requireAuth, async (req, res) => {
       } else if (step === 'rules') {
         // Category rules for grouped spends: future SMS from this name get the category
         const pattern = String(it.pattern || '').toLowerCase().trim().slice(0, 80);
-        if (pattern.length < 3 || !str(it.category_id, 40)) continue;
+        if (pattern.length < 3 || !str(it.category_id, 40)) return;
         const { data: ex } = await supabase.from('user_sms_rules').select('id').eq('user_id', uid).eq('merchant_pattern', pattern).maybeSingle();
         if (ex) { await supabase.from('user_sms_rules').update({ category_id: it.category_id, user_confirmed: true, updated_at: Date.now() }).eq('id', ex.id); out.updated++; }
         else { await supabase.from('user_sms_rules').insert({ id: require('crypto').randomUUID(), user_id: uid, merchant_pattern: pattern, category_id: it.category_id, match_count: num(it.count) || 1, user_confirmed: true, created_at: Date.now(), updated_at: Date.now() }); out.created++; }
@@ -128,10 +155,16 @@ router.post('/apply', requireAuth, async (req, res) => {
         await supabase.from('expense_transactions').update({ category_id: it.category_id, updated_at: Date.now() })
           .eq('user_id', uid).is('category_id', null).ilike('merchant', `%${pattern}%`);
       }
-    }
-    if (step === 'folios') await linkFolios(uid).catch(() => {});
-    if (['salary', 'loans', 'cards', 'subscriptions', 'folios'].includes(step)) await linkActuals(uid, { force: true }).catch(() => {});
+    };
+    // A few at a time: each item is several round trips, and 18 folios one by one took longer than the app waits
+    await pool(items, 6, handle);
     res.json({ ok: true, ...out });
+    // Linking folios and past payments can take a while: do it after answering
+    setImmediate(async () => {
+      if (step === 'folios') await linkFolios(uid).catch(e => console.error(JSON.stringify({ event: 'SETUP_LINK_FOLIOS_ERROR', error: e.message })));
+      if (['salary', 'loans', 'cards', 'subscriptions', 'folios'].includes(step))
+        await linkActuals(uid, { force: true }).catch(e => console.error(JSON.stringify({ event: 'SETUP_LINK_ACTUALS_ERROR', error: e.message })));
+    });
   } catch (err) {
     console.error(JSON.stringify({ event: 'SETUP_APPLY_ERROR', step, error: err.message }));
     res.status(500).json({ error: err.message, ...out });
