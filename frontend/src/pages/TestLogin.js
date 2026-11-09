@@ -16,7 +16,6 @@ export default function TestLogin() {
     authAPI.testLink(key)
       .then(r => { loginWithToken(r.data.token, r.data.user); nav('/dashboard', { replace: true }); })
       .catch(e => setMsg(e.response?.data?.error || 'This link did not work.'));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   return (
     <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: 'var(--bg, #f6efe2)', fontFamily: 'inherit' }}>
