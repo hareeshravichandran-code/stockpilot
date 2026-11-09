@@ -84,9 +84,12 @@ router.post('/login', async (req, res) => {
 router.get('/me', requireAuth, async (req, res) => {
   try {
     const { data, error } = await supabase
-      .from('users').select('id, name, email, pan, dob, broker, created_at, is_test').eq('id', req.user.id).single();
+      .from('users').select('*').eq('id', req.user.id).single();
     if (error) return res.status(404).json({ error: 'User not found' });
-    res.json({ ...data, pan: data.pan ? '****' + data.pan.slice(-4) : null, panSet: !!data.pan, dobSet: !!data.dob });
+    // Only these fields go back (select '*' because older databases have no broker column)
+    const { id, name, email, dob, broker = null, created_at, is_test = false } = data;
+    res.json({ id, name, email, dob, broker, created_at, is_test,
+      pan: data.pan ? '****' + data.pan.slice(-4) : null, panSet: !!data.pan, dobSet: !!data.dob });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

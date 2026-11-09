@@ -83,7 +83,7 @@ export function AuthProvider({ children }) {
     localStorage.setItem('sp_token', token);
     const decoded = decodeToken(token);
     const minimalUser = decoded?.id
-      ? { id: decoded.id, email: decoded.email, name: partialUser?.name || decoded.name || decoded.email }
+      ? { id: decoded.id, email: decoded.email, name: partialUser?.name || decoded.name || decoded.email, is_test: !!partialUser?.is_test }
       : partialUser || null;
     if (minimalUser) {
       setUser(minimalUser);
