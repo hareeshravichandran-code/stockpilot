@@ -119,6 +119,27 @@ router.post('/diag/:id/done', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Whole upload as JSON lines (the owner's own upload, or any for the admin): used to replay SMS through the reader offline
+router.get('/diag/:id/export', requireAuth, async (req, res) => {
+  try {
+    const u = await me(req.user.id);
+    let q = supabase.from('diag_uploads').select('id, user_id, app_version, device, created_at, sms_count').eq('id', req.params.id);
+    if (!u?.is_admin) q = q.eq('user_id', req.user.id);
+    const { data: up } = await q.maybeSingle();
+    if (!up) return res.status(404).json({ error: 'Upload not found' });
+    res.setHeader('Content-Type', 'application/x-ndjson');
+    res.write(JSON.stringify({ upload: up }) + '\n');
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabase.from('diag_sms').select('sender, body, sms_at, financial, parsed')
+        .eq('upload_id', up.id).order('id').range(from, from + 999);
+      if (error) throw error;
+      for (const r of data || []) res.write(JSON.stringify(r) + '\n');
+      if (!data || data.length < 1000) break;
+    }
+    res.end();
+  } catch (err) { if (!res.headersSent) res.status(500).json({ error: err.message }); else res.end(); }
+});
+
 // ── Admin side ───────────────────────────────────────────────────────────────
 router.get('/support/admin/threads', requireAuth, requireAdmin, async (req, res) => {
   try {
