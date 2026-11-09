@@ -10,7 +10,7 @@ import Family from './pages/Family';
 import MoneyFlow from './pages/MoneyFlow';
 import TestLogin, { TestAccountBar } from './pages/TestLogin';
 import Support from './pages/Support';
-import AdminSupport from './pages/AdminSupport';
+import Admin from './pages/Admin';
 
 function PrivateRoute({ children }) {
   const { user, loading } = useAuth();
@@ -55,7 +55,8 @@ export default function App() {
           <Route path="/family" element={<PrivateRoute><Family /></PrivateRoute>} />
           <Route path="/money-flow" element={<PrivateRoute><MoneyFlow /></PrivateRoute>} />
           <Route path="/support" element={<PrivateRoute><Support /></PrivateRoute>} />
-          <Route path="/admin/support" element={<PrivateRoute><AdminSupport /></PrivateRoute>} />
+          <Route path="/admin" element={<PrivateRoute><Admin /></PrivateRoute>} />
+          <Route path="/admin/:tab" element={<PrivateRoute><Admin /></PrivateRoute>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
         <TestAccountBar />

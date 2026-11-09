@@ -44,6 +44,13 @@ export const supportAPI = {
   updateDiag: (id, data)    => api.put(`/api/support/admin/diag/${id}`, data),
 };
 
+export const smsIssuesAPI = {
+  list:       (params)      => api.get('/api/admin/sms-issues', { params }),
+  get:        (id)          => api.get(`/api/admin/sms-issues/${id}`),
+  update:     (id, data)    => api.put(`/api/admin/sms-issues/${id}`, data),
+  importDiag: (diagId)      => api.post(`/api/admin/sms-issues/import-diag/${diagId}`),
+};
+
 export const testAPI = {
   reset: (scope) => api.post('/api/test/reset', { scope }),
   seed:  ()      => api.post('/api/test/seed'),

@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { supportAPI } from '../lib/api';
+import { supportAPI, smsIssuesAPI } from '../lib/api';
 import { Bubbles, Composer, fmtWhen } from './supportChat';
 import './Support.css';
 
 // Admin inbox: every user's thread, replies with screenshots, and their diagnostics uploads
-export default function AdminSupport() {
+export default function AdminSupport({ embedded = false }) {
   const nav = useNavigate();
   const [threads, setThreads] = useState(null);
   const [sel, setSel] = useState(null);
@@ -19,9 +19,9 @@ export default function AdminSupport() {
 
   if (err === 'Admin only') return <div className="sp-page"><div className="sp-empty">This page is for the Kanalyst admin.</div></div>;
   return (
-    <div className="sp-admin">
+    <div className={`sp-admin ${embedded ? 'embedded' : ''}`}>
       <aside className="sp-list">
-        <header className="sp-head small"><button className="sp-back" onClick={() => nav('/dashboard')}>←</button><h1>Support inbox</h1></header>
+        {!embedded && <header className="sp-head small"><button className="sp-back" onClick={() => nav('/dashboard')}>←</button><h1>Support inbox</h1></header>}
         {err && <div className="sp-err">{err}</div>}
         {!threads ? <div className="sp-empty">Loading…</div> : threads.length === 0 ? <div className="sp-empty">No messages yet.</div> :
           threads.map(t => (
@@ -78,7 +78,11 @@ function DiagView({ id, onClose, onChanged }) {
           <b>Diagnostics · {fmtWhen(u.created_at)}</b>
           <div className="sp-stats">{d.stats.total} SMS · {d.stats.financial} financial · <span className="warn">{d.stats.unparsed} financial but not read</span> · app v{u.app_version} · {u.device?.model} Android {u.device?.android}</div>
         </div>
-        <div className="sp-status">{['new', 'looking', 'fixed'].map(s => <button key={s} className={u.status === s ? 'on' : ''} onClick={() => setStatus(s)}>{s}</button>)}</div>
+        <div className="sp-status">{['new', 'looking', 'fixed'].map(s => <button key={s} className={u.status === s ? 'on' : ''} onClick={() => setStatus(s)}>{s}</button>)}
+          <button title="Group this upload's unread money SMS into SMS issues" onClick={async () => {
+            const r = await smsIssuesAPI.importDiag(id).catch(e => ({ data: { error: e.response?.data?.error || e.message } }));
+            window.alert(r.data.error ? r.data.error : `Filed ${r.data.filed} messages into SMS issues`);
+          }}>→ SMS issues</button></div>
       </div>
       {u.note && <div className="sp-note">“{u.note}”</div>}
       <div className="sp-tabs">{[['sms', 'SMS'], ['logs', 'Logs'], ['data', 'App data'], ['notes', 'My notes']].map(([k, l]) => <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{l}</button>)}</div>
