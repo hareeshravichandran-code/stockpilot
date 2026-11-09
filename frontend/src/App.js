@@ -8,6 +8,7 @@ import Dividends from './pages/Dividends';
 import Blueprint from './pages/Blueprint';
 import Family from './pages/Family';
 import MoneyFlow from './pages/MoneyFlow';
+import TestLogin, { TestAccountBar } from './pages/TestLogin';
 
 function PrivateRoute({ children }) {
   const { user, loading } = useAuth();
@@ -43,6 +44,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<PublicRoute><Landing /></PublicRoute>} />
           <Route path="/welcome" element={<Landing />} />
+          <Route path="/test-login" element={<TestLogin />} />
           <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
           <Route path="/signup" element={<PublicRoute><Signup /></PublicRoute>} />
           <Route path="/dashboard" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
@@ -52,6 +54,7 @@ export default function App() {
           <Route path="/money-flow" element={<PrivateRoute><MoneyFlow /></PrivateRoute>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        <TestAccountBar />
       </BrowserRouter>
     </AuthProvider>
   );

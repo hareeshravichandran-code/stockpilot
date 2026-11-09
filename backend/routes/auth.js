@@ -76,7 +76,7 @@ router.post('/login', async (req, res) => {
     if (!user) return res.status(401).json({ error: 'Invalid credentials' });
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
-    res.json({ token: makeToken(user), user: { id: user.id, name: user.name, email: user.email } });
+    res.json({ token: makeToken(user), user: { id: user.id, name: user.name, email: user.email, is_test: !!user.is_test } });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -84,7 +84,7 @@ router.post('/login', async (req, res) => {
 router.get('/me', requireAuth, async (req, res) => {
   try {
     const { data, error } = await supabase
-      .from('users').select('id, name, email, pan, dob, broker, created_at').eq('id', req.user.id).single();
+      .from('users').select('id, name, email, pan, dob, broker, created_at, is_test').eq('id', req.user.id).single();
     if (error) return res.status(404).json({ error: 'User not found' });
     res.json({ ...data, pan: data.pan ? '****' + data.pan.slice(-4) : null, panSet: !!data.pan, dobSet: !!data.dob });
   } catch (err) { res.status(500).json({ error: err.message }); }

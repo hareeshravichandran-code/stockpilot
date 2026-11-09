@@ -30,6 +30,12 @@ export const authAPI = {
   me:          ()     => api.get('/api/auth/me'),
   saveProfile: (data) => api.put('/api/auth/profile', data),
   getProfile:  ()     => api.get('/api/auth/me'),
+  testLink:    (key)  => api.post('/api/auth/test-link', { key }),
+};
+
+export const testAPI = {
+  reset: (scope) => api.post('/api/test/reset', { scope }),
+  seed:  ()      => api.post('/api/test/seed'),
 };
 
 export const portfolioAPI = {

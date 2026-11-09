@@ -74,6 +74,7 @@ app.use('/api/household', householdRoutes);
 app.use('/api/masters', mastersRoutes);
 app.use('/api/moneyflow', require('./routes/moneyflow'));
 app.use('/api/setup', require('./routes/setup'));
+app.use('/api', require('./routes/testAccount'));   // private test account: link login, reset, dummy data
 
 // ── Health check ──
 // Debug endpoint - check PDF tools
