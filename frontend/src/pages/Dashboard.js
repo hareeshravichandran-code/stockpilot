@@ -1148,6 +1148,10 @@ export default function Dashboard() {
             <span className="nav-icon">⇅</span>
             <span className="nav-label">Money flow ↗</span>
           </div>
+          <div className="db-nav-item" onClick={()=>nav(user?.is_admin ? '/admin/support' : '/support')} title={user?.is_admin ? 'Support inbox: messages, screenshots and diagnostics from users' : 'Message us, with screenshots'}>
+            <span className="nav-icon">✉</span>
+            <span className="nav-label">{user?.is_admin ? 'Support inbox ↗' : 'Help & support ↗'}</span>
+          </div>
           <div className="db-nav-label" style={{marginTop:12}}>Analytics</div>
           {[
             {id:'tax',   icon:'⊞', label:'Tax Summary'},

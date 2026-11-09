@@ -87,8 +87,8 @@ router.get('/me', requireAuth, async (req, res) => {
       .from('users').select('*').eq('id', req.user.id).single();
     if (error) return res.status(404).json({ error: 'User not found' });
     // Only these fields go back (select '*' because older databases have no broker column)
-    const { id, name, email, dob, broker = null, created_at, is_test = false } = data;
-    res.json({ id, name, email, dob, broker, created_at, is_test,
+    const { id, name, email, dob, broker = null, created_at, is_test = false, is_admin = false } = data;
+    res.json({ id, name, email, dob, broker, created_at, is_test, is_admin,
       pan: data.pan ? '****' + data.pan.slice(-4) : null, panSet: !!data.pan, dobSet: !!data.dob });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

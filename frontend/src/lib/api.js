@@ -33,6 +33,17 @@ export const authAPI = {
   testLink:    (key)  => api.post('/api/auth/test-link', { key }),
 };
 
+export const supportAPI = {
+  messages:   ()            => api.get('/api/support/messages'),
+  unread:     ()            => api.get('/api/support/unread'),
+  send:       (data)        => api.post('/api/support/messages', data),
+  threads:    ()            => api.get('/api/support/admin/threads'),
+  thread:     (uid)         => api.get(`/api/support/admin/threads/${uid}`),
+  reply:      (uid, data)   => api.post(`/api/support/admin/threads/${uid}`, data),
+  diag:       (id, params)  => api.get(`/api/support/admin/diag/${id}`, { params }),
+  updateDiag: (id, data)    => api.put(`/api/support/admin/diag/${id}`, data),
+};
+
 export const testAPI = {
   reset: (scope) => api.post('/api/test/reset', { scope }),
   seed:  ()      => api.post('/api/test/seed'),

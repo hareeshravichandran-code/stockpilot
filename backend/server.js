@@ -28,6 +28,8 @@ const app = express();
 // ── Security middleware ──
 app.use(helmet());
 app.use(morgan('dev'));
+// Support images and diagnostics (logs, SMS batches) need bigger bodies than the 100 KB default
+app.use(['/api/support', '/api/diag'], express.json({ limit: '15mb' }));
 app.use(express.json());
 
 // ── CORS ──
@@ -75,6 +77,7 @@ app.use('/api/masters', mastersRoutes);
 app.use('/api/moneyflow', require('./routes/moneyflow'));
 app.use('/api/setup', require('./routes/setup'));
 app.use('/api', require('./routes/testAccount'));   // private test account: link login, reset, dummy data
+app.use('/api', require('./routes/support'));       // support chat + diagnostics uploads
 
 // ── Health check ──
 // Debug endpoint - check PDF tools
