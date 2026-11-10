@@ -10,7 +10,7 @@ const CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID || '530143058705-fi42md
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const FILE = 'kanalyst-key-backup.json';
 
-function loadGis() {
+export function loadGis() {
   if (window.google?.accounts?.oauth2) return Promise.resolve();
   return new Promise((res, rej) => {
     const s = document.createElement('script');
@@ -21,7 +21,7 @@ function loadGis() {
 }
 
 /** A short-lived Drive token from a Google popup (the user picks their account). */
-async function driveToken(hint) {
+export async function driveToken(hint) {
   await loadGis();
   return new Promise((res, rej) => {
     const c = window.google.accounts.oauth2.initTokenClient({
@@ -44,9 +44,8 @@ async function findFile(token) {
   return (await r.json()).files?.[0]?.id || null;
 }
 
-/** Turn on the backup. Needs the raw key (right after creating it, or after typing the passphrase). */
-export async function backupToDrive(uid, email, dek) {
-  const token = await driveToken(email);
+/** Save a new random backup secret in the user's Drive and return it. */
+export async function saveSecret(token, uid) {
   const secret = K.b64u.enc(globalThis.crypto.getRandomValues(new Uint8Array(32)));
   const content = JSON.stringify({ v: 1, uid, secret, made: new Date().toISOString() });
   const existing = await findFile(token);
@@ -55,6 +54,12 @@ export async function backupToDrive(uid, email, dek) {
   const body = `--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(meta)}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n${content}\r\n--${boundary}--`;
   const url = existing ? `https://www.googleapis.com/upload/drive/v3/files/${existing}?uploadType=multipart` : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
   await gfetch(token, url, { method: existing ? 'PATCH' : 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body });
+  return secret;
+}
+
+/** Turn on the backup for an existing key. Needs the raw key (after the passphrase / recovery code). */
+export async function backupToDrive(uid, email, dek) {
+  const secret = await saveSecret(await driveToken(email), uid);
   // The secret is random and long, so few rounds are enough
   await privacyAPI.backup({ wrap_drive: await K.wrapDek(secret, dek, 1000) });
 }
@@ -63,8 +68,14 @@ export async function backupToDrive(uid, email, dek) {
 export async function dekFromDrive(server, email) {
   if (!server?.wrap_drive) throw new Error('No Google Drive backup is turned on for this account');
   const token = await driveToken(email);
+  return K.unwrapDek(await readSecret(token), server.wrap_drive).catch(() => { throw new Error('This Google backup belongs to a different key. Use your recovery code.'); });
+}
+
+/** The backup secret from the user's Drive. */
+export async function readSecret(token) {
   const id = await findFile(token);
   if (!id) throw new Error('No Kanalyst key backup in this Google account. Pick the account you used when you turned it on.');
   const f = await (await gfetch(token, `https://www.googleapis.com/drive/v3/files/${id}?alt=media`)).json();
-  try { return await K.unwrapDek(f.secret, server.wrap_drive); } catch { throw new Error('This Drive backup belongs to a different key. Use your passphrase or recovery code.'); }
+  if (!f?.secret) throw new Error('The Google backup is damaged. Use your recovery code.');
+  return f.secret;
 }

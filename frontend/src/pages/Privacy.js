@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { privacyAPI } from '../lib/api';
 import { vault, unlockKeys } from '../lib/privacy/vault';
-import { backupToDrive } from '../lib/privacy/drive';
+import { backupToDrive, dekFromDrive } from '../lib/privacy/drive';
 import * as K from '../lib/privacy/kcrypto';
 import '../components/PrivacyGate.css';
 
@@ -26,8 +26,9 @@ export default function Privacy() {
           <tr><th>Stays on your phone</th><td>Your SMS inbox. Only the transactions read from it are saved</td></tr>
           <tr><th>Only if you choose</th><td>Diagnostics and "Help improve SMS reading" send masked messages to the Kanalyst team, and only when you turn them on</td></tr>
         </tbody></table>
-        <p className="pg-muted">Your key is unlocked by your privacy passphrase, or by your recovery code. We never see either, so we cannot reset them.
-          You can also keep a backup in your own Google Drive: Drive holds half, Kanalyst holds the other half, and neither can open it alone.
+        <p className="pg-muted">We never see your key, your passphrase or your recovery code, so we cannot reset them.
+          Normally your key is kept in your own Google account (hidden Kanalyst folder): Google holds half, Kanalyst holds the other half, and neither can open it alone.
+          On Android, a phone restored from your old phone opens by itself (Google's screen-lock protected Block Store). A passphrase and a recovery code are optional extra ways in.
           If all of these are lost, encrypted details cannot be recovered (amounts and dates remain).</p>
         {user && <Controls user={user} onDeleted={() => { logout?.(); nav('/'); }} />}
       </div>
@@ -43,10 +44,11 @@ function Controls({ user, onDeleted }) {
     setMsg('');
     try {
       const { data: srv } = await privacyAPI.keys();
-      const { dek } = await unlockKeys(srv, cur);
+      // The current key: from the passphrase / recovery code typed, or from the user's Google account
+      const { dek } = cur ? await unlockKeys(srv, cur) : { dek: await dekFromDrive(srv, user.email) };
       if (kind === 'pass') {
         if (p1.length < 8) return setMsg('Use at least 8 characters.');
-        await privacyAPI.update({ wrap_pass: await K.wrapDek(p1, dek) }); setMsg('Passphrase changed.'); setP1('');
+        await privacyAPI.update({ wrap_pass: await K.wrapDek(p1, dek) }); setMsg('Passphrase saved.'); setP1('');
       } else if (kind === 'drive') {
         await backupToDrive(user.id, user.email, dek); setMsg('Your key is backed up to your Google Drive.');
       } else {
@@ -66,14 +68,15 @@ function Controls({ user, onDeleted }) {
       <h2>Your controls</h2>
       <p className="pg-muted">Signed in as {user.email}. This browser is {vault.unlocked() ? 'unlocked' : 'locked'}.</p>
       <button className="pg-btn ghost" onClick={async () => { await vault.forget(); setMsg('This browser is locked. You will be asked for your passphrase next time.'); }}>Lock this browser</button>
-      <h3>Change passphrase or recovery code</h3>
-      <input className="pg-in" type="password" placeholder="Current passphrase or recovery code" value={cur} onChange={e => setCur(e.target.value)} />
-      <input className="pg-in" type="password" placeholder="New passphrase" value={p1} onChange={e => setP1(e.target.value)} />
+      <h3>Your key</h3>
+      <p className="pg-muted">Confirm it is you with your passphrase or recovery code, or leave the box empty and confirm with your Google account.</p>
+      <input className="pg-in" type="password" placeholder="Passphrase or recovery code (optional)" value={cur} onChange={e => setCur(e.target.value)} />
+      <input className="pg-in" type="password" placeholder="New passphrase (optional extra way in)" value={p1} onChange={e => setP1(e.target.value)} />
       <div className="pg-row">
-        <button className="pg-btn" disabled={!cur || !p1} onClick={() => change('pass')}>Change passphrase</button>
-        <button className="pg-btn ghost" disabled={!cur} onClick={() => change('code')}>New recovery code</button>
+        <button className="pg-btn" disabled={!p1} onClick={() => change('pass')}>Set passphrase</button>
+        <button className="pg-btn ghost" onClick={() => change('code')}>New recovery code</button>
       </div>
-      <button className="pg-btn ghost" disabled={!cur} onClick={() => change('drive')}>Back up key to my Google Drive</button>
+      <button className="pg-btn ghost" disabled={!cur} onClick={() => change('drive')}>Keep my key in my Google account</button>
       <button className="pg-link" onClick={async () => { await privacyAPI.removeBackup(); setMsg('Google Drive backup turned off.'); }}>Turn off Google Drive backup</button>
       {code && <div className="pg-code">{code}</div>}
       {msg && <p className="pg-muted">{msg}</p>}

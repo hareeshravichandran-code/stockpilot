@@ -53,8 +53,11 @@ export const vault = {
   },
 };
 
-/** First device: new keys, locked by the passphrase and by a new recovery code. Returns { body, code, keys }. */
-export async function createKeys(passphrase) {
+/**
+ * First device: new keys. Always locked by a new recovery code, plus the user's everyday way in:
+ * the Google account (driveSecret, kept in their Drive) and / or a passphrase. Returns { body, code, keys, dek }.
+ */
+export async function createKeys(passphrase, { driveSecret = null } = {}) {
   const dek = K.newDek();
   const kp = await K.newKeyPair();
   const keys = await K.keysFromDek(dek, kp.pkcs8);
@@ -62,16 +65,17 @@ export async function createKeys(passphrase) {
   const body = {
     pub: kp.pub,
     priv: await K.encrypt(keys, K.b64u.enc(kp.pkcs8)),
-    wrap_pass: await K.wrapDek(passphrase, dek),
     wrap_recovery: await K.wrapDek(code, dek, 100000),
   };
+  if (passphrase) body.wrap_pass = await K.wrapDek(passphrase, dek);
+  if (driveSecret) body.wrap_drive = await K.wrapDek(driveSecret, dek, 1000);
   return { body, code, keys, dek };
 }
 
 /** Any device: unlock with the passphrase or the recovery code. Throws if neither fits. */
 export async function unlockKeys(server, secret) {
   let dek = null;
-  for (const w of [server.wrap_pass, server.wrap_recovery]) {
+  for (const w of [server.wrap_pass, server.wrap_recovery].filter(Boolean)) {
     if (!w) continue;
     try { dek = await K.unwrapDek(secret, w); break; } catch { /* try the other lock */ }
   }

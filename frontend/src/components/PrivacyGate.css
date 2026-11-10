@@ -25,3 +25,5 @@
 .pg-drive { display: flex; flex-direction: column; gap: 6px; padding: 14px; margin: 14px 0; border: 1px solid #e3d9c3; border-radius: 14px; background: #fbf6ea; }
 .pg-drive span { font-size: 13px; color: #5a5048; }
 .pg-drive em { font-style: normal; color: #4c6b1c; font-weight: 600; }
+.pg-or { display: flex; align-items: center; gap: 10px; margin: 14px 0 4px; color: #8a7f72; font-size: 13px; }
+.pg-or::before, .pg-or::after { content: ''; flex: 1; height: 1px; background: #e3d9c3; }

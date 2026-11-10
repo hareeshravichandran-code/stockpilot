@@ -11,25 +11,30 @@ const okWrap = (w) => w && typeof w === 'object' && w.v === 1 && w.kdf === 'pbkd
 
 router.get('/privacy/keys', requireAuth, async (req, res) => {
   const { data: u, error } = await supabase.from('users')
-    .select('enc_pub, enc_priv, enc_wrap_pass, enc_wrap_recovery, enc_ready_at, enc_migrated_at, enc_migrated_v, enc_wrap_drive, enc_drive_at, is_test').eq('id', req.user.id).maybeSingle();
+    .select('enc_pub, enc_priv, enc_wrap_pass, enc_wrap_recovery, enc_ready_at, enc_migrated_at, enc_migrated_v, enc_wrap_drive, enc_drive_at, enc_wrap_block, is_test').eq('id', req.user.id).maybeSingle();
   if (error || !u) return res.status(404).json({ error: 'User not found' });
   // Rolled out in steps: the test account first, then everyone (E2E_REQUIRED=1 on the server)
   const required = process.env.E2E_REQUIRED === '1' || !!u.is_test;
   res.json({ ready: !!u.enc_ready_at, required, pub: u.enc_pub, priv: u.enc_priv, wrap_pass: u.enc_wrap_pass, wrap_recovery: u.enc_wrap_recovery,
     ready_at: u.enc_ready_at, migrated_at: u.enc_migrated_at, migrated_v: u.enc_migrated_v || 0,
-    wrap_drive: u.enc_wrap_drive || null, drive_at: u.enc_drive_at || null });
+    wrap_drive: u.enc_wrap_drive || null, drive_at: u.enc_drive_at || null, wrap_block: u.enc_wrap_block || null });
 });
 
 // First device: store the public key, the private key (encrypted with the data key) and the two locked copies
 router.post('/privacy/keys', requireAuth, async (req, res) => {
   try {
-    const { pub, priv, wrap_pass, wrap_recovery } = req.body || {};
+    const { pub, priv, wrap_pass, wrap_recovery, wrap_drive, wrap_block } = req.body || {};
     if (typeof pub !== 'string' || pub.length < 80 || pub.length > 120) return res.status(400).json({ error: 'Bad public key' });
-    if (!isEnc(priv) || !okWrap(wrap_pass) || !okWrap(wrap_recovery)) return res.status(400).json({ error: 'Bad key data' });
+    // The key is always locked by a recovery code, plus at least one everyday way in:
+    // the user's Google account (Drive backup) or a passphrase. The phone's screen lock (Block Store) is extra.
+    const opt = (w) => w == null || okWrap(w);
+    if (!isEnc(priv) || !okWrap(wrap_recovery) || !opt(wrap_pass) || !opt(wrap_drive) || !opt(wrap_block) || !(wrap_pass || wrap_drive))
+      return res.status(400).json({ error: 'Bad key data' });
     const { data: u } = await supabase.from('users').select('enc_ready_at').eq('id', req.user.id).maybeSingle();
     if (u?.enc_ready_at) return res.status(409).json({ error: 'Encryption is already set up for this account' });
-    const { error } = await supabase.from('users').update({ enc_pub: pub, enc_priv: priv, enc_wrap_pass: wrap_pass, enc_wrap_recovery: wrap_recovery,
-      enc_ready_at: new Date().toISOString() }).eq('id', req.user.id);
+    const now = new Date().toISOString();
+    const { error } = await supabase.from('users').update({ enc_pub: pub, enc_priv: priv, enc_wrap_pass: wrap_pass || null, enc_wrap_recovery: wrap_recovery,
+      enc_wrap_drive: wrap_drive || null, enc_drive_at: wrap_drive ? now : null, enc_wrap_block: wrap_block || null, enc_ready_at: now }).eq('id', req.user.id);
     if (error) throw error;
     console.log(JSON.stringify({ event: 'ENC_KEYS_CREATED', userId: req.user.id }));
     res.json({ ok: true });
@@ -41,6 +46,7 @@ router.put('/privacy/keys', requireAuth, async (req, res) => {
   const f = {};
   if (req.body?.wrap_pass) { if (!okWrap(req.body.wrap_pass)) return res.status(400).json({ error: 'Bad key data' }); f.enc_wrap_pass = req.body.wrap_pass; }
   if (req.body?.wrap_recovery) { if (!okWrap(req.body.wrap_recovery)) return res.status(400).json({ error: 'Bad key data' }); f.enc_wrap_recovery = req.body.wrap_recovery; }
+  if (req.body?.wrap_block) { if (!okWrap(req.body.wrap_block)) return res.status(400).json({ error: 'Bad key data' }); f.enc_wrap_block = req.body.wrap_block; }
   if (!Object.keys(f).length) return res.status(400).json({ error: 'Nothing to change' });
   const { error } = await supabase.from('users').update(f).eq('id', req.user.id).not('enc_ready_at', 'is', null);
   if (error) return res.status(500).json({ error: error.message });
@@ -56,6 +62,9 @@ router.put('/privacy/drive', requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 router.delete('/privacy/drive', requireAuth, async (req, res) => {
+  // Without a passphrase, Google is the everyday way in: keep it until a passphrase is set
+  const { data: u } = await supabase.from('users').select('enc_wrap_pass').eq('id', req.user.id).maybeSingle();
+  if (!u?.enc_wrap_pass) return res.status(409).json({ error: 'Set a passphrase first. Your Google account is how you unlock now.' });
   await supabase.from('users').update({ enc_wrap_drive: null, enc_drive_at: null }).eq('id', req.user.id);
   res.json({ ok: true });
 });

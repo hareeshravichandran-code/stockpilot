@@ -2,18 +2,20 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { privacyAPI } from '../lib/api';
 import { vault, createKeys, unlockKeys, onVaultChange, keysFromServerDek } from '../lib/privacy/vault';
-import { backupToDrive, dekFromDrive } from '../lib/privacy/drive';
+import { backupToDrive, dekFromDrive, driveToken, saveSecret, loadGis } from '../lib/privacy/drive';
 import { migrateAll, MIGRATION_V } from '../lib/privacy/migrate';
 import { isEnc } from '../lib/privacy/kcrypto';
 import './PrivacyGate.css';
 
-// Every account is end-to-end encrypted. Before any money page opens, this browser must hold the key:
-// first time -> choose a passphrase and save the recovery code; new browser -> unlock once.
+// Every account is end-to-end encrypted. Before any money page opens, this browser must hold the key.
+// First time: the key is made here and kept in the user's own Google account (no passphrase to remember);
+// a passphrase is the alternative. New browser: one tap on "Unlock with Google" (or the recovery code).
 export default function PrivacyGate({ children }) {
   const { user, refresh } = useAuth();
   const [state, setState] = useState({ phase: 'loading' });
   const [, force] = useState(0);
   useEffect(() => onVaultChange(() => force(n => n + 1)), []);
+  useEffect(() => { loadGis().catch(() => {}); }, []);   // ready before the Google button is pressed (popup blockers)
   // Once unlocked: read the profile again (name, PAN, birthday come back encrypted until now)
   const unlocked = vault.unlocked();
   useEffect(() => {
@@ -47,10 +49,11 @@ export default function PrivacyGate({ children }) {
     <Shell>
       {state.phase === 'loading' && <p className="pg-muted">Checking your privacy key…</p>}
       {state.phase === 'error' && <><h1>Could not check your key</h1><p className="pg-err">{state.error}</p><button className="pg-btn" onClick={() => window.location.reload()}>Try again</button></>}
-      {state.phase === 'intro' && <Intro onNext={() => setState({ ...state, phase: 'create' })} />}
+      {state.phase === 'intro' && <Intro user={user} onPassphrase={() => setState({ ...state, phase: 'create' })} onDone={(code) => setState({ phase: 'saved', code })} />}
+      {state.phase === 'saved' && <Saved code={state.code} onDone={() => setState({ phase: 'migrate' })} />}
       {state.phase === 'create' && <Create user={user} onDone={(code, dek) => setState({ phase: 'code', code, dek })} />}
       {state.phase === 'code' && <Code code={state.code} dek={state.dek} user={user} onDone={() => setState({ phase: 'migrate' })} />}
-      {state.phase === 'unlock' && <Unlock server={state.server} onDone={(srv) => setState({ phase: srv?.migrated_at ? 'open' : 'migrate' })} />}
+      {state.phase === 'unlock' && <Unlock server={state.server} onDone={(srv) => setState({ phase: srv?.migrated_at && (srv.migrated_v || 0) >= MIGRATION_V ? 'open' : 'migrate' })} />}
       {state.phase === 'migrate' && <Migrate onDone={() => setState({ phase: 'open' })} />}
     </Shell>
   );
@@ -69,18 +72,60 @@ function Shell({ children }) {
   );
 }
 
-function Intro({ onNext }) {
+function Intro({ user, onPassphrase, onDone }) {
+  const [busy, setBusy] = useState(false); const [err, setErr] = useState('');
+  // The key is made in this browser; its unlock secret goes to the user's own Google Drive (hidden app folder)
+  const viaGoogle = async () => {
+    setBusy(true); setErr('');
+    try {
+      const token = await driveToken(user.email);
+      const secret = await saveSecret(token, user.id);
+      const { body, code, keys } = await createKeys(null, { driveSecret: secret });
+      await privacyAPI.create(body);
+      await vault.remember(user.id, keys, isEnc(user.name) ? '' : (user.name || ''));
+      onDone(code);
+    } catch (e) { setErr(e.response?.data?.error || e.message); } finally { setBusy(false); }
+  };
   return (
     <>
       <h1>Your money data, only for you</h1>
-      <p>Kanalyst now encrypts the private parts of your data on your own device before it is saved: who you pay, SMS text, account, card,
+      <p>Kanalyst encrypts the private parts of your data on your own device before it is saved: who you pay, SMS text, account, card,
         policy and folio numbers, notes and names. Not even the Kanalyst team can read them.</p>
       <ul className="pg-list">
-        <li><b>A privacy passphrase</b> unlocks your data on each new phone or browser, once.</li>
-        <li><b>A recovery code</b> is your spare key if you ever forget the passphrase.</li>
+        <li><b>Nothing to remember.</b> Your key is kept in your own Google account, in a hidden Kanalyst folder.</li>
+        <li><b>New phone or browser?</b> Sign in with Google and tap once. Android phones restored from your old phone open by themselves.</li>
         <li>Amounts, dates and categories stay readable to the server so calendars, alerts and Blueprint keep working.</li>
       </ul>
-      <button className="pg-btn" onClick={onNext}>Set my passphrase</button>
+      {err && <p className="pg-err">{err}. You can use a passphrase instead.</p>}
+      <button className="pg-btn" disabled={busy} onClick={viaGoogle}>{busy ? 'Saving your key…' : 'Keep my key in my Google account'}</button>
+      <button type="button" className="pg-link" onClick={onPassphrase}>Use a passphrase instead</button>
+    </>
+  );
+}
+
+/** After the Google set-up: the recovery code is an optional spare key. */
+function Saved({ code, onDone }) {
+  const [show, setShow] = useState(false);
+  const save = () => {
+    const blob = new Blob([`Kanalyst recovery code\n\n${code}\n\nA spare key: unlocks your data if you ever lose access to your Google account.\n`], { type: 'text/plain' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'kanalyst-recovery-code.txt'; a.click();
+  };
+  return (
+    <>
+      <h1>Your data is protected</h1>
+      <p className="pg-muted">Your key is kept in your Google account. On a new phone or browser, sign in with Google and tap “Unlock with Google”.</p>
+      {!show ? <button type="button" className="pg-link" onClick={() => setShow(true)}>Want a spare key? Show my recovery code</button> : (
+        <div className="pg-drive">
+          <b>Recovery code (optional)</b>
+          <span>Only needed if you ever lose access to your Google account. Keep it somewhere safe.</span>
+          <div className="pg-code">{code}</div>
+          <div className="pg-row">
+            <button type="button" className="pg-btn ghost" onClick={() => navigator.clipboard?.writeText(code)}>Copy</button>
+            <button type="button" className="pg-btn ghost" onClick={save}>Download</button>
+          </div>
+        </div>
+      )}
+      <button className="pg-btn" onClick={onDone}>Continue</button>
     </>
   );
 }
@@ -149,7 +194,9 @@ function Code({ code, dek, user, onDone }) {
   );
 }
 
-function Unlock({ server, onDone }) {
+function Unlock({ server: given, onDone }) {
+  const [server, setServer] = useState(given || null);
+  useEffect(() => { if (!server) privacyAPI.keys().then(r => setServer(r.data)).catch(() => {}); }, [server]);
   const [secret, setSecret] = useState('');
   const [useCode, setUseCode] = useState(false);
   const [remember, setRemember] = useState(true);
@@ -175,18 +222,28 @@ function Unlock({ server, onDone }) {
       onDone(srv);
     } catch (e2) { setErr(e2.response?.data?.error || e2.message); } finally { setBusy(false); }
   };
+  const hasPass = !!server?.wrap_pass;
+  const google = !!server?.wrap_drive;
   return (
     <form onSubmit={go}>
       <h1>Unlock your data</h1>
+      {google && <>
+        <p className="pg-muted">Your key is kept in your Google account. Pick the same Google account you used before.</p>
+        <button type="button" className="pg-btn" disabled={busy} onClick={viaDrive}>{busy ? 'Unlocking…' : 'Unlock with Google'}</button>
+        <div className="pg-or"><span>or</span></div>
+      </>}
+      {!hasPass && !useCode && <button type="button" className="pg-link" onClick={() => { setUseCode(true); setSecret(''); setErr(''); }}>Use my recovery code</button>}
+      {(hasPass || useCode) && <>
       <p className="pg-muted">{useCode ? 'Enter your 24-character recovery code.' : 'Enter your privacy passphrase. You only do this once on this browser.'}</p>
       <input className="pg-in" type={useCode ? 'text' : 'password'} autoFocus placeholder={useCode ? 'XXXX-XXXX-XXXX-XXXX-XXXX-XXXX' : 'Privacy passphrase'}
         value={secret} onChange={e => setSecret(e.target.value)} />
       <label className="pg-check"><input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} /> Remember this browser</label>
       {err && <p className="pg-err">{err}</p>}
-      <button className="pg-btn" disabled={busy || !secret}>{busy ? 'Unlocking…' : 'Unlock'}</button>
-      <button type="button" className="pg-link" onClick={() => { setUseCode(!useCode); setSecret(''); setErr(''); }}>
-        {useCode ? 'Use my passphrase instead' : 'Forgot it? Use my recovery code'}</button>
-      {server?.wrap_drive && <button type="button" className="pg-btn ghost" disabled={busy} onClick={viaDrive}>Unlock with my Google Drive backup</button>}
+      <button className={google ? 'pg-btn ghost' : 'pg-btn'} disabled={busy || !secret}>{busy ? 'Unlocking…' : 'Unlock'}</button>
+      {hasPass && <button type="button" className="pg-link" onClick={() => { setUseCode(!useCode); setSecret(''); setErr(''); }}>
+        {useCode ? 'Use my passphrase instead' : 'Forgot it? Use my recovery code'}</button>}
+      </>}
+      {err && !(hasPass || useCode) && <p className="pg-err">{err}</p>}
     </form>
   );
 }
