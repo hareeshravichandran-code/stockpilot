@@ -8,7 +8,8 @@ import { privacyAPI } from '../api';
 
 const CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID || '530143058705-fi42mdsqe8dhb03b42tii67r9n6mejl9.apps.googleusercontent.com';
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
-const FILE = 'kanalyst-key-backup.json';
+const LEGACY = 'kanalyst-key-backup.json';          // 1.9.0-1.9.1: one file for every Kanalyst account
+const fileFor = (uid) => `kanalyst-key-${uid}.json`;  // one file per Kanalyst account (several can share a Google account)
 
 export function loadGis() {
   if (window.google?.accounts?.oauth2) return Promise.resolve();
@@ -55,8 +56,8 @@ const gfetch = async (token, url, opts = {}) => {
   if (!r.ok) throw new Error(driveReason(r.status, await r.text().catch(() => '')));
   return r;
 };
-async function findFile(token) {
-  const q = encodeURIComponent(`name='${FILE}'`);
+async function findFile(token, name) {
+  const q = encodeURIComponent(`name='${name}'`);
   const r = await gfetch(token, `https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=${q}&fields=files(id)`);
   return (await r.json()).files?.[0]?.id || null;
 }
@@ -65,9 +66,9 @@ async function findFile(token) {
 export async function saveSecret(token, uid) {
   const secret = K.b64u.enc(globalThis.crypto.getRandomValues(new Uint8Array(32)));
   const content = JSON.stringify({ v: 1, uid, secret, made: new Date().toISOString() });
-  const existing = await findFile(token);
+  const existing = await findFile(token, fileFor(uid));
   const boundary = 'kb' + Date.now();
-  const meta = existing ? {} : { name: FILE, parents: ['appDataFolder'] };
+  const meta = existing ? {} : { name: fileFor(uid), parents: ['appDataFolder'] };
   const body = `--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(meta)}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n${content}\r\n--${boundary}--`;
   const url = existing ? `https://www.googleapis.com/upload/drive/v3/files/${existing}?uploadType=multipart` : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
   await gfetch(token, url, { method: existing ? 'PATCH' : 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body });
@@ -85,14 +86,18 @@ export async function backupToDrive(uid, email, dek) {
 export async function dekFromDrive(server, email) {
   if (!server?.wrap_drive) throw new Error('No Google Drive backup is turned on for this account');
   const token = await driveToken(email);
-  return K.unwrapDek(await readSecret(token), server.wrap_drive).catch(() => { throw new Error('This Google backup belongs to a different key. Use your recovery code.'); });
+  const uid = JSON.parse(localStorage.getItem('sp_user') || '{}').id;
+  return K.unwrapDek(await readSecret(token, uid), server.wrap_drive).catch(() => { throw new Error('This Google backup belongs to a different key. Use your recovery code.'); });
 }
 
 /** The backup secret from the user's Drive. */
-export async function readSecret(token) {
-  const id = await findFile(token);
+export async function readSecret(token, uid) {
+  // This account's own file; older app versions wrote one shared file (used only if it belongs to this account)
+  const own = uid && await findFile(token, fileFor(uid));
+  const id = own || await findFile(token, LEGACY);
   if (!id) throw new Error('No Kanalyst key backup in this Google account. Pick the account you used when you turned it on.');
   const f = await (await gfetch(token, `https://www.googleapis.com/drive/v3/files/${id}?alt=media`)).json();
   if (!f?.secret) throw new Error('The Google backup is damaged. Use your recovery code.');
+  if (!own && uid && f.uid && f.uid !== uid) throw new Error('No Kanalyst key for this account in this Google account. Pick the Google account you used when you set it up.');
   return f.secret;
 }
