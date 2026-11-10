@@ -26,16 +26,33 @@ export async function driveToken(hint) {
   return new Promise((res, rej) => {
     const c = window.google.accounts.oauth2.initTokenClient({
       client_id: CLIENT_ID, scope: SCOPE, hint,
-      callback: (r) => (r.error ? rej(new Error(r.error_description || r.error)) : res(r.access_token)),
+      callback: (r) => {
+        if (r.error) return rej(new Error(r.error_description || r.error));
+        // Google may show the Drive permission as a separate tick box: make sure it was ticked
+        if (window.google.accounts.oauth2.hasGrantedAllScopes && !window.google.accounts.oauth2.hasGrantedAllScopes(r, SCOPE))
+          return rej(new Error('Please tick the Google Drive box ("Kanalyst\'s own configuration data") in the Google window'));
+        res(r.access_token);
+      },
       error_callback: (e) => rej(new Error(e?.message || 'Google sign-in was closed')),
     });
     c.requestAccessToken({ prompt: '' });
   });
 }
 
+/** Google's own reason, in plain words. */
+export function driveReason(status, body) {
+  let j = {}; try { j = JSON.parse(body || '{}'); } catch { j = {}; }
+  const e = j.error || {};
+  const reason = (e.errors && e.errors[0] && e.errors[0].reason) || (e.details && e.details[0] && e.details[0].reason) || e.status || '';
+  const msg = String(e.message || '');
+  if (/accessNotConfigured|SERVICE_DISABLED/i.test(reason + msg)) return 'The Google Drive API is turned off for Kanalyst in Google Cloud (Drive API not enabled)';
+  if (/insufficient|SCOPE/i.test(reason + msg)) return 'Google did not give Drive access. Tick the Google Drive box in the Google window';
+  if (status === 401) return 'Google sign-in expired. Try again';
+  return `Google Drive error ${status}${reason ? ' (' + reason + ')' : ''}${msg ? ': ' + msg.slice(0, 160) : ''}`;
+}
 const gfetch = async (token, url, opts = {}) => {
   const r = await fetch(url, { ...opts, headers: { Authorization: `Bearer ${token}`, ...(opts.headers || {}) } });
-  if (!r.ok) throw new Error(r.status === 403 ? 'Google Drive is not enabled for Kanalyst yet' : `Google Drive error ${r.status}`);
+  if (!r.ok) throw new Error(driveReason(r.status, await r.text().catch(() => '')));
   return r;
 };
 async function findFile(token) {
