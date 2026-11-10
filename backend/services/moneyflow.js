@@ -131,7 +131,7 @@ async function monthFlow(uid, month, opts = {}) {
       .eq('user_id', uid).eq('is_deleted', false).gte('date_time', from - 2 * 864e5).lt('date_time', to + 2 * 864e5).limit(20000),
     loadCategories(uid),
     loadRules(uid),
-    supabase.from('money_masters').select('id, kind, subtype, title, amount, frequency, due_day, status').eq('owner_id', uid),
+    supabase.from('money_masters').select('id, kind, subtype, title, institution, amount, frequency, due_day, status').eq('owner_id', uid),
     supabase.from('users').select('name').eq('id', uid).maybeSingle(),
   ]);
   const rows = (txns || []).map(t => ({ ...t }));
@@ -207,7 +207,7 @@ async function monthFlow(uid, month, opts = {}) {
       const last = list[list.length - 1];
       const name = last.merchant.trim();   // may be encrypted: the device shows the name
       const readable = require('./privacy').plain(name);
-      if (readable && subMasters.some(m => (m.title || '').toLowerCase().includes(readable.toLowerCase().split(/\s+/)[0]))) continue;
+      if (readable && subMasters.some(m => `${m.institution || ''} ${require('./privacy').plain(m.title)}`.toLowerCase().includes(readable.toLowerCase().split(/\s+/)[0]))) continue;
       subscriptions.push({ merchant: name, amount: Math.round(median), months: ms6.size, last: dayOf(last.date_time), due_day: +dayOf(last.date_time).slice(8, 10) });
     }
     subscriptions.sort((a, b) => b.months - a.months || b.amount - a.amount);

@@ -5,6 +5,7 @@
  * Fixed: BUG-6 (handle image-based PDFs via OCR text in email.body)
  */
 const router                      = require('express').Router();
+const { profileOf, sealer, maskRef } = require('../services/privacy');
 const { decrypt } = require('../services/tokenCrypto');
 const requireAuth                 = require('../middleware/requireAuth');
 const supabase                    = require('../services/supabase');
@@ -85,8 +86,10 @@ router.post('/sync', requireAuth, async (req, res) => {
     .eq('user_id', userId).eq('provider', 'gmail').single();
   if (!conn) return res.status(400).json({ error: 'No Gmail account connected' });
 
-  const { data: userProfile } = await supabase
+  let { data: userProfile } = await supabase
     .from('users').select('pan, dob, name').eq('id', userId).single();
+  userProfile = profileOf(req, userProfile || {});
+  const S = await sealer(userId);   // encrypted accounts: PRAN / name / statement text are locked to the user's key
 
   // Generate NPS-specific passwords: first4(name).lower() + DDMM from DOB
   const npsPasswords = generateNPSPasswords(userProfile?.name, userProfile?.dob);
@@ -224,13 +227,15 @@ router.post('/sync', requireAuth, async (req, res) => {
               totalValue: parsed_data.total_value,
               schemeE: parsed_data.scheme_e_value,
               xirr: parsed_data.xirr,
-              pran: parsed_data.pran,
+              pran: maskRef(parsed_data.pran),
             }));
 
+            const pr = S.ref(parsed_data.pran);
             const { error: dbErr } = await supabase.from('nps_holdings').upsert({
               user_id:             userId,
-              pran:                parsed_data.pran,
-              subscriber_name:     parsed_data.subscriber_name,
+              pran:                pr.masked,
+              pran_enc:            pr.enc,
+              subscriber_name:     S.seal(parsed_data.subscriber_name),
               registration_date:   parsed_data.registration_date,
               statement_from:      parsed_data.statement_from,
               statement_to:        parsed_data.statement_to,
@@ -256,7 +261,7 @@ router.post('/sync', requireAuth, async (req, res) => {
               scheme_g_pct:        parsed_data.scheme_g_pct,
               source:              email.pdfFailed ? 'email_text' : 'email',
               email_date:          email.date ? new Date(email.date).toISOString().split('T')[0] : null,
-              raw_text_snippet:    textToParse.slice(0, 500),
+              raw_text_snippet:    S.seal(textToParse.slice(0, 500)),
               updated_at:          new Date().toISOString(),
             }, { onConflict: 'user_id,pran,statement_to' });
 
@@ -308,24 +313,25 @@ router.post('/sync', requireAuth, async (req, res) => {
           await logger._writeLog({ phase: 'nps_cams_debug', status: 'skipped', email_id: email.id, email_subject: email.subject,
             email_from: email.from, email_date: email.date, has_pdf: true, items_found: 0, error_type: 'CAMS_NOT_READ',
             error_message: text ? 'CAMS NPS statement opened but not understood' : 'Could not open the CAMS PDF with PAN',
-            raw_text_snippet: (text || '').slice(0, 6000) });
+            raw_text_snippet: S.seal((text || '').slice(0, 6000)) });
           errors++;
           continue;
         }
         if (!pd.statement_to) { const d = new Date(email.date); pd.statement_to = new Date(d.getFullYear(), d.getMonth(), 0).toISOString().slice(0, 10); }
+        const pr2 = S.ref(pd.pran || 'CAMS');
         const { error: e2 } = await supabase.from('nps_holdings').upsert({
-          user_id: userId, pran: pd.pran || 'CAMS', subscriber_name: pd.subscriber_name, registration_date: pd.registration_date,
+          user_id: userId, pran: pr2.masked, pran_enc: pr2.enc, subscriber_name: S.seal(pd.subscriber_name), registration_date: pd.registration_date,
           statement_from: pd.statement_from, statement_to: pd.statement_to, cbo_name: pd.cbo_name, tier: pd.tier || 'I',
           total_value: pd.total_value, total_contributions: pd.total_contributions, total_withdrawals: pd.total_withdrawals || 0,
           notional_gain: pd.notional_gain, xirr: pd.xirr, num_contributions: pd.num_contributions,
           scheme_e_value: pd.scheme_e_value, scheme_e_units: pd.scheme_e_units, scheme_e_nav: pd.scheme_e_nav, scheme_e_pct: pd.scheme_e_pct,
           scheme_c_value: pd.scheme_c_value, scheme_c_units: pd.scheme_c_units, scheme_c_nav: pd.scheme_c_nav, scheme_c_pct: pd.scheme_c_pct,
           scheme_g_value: pd.scheme_g_value, scheme_g_units: pd.scheme_g_units, scheme_g_nav: pd.scheme_g_nav, scheme_g_pct: pd.scheme_g_pct,
-          source: 'cams_link', email_date: new Date(email.date).toISOString().slice(0, 10), raw_text_snippet: text.slice(0, 500),
+          source: 'cams_link', email_date: new Date(email.date).toISOString().slice(0, 10), raw_text_snippet: S.seal(text.slice(0, 500)),
           updated_at: new Date().toISOString(),
         }, { onConflict: 'user_id,pran,statement_to' });
         if (e2) { errors++; console.error(JSON.stringify({ event: 'NPS_CAMS_DB_ERROR', error: e2.message })); }
-        else { saved++; parsed++; await logger.logSuccess({ phase: 'nps', emailId: email.id, subject: email.subject, from: email.from, date: email.date, hasPdf: true, itemsFound: 1, parsedData: [{ pran: pd.pran, date: pd.statement_to, value: pd.total_value }] }); break; }
+        else { saved++; parsed++; await logger.logSuccess({ phase: 'nps', emailId: email.id, subject: email.subject, from: email.from, date: email.date, hasPdf: true, itemsFound: 1, parsedData: [{ pran: maskRef(pd.pran), date: pd.statement_to, value: pd.total_value }] }); break; }
       }
     } catch (e) { console.error(JSON.stringify({ event: 'NPS_CAMS_ERROR', error: e.message })); }
 
@@ -348,6 +354,7 @@ router.post('/manual', requireAuth, async (req, res) => {
   const { data, error } = await supabase.from('nps_holdings').upsert({
     user_id:             req.user.id,
     pran:                b.pran || null,
+    pran_enc:            (require('../services/privacy').isEnc(b.pran_enc) ? b.pran_enc : null),
     statement_to:        b.statement_to,
     statement_from:      b.statement_from || null,
     total_value:         parseFloat(b.total_value),
@@ -372,7 +379,7 @@ router.post('/manual', requireAuth, async (req, res) => {
 
 // ── PUT /:id ──────────────────────────────────────────────────────
 router.put('/:id', requireAuth, async (req, res) => {
-  const allowed = ['goal_id','goal_earmark_pct','pran','total_value',
+  const allowed = ['goal_id','goal_earmark_pct','pran','pran_enc','total_value',
     'scheme_e_value','scheme_c_value','scheme_g_value',
     'total_contributions','notional_gain','xirr'];
   const update = Object.fromEntries(Object.entries(req.body).filter(([k]) => allowed.includes(k)));

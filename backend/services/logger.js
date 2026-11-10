@@ -157,6 +157,10 @@ class SyncLogger {
   async _writeLog(entry) {
     if (!this.sessionId) return;
     try {
+      // Encrypted accounts: statement text, parsed values and tried passwords are locked to the user's key
+      if (!this._sealer) this._sealer = await require('./privacy').sealer(this.userId);
+      const S = this._sealer;
+      if (S.on) for (const k of ['raw_text_snippet', 'parsed_data', 'pdf_password_tried', 'email_subject']) if (entry[k]) entry = { ...entry, [k]: S.seal(String(entry[k])) };
       await supabase.from('sync_logs').insert({
         ...entry,
         session_id: this.sessionId,
@@ -170,6 +174,7 @@ class SyncLogger {
 
   // ── Internal: structured Railway console output ───────────────────
   _console(event, message, data = null, level = 'info') {
+    if (data && typeof data === 'object') { const { raw_text_snippet, pdf_password_tried, parsed_data, ...rest } = data; data = rest; }
     const log = {
       ts:        new Date().toISOString(),
       event,

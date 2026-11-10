@@ -22,3 +22,6 @@
 .pv-table th, .pv-table td { text-align: left; vertical-align: top; padding: 9px 8px; border-bottom: 1px solid #ebe2d2; }
 .pv-table th { width: 34%; color: #2b2620; } .pv-table td { color: #5b5247; }
 .pv-controls h2 { font-family: var(--font-display, Georgia, serif); margin: 22px 0 4px; } .pv-controls h3 { margin: 18px 0 2px; font-size: 14px; }
+.pg-drive { display: flex; flex-direction: column; gap: 6px; padding: 14px; margin: 14px 0; border: 1px solid #e3d9c3; border-radius: 14px; background: #fbf6ea; }
+.pg-drive span { font-size: 13px; color: #5a5048; }
+.pg-drive em { font-style: normal; color: #4c6b1c; font-weight: 600; }

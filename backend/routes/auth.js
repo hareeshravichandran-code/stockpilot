@@ -1,3 +1,4 @@
+const { isEnc, profileOf } = require('../services/privacy');
 const router = require('express').Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -88,21 +89,26 @@ router.get('/me', requireAuth, async (req, res) => {
     if (error) return res.status(404).json({ error: 'User not found' });
     // Only these fields go back (select '*' because older databases have no broker column)
     const { id, name, email, dob, broker = null, created_at, is_test = false, is_admin = false } = data;
-    res.json({ id, name, email, dob, broker, created_at, is_test, is_admin,
-      pan: data.pan ? '****' + data.pan.slice(-4) : null, panSet: !!data.pan, dobSet: !!data.dob });
+    // Encrypted accounts: dob / pan come back locked (the device opens them); name may be encrypted too
+    res.json({ id, name, email, dob: dob || data.dob_enc || null, broker, created_at, is_test, is_admin,
+      pan: data.pan ? '****' + data.pan.slice(-4) : null, panSet: !!data.pan, dobSet: !!(data.dob || data.dob_enc),
+      pan_enc: data.pan_enc || null, mobile: data.mobile || null, client_code: data.client_code || null });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ── Update Profile ─────────────────────────────────────────────────
 router.put('/profile', requireAuth, async (req, res) => {
   try {
-    const { pan, dob, mobile, clientCode, name, broker } = req.body;
+    const { pan, dob, mobile, clientCode, name, broker, pan_enc, dob_enc } = req.body;
     const updates = {};
-    if (pan)        updates.pan         = pan.toUpperCase().trim();
-    if (dob)        updates.dob         = dob;
-    if (mobile)     updates.mobile      = mobile.replace(/\D/g, '');
-    if (clientCode) updates.client_code = clientCode.trim();
-    if (name)       updates.name        = name.trim();
+    const enc = (v) => isEnc(v) && v.length < 4000;
+    if (pan)        updates.pan         = pan.toUpperCase().trim().slice(0, 12);
+    if (enc(pan_enc)) updates.pan_enc   = pan_enc;
+    if (dob && !enc(dob)) updates.dob   = dob;
+    if (enc(dob_enc)) { updates.dob_enc = dob_enc; updates.dob = null; }   // encrypted accounts keep only the locked date
+    if (mobile)     updates.mobile      = enc(mobile) ? mobile : mobile.replace(/\D/g, '');
+    if (clientCode) updates.client_code = enc(clientCode) ? clientCode : clientCode.trim();
+    if (name)       updates.name        = enc(name) ? name : name.trim();
     if (broker)     updates.broker      = broker;
     if (Object.keys(updates).length === 0)
       return res.status(400).json({ error: 'Nothing to update' });
@@ -341,7 +347,8 @@ router.get('/pdf-passwords', requireAuth, async (req, res) => {
   try {
     const { data } = await supabase.from('users')
       .select('pan, dob, broker, email').eq('id', req.user.id).single();
-    res.json({ passwords: generatePdfPasswords(data?.pan, data?.dob, data?.email, data?.broker) });
+    const p = profileOf(req, data || {});
+    res.json({ passwords: generatePdfPasswords(p.pan, p.dob, data?.email, data?.broker) });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

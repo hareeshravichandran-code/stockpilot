@@ -5,6 +5,17 @@
  * to comply with Google's Limited Use Policy for gmail.readonly scope.
  */
 const router      = require('express').Router();
+const { profileOf, sealer } = require('../services/privacy');
+// Folio numbers of encrypted accounts: last 4 kept readable ("XX4521"), the full number locked to the user's key
+const sealers = new Map();
+async function lockFolio(userId, rec) {
+  let c = sealers.get(userId);
+  if (!c || c.at < Date.now() - 60e3) { c = { at: Date.now(), s: await sealer(userId) }; sealers.set(userId, c); }
+  if (!c.s.on || !rec.folio_number) return rec;
+  const r = c.s.ref(rec.folio_number);
+  return { ...rec, folio_number: r.masked, folio_number_enc: r.enc };
+}
+const last4d = (s) => String(s || '').replace(/\D/g, '').slice(-4);
 const requireAuth = require('../middleware/requireAuth');
 const supabase    = require('../services/supabase');
 const { getAuthUrl, exchangeCode, fetchEmails } = require('../services/gmail');
@@ -53,10 +64,11 @@ router.post('/sync/cas', requireAuth, async (req, res) => {
     if (!conn) return res.status(400).json({ error: 'No Gmail account connected' });
 
     // Get user profile (PAN/DOB needed for PDF password)
-    const { data: userProfile } = await supabase
+    let { data: userProfile } = await supabase
       .from('users').select('pan, dob, name, mobile, client_code')
       .eq('id', req.user.id).single();
 
+    userProfile = profileOf(req, userProfile || {});
     const profileComplete = !!(userProfile?.pan && userProfile?.dob);
     if (!profileComplete) {
       console.log(JSON.stringify({ event: 'PROFILE_INCOMPLETE', message: 'PAN or DOB missing — PDF passwords may fail', userId: req.user.id }));
@@ -503,22 +515,24 @@ async function saveCASHoldings(userId, holdings, mfHoldings, casDate) {
     // One-by-one is safe: each row is a fresh insert into an empty table.
     let savedCount = 0;
     const errors = [];
-    for (const rec of records) {
+    for (let rec of records) {
+      rec = await lockFolio(userId, rec);
       const { error: insErr } = await supabase.from('mf_holdings').insert(rec);
       if (insErr) {
         errors.push(rec.isin + ':' + rec.folio_number + '=' + insErr.message);
         console.error('[MF_INSERT_ERROR] isin=' + rec.isin + ' folio=' + rec.folio_number + ' err=' + insErr.message + ' code=' + insErr.code);
       } else {
         savedCount++;
-        console.log('[MF_SAVE_OK] ' + (rec.fund_name||rec.isin).slice(0,35) + ' folio=' + rec.folio_number + ' units=' + rec.units);
+        console.log('[MF_SAVE_OK] ' + (rec.fund_name||rec.isin).slice(0,35) + ' units=' + rec.units);
       }
     }
     saved += savedCount;
     // Folios first created from SMS (during setup) are now covered by the CAS: drop those placeholders
     try {
-      const casFolios = new Set(records.map(r => String(r.folio_number || '').replace(/\D/g, '')).filter(Boolean));
+      // compared on the last 4 digits (encrypted accounts keep only those readable)
+      const casFolios = new Set(records.map(r => last4d(r.folio_number)).filter(Boolean));
       const { data: smsRows } = await supabase.from('mf_holdings').select('id, folio_number').eq('user_id', userId).eq('source', 'sms');
-      const stale = (smsRows || []).filter(r => casFolios.has(String(r.folio_number || '').replace(/\D/g, ''))).map(r => r.id);
+      const stale = (smsRows || []).filter(r => casFolios.has(last4d(r.folio_number))).map(r => r.id);
       if (stale.length) await supabase.from('mf_holdings').delete().in('id', stale);
     } catch (e) { console.error('[MF_SMS_CLEANUP_ERROR] ' + e.message); }
     const statusMsg = 'Saved ' + savedCount + '/' + records.length + ' MF holdings' + (errors.length ? ' ERRORS: ' + errors.join('; ') : '');
@@ -545,7 +559,7 @@ async function saveCASHoldings(userId, holdings, mfHoldings, casDate) {
 // ── Save a single MF holding to mf_holdings table ─────────────────
 async function saveSingleMF(userId, h, statementDate) {
   const supabase = require('../services/supabase');
-  const record = {
+  let record = {
     user_id:        userId,
     isin:           h.isin           || null,
     folio_number:   h.folio_number   || null,
@@ -562,6 +576,7 @@ async function saveSingleMF(userId, h, statementDate) {
     cas_updated_at: new Date().toISOString(),
     updated_at:     new Date().toISOString(),
   };
+  record = await lockFolio(userId, record);
 
   let error;
 
@@ -638,8 +653,9 @@ router.get('/debug-cdsl', requireAuth, async (req, res) => {
       .eq('provider', 'gmail').single();
     if (!conn) return res.status(400).json({ error: 'Gmail not connected' });
 
-    const { data: userRow } = await supabase.from('users')
+    let { data: userRow } = await supabase.from('users')
       .select('pan, dob, name, mobile').eq('id', req.user.id).single();
+    userRow = profileOf(req, userRow || {});
 
     const { fetchEmails } = require('../services/gmail');
     const { parseCAS, detectCASType } = require('../services/casParser');
@@ -810,8 +826,9 @@ router.get('/debug-mf-text', requireAuth, async (req, res) => {
       .eq('user_id', req.user.id).eq('provider', 'gmail').single();
     if (!conn) return res.json({ error: 'Gmail not connected' });
 
-    const { data: userRow } = await supabase.from('users')
+    let { data: userRow } = await supabase.from('users')
       .select('pan, dob, name').eq('id', req.user.id).single();
+    userRow = profileOf(req, userRow || {});
 
     const emails = await fetchEmails(decrypt(conn.access_token), decrypt(conn.refresh_token),
       'from:(nsdl.co.in OR nsdlindia.com) has:attachment', userRow || {});

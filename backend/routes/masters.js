@@ -27,7 +27,12 @@ const POLICY_KINDS = ['term', 'life', 'health', 'vehicle', 'home', 'accident', '
 const STEP = { monthly: 1, quarterly: 3, half_yearly: 6, yearly: 12 };
 
 const num = (v) => { const x = parseFloat(v); return Number.isFinite(x) ? x : null; };
-const str = (v, n = 120) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, n) : null);
+const { isEnc: isEncV, plain: plainV, lockRow, nameSignals, signalsOfName } = require('../services/privacy');
+// Encrypted values pass through whole (cutting them would destroy them)
+const str = (v, n = 120) => (isEncV(v) && v.length <= 8000 ? v : typeof v === 'string' && v.trim() ? v.trim().slice(0, n) : null);
+const lockEvent = (uid, row) => lockRow(uid, row, { texts: ['title', 'notes'] });
+/** Lock a server-written title for encrypted accounts, keeping its public name signals. */
+const lockTitle = async (uid, row, sig) => lockRow(uid, { ...row, ...(row.title !== undefined ? { signals: nameSignals(sig) || signalsOfName(row.title) } : {}) }, { texts: ['title', 'notes'] });
 const isDate = (s) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
 const int = (v, lo, hi) => { const x = parseInt(v, 10); return Number.isFinite(x) && x >= lo && x <= hi ? x : null; };
 const nowIso = () => new Date().toISOString();
@@ -53,7 +58,8 @@ function cleanMatch(m) {
   if (!m || typeof m !== 'object') return {};
   const kw = (Array.isArray(m.keywords) ? m.keywords : String(m.keywords || '').split(','))
     .map(k => String(k).toLowerCase().trim()).filter(k => k.length >= 3).slice(0, 8);
-  return { keywords: kw, any_amount: !!m.any_amount, ...(str(m.sender, 20) ? { sender: str(m.sender, 20).toUpperCase() } : {}) };
+  const tok = Array.isArray(m.keyword_tok) ? m.keyword_tok.filter(x => typeof x === 'string' && x.length <= 40).slice(0, 40) : null;
+  return { keywords: kw.filter(k => !isEncV(k)), any_amount: !!m.any_amount, ...(tok?.length ? { keyword_tok: tok } : {}), ...(str(m.sender, 20) ? { sender: str(m.sender, 20).toUpperCase() } : {}) };
 }
 
 /** Next date on or after today for a monthly/yearly pattern. */
@@ -79,7 +85,7 @@ const fundWords = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' 
 function folioScore(m, h) {
   const rk = m.ref_key, fol = String(h.folio_number || '').replace(/\D/g, '');
   if (rk && rk.length >= 2 && fol && fol.endsWith(rk)) return 10;
-  const want = new Set([...fundWords(m.title), ...fundWords(m.institution)]);
+  const want = new Set([...fundWords(plainV(m.title)), ...fundWords(m.institution)]);
   return [...new Set(fundWords(`${h.fund_name || ''} ${h.fund_house || ''}`))].filter(w => want.has(w)).length;
 }
 const monthlyOf = (amount, freq) => num(amount) / ({ quarterly: 3, half_yearly: 6, yearly: 12 }[freq] || 1);
@@ -166,13 +172,13 @@ async function upsertMaster(uid, f) {
     if (Object.keys(patch).length) await supabase.from('money_masters').update({ ...patch, updated_at: nowIso() }).eq('id', ex.id);
     return { status: 'linked', table: 'money_masters', id: ex.id };
   }
-  const { data, error } = await supabase.from('money_masters').insert({
+  const { data, error } = await supabase.from('money_masters').insert(await lockTitle(uid, {
     owner_id: uid, kind: f.kind, institution: str(f.institution), inst_key: iKey, ref: rKey || null, ref_key: rKey,
     title: str(f.title, 160) || str(f.institution) || f.kind, amount, frequency: freq, due_day: dueDay, due_month: dueMonth,
     start_date: start, category_id: str(f.category_id, 40), meta: typeof f.meta === 'object' && f.meta ? f.meta : {},
     subtype: cleanSubtype(f), match: cleanMatch(f.match),
     source: str(f.source, 20) || 'discover', status: 'active',
-  }).select().single();
+  }, f.signals)).select().single();
   if (error) throw error;
   return { status: 'created', table: 'money_masters', id: data.id };
 }
@@ -182,14 +188,14 @@ async function upsertEvent(uid, master, e) {
   const { data: ex } = await supabase.from('recurring_events').select('*')
     .eq('owner_id', uid).eq('master_table', master.table).eq('master_id', String(master.id)).eq('kind', kind).maybeSingle();
   if (ex) return { status: 'linked', id: ex.id };
-  const { data, error } = await supabase.from('recurring_events').insert({
+  const { data, error } = await supabase.from('recurring_events').insert(await lockEvent(uid, {
     owner_id: uid, master_table: master.table, master_id: String(master.id), kind,
     title: str(e.title, 160) || kind, amount: num(e.amount),
     frequency: EVENT_FREQS.includes(e.frequency) ? e.frequency : 'monthly',
     due_day: int(e.due_day, 1, 31), due_month: int(e.due_month, 1, 12),
     start_date: isDate(e.start_date) ? e.start_date : null, end_date: isDate(e.end_date) ? e.end_date : null,
     remind_days: int(e.remind_days, 0, 30) ?? 3, direction: e.direction === 'in' ? 'in' : 'out', source: 'discover', status: 'active',
-  }).select().single();
+  })).select().single();
   if (error) throw error;
   return { status: 'created', id: data.id };
 }
@@ -241,8 +247,8 @@ router.post('/balances', requireAuth, async (req, res) => {
         await supabase.from('money_masters').update({ meta: { ...(hit.meta || {}), balance: bal, balance_at: a.as_of }, updated_at: nowIso() }).eq('id', hit.id);
         updated++;
       } else {
-        const { error } = await supabase.from('money_masters').insert({ owner_id: uid, kind: 'bank_account', institution: str(a.bank), inst_key: ik, ref: rk, ref_key: rk,
-          title: `${str(a.bank) || 'Bank'} ••${rk}`, frequency: 'irregular', meta: { balance: bal, balance_at: a.as_of }, source: 'sms_balance', status: 'active' });
+        const { error } = await supabase.from('money_masters').insert(await lockTitle(uid, { owner_id: uid, kind: 'bank_account', institution: str(a.bank), inst_key: ik, ref: rk, ref_key: rk,
+          title: `${str(a.bank) || 'Bank'} ••${rk}`, frequency: 'irregular', meta: { balance: bal, balance_at: a.as_of }, source: 'sms_balance', status: 'active' }));
         if (!error) created++;
       }
     }
@@ -398,6 +404,7 @@ router.post('/', requireAuth, async (req, res) => {
       // Existing master: apply what the user typed
       const patch = {};
       for (const k of ['title', 'amount', 'frequency', 'due_day', 'due_month', 'category_id']) if (f[k] != null && f[k] !== '') patch[k] = k === 'amount' ? num(f[k]) : f[k];
+      if (patch.title) { const t = await lockTitle(req.user.id, { title: str(patch.title, 160) }, f.signals); patch.title = t.title; if (t.signals) patch.signals = t.signals; }
       if (f.match) patch.match = cleanMatch(f.match);
       if (Object.keys(patch).length) await supabase.from('money_masters').update({ ...patch, updated_at: nowIso() }).eq('id', m.id);
     }
@@ -420,7 +427,7 @@ router.put('/:id', requireAuth, async (req, res) => {
     const { data: m } = await supabase.from('money_masters').select('*').eq('id', req.params.id).eq('owner_id', uid).maybeSingle();
     if (!m) return res.status(404).json({ error: 'Not found' });
     const patch = { updated_at: nowIso() };
-    if (str(b.title, 160)) patch.title = str(b.title, 160);
+    if (str(b.title, 160)) { const t = await lockTitle(uid, { title: str(b.title, 160) }, b.signals); patch.title = t.title; if (t.signals) patch.signals = t.signals; }
     if (b.institution !== undefined) patch.institution = str(b.institution);
     if (b.amount !== undefined) patch.amount = num(b.amount);
     if (FREQS.includes(b.frequency)) patch.frequency = b.frequency;
@@ -604,7 +611,7 @@ router.post('/events', requireAuth, async (req, res) => {
       direction: b.direction === 'in' ? 'in' : 'out', source: 'manual', status: 'active',
       alert_level: LEVELS.includes(b.alert_level) ? b.alert_level : null, notes: str(b.notes, 400),
     };
-    const { data, error } = await supabase.from('recurring_events').insert(row).select().single();
+    const { data, error } = await supabase.from('recurring_events').insert(await lockEvent(req.user.id, row)).select().single();
     if (error) throw error;
     res.json({ event: data });
   } catch (err) { res.status(500).json({ error: err.message }); }

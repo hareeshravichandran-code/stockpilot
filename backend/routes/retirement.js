@@ -14,6 +14,7 @@
 const router      = require('express').Router();
 const requireAuth = require('../middleware/requireAuth');
 const supabase    = require('../services/supabase');
+const { profileOf, nameHas } = require('../services/privacy');
 const { computeFD } = require('./fd');
 const { computeRD } = require('./rd');
 const loadUniverse = (uid) => require('./blueprint').loadUniverse(uid);   // lazy: avoids a load-order cycle
@@ -209,7 +210,7 @@ async function bucketValues(uid) {
 router.get('/autofill', requireAuth, async (req, res) => {
   const uid = req.user.id;
   try {
-    const [{ data: user }, hRes, mfRes, npsRes, fdRes, rdRes, abRes, planRes] = await Promise.all([
+    const [{ data: user0 }, hRes, mfRes, npsRes, fdRes, rdRes, abRes, planRes] = await Promise.all([
       supabase.from('users').select('name, dob').eq('id', uid).maybeSingle(),
       supabase.from('holdings').select('quantity, last_price, avg_cost').eq('user_id', uid),
       supabase.from('mf_holdings').select('current_value').eq('user_id', uid),
@@ -219,6 +220,7 @@ router.get('/autofill', requireAuth, async (req, res) => {
       supabase.from('asset_balances').select('asset_type, balance').eq('user_id', uid),
       supabase.from('retirement_plans').select('linked_bucket_id').eq('user_id', uid).maybeSingle(),
     ]);
+    const user = profileOf(req, user0 || {});   // encrypted accounts: name / birthday from the device
 
     const bal = {};
     for (const r of abRes.data || []) bal[String(r.asset_type).toLowerCase()] = num(r.balance);
@@ -251,7 +253,7 @@ router.get('/autofill', requireAuth, async (req, res) => {
       const loan = buckets.find(b => b.id === emi.emi_loan_id);
       if (!loan) continue;
       loans.push({
-        source: 'blueprint', source_id: emi.id, name: loan.name || emi.name, type: /home/i.test(loan.name + emi.name) ? 'home' : 'other',
+        source: 'blueprint', source_id: emi.id, name: loan.name || emi.name, type: (nameHas(loan, 'home', /home/i) || nameHas(emi, 'home', /home/i)) ? 'home' : 'other',
         outstanding: r0(Math.max(0, num(loan.target_amount) - num(loan.current_value))),
         emi: emi.recurrence === 'monthly' ? r0(emi.target_amount) : 0,
         note: 'From your Blueprint EMI goal',
@@ -266,7 +268,7 @@ router.get('/autofill', requireAuth, async (req, res) => {
 
     const otherGoals = buckets.filter(b => b.kind === 'goal' && !b.is_loan && b.status !== 'completed' && b.id !== linkedId && b.special_kind !== 'retirement' && b.mapped_value > 0)
       .map(b => ({ name: b.name, value: b.mapped_value })).sort((a, b) => b.value - a.value);
-    const retireGoals = buckets.filter(b => b.kind === 'goal' && !b.is_loan && b.status !== 'completed' && (b.id === linkedId || b.special_kind === 'retirement' || /retire/i.test(b.name)))
+    const retireGoals = buckets.filter(b => b.kind === 'goal' && !b.is_loan && b.status !== 'completed' && (b.id === linkedId || b.special_kind === 'retirement' || nameHas(b, 'retire', /retire/i)))
       .map(b => ({ id: b.id, name: b.name, target_amount: num(b.target_amount), target_date: b.target_date, current_value: b.current_value, linked: b.id === linkedId }));
     // Every asset mapped to the linked goal, with names (yours and family members')
     const linkedGoal = retireGoals.find(g => g.linked);

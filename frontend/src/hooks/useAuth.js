@@ -14,6 +14,9 @@ function decodeToken(token) {
   } catch(e) { return null; }
 }
 
+// The cached user never keeps PAN / mobile / client code (encrypted accounts get them decrypted in memory only)
+const cacheUser = (u) => { if (!u) return; const { pan_enc, mobile, client_code, ...rest } = u; localStorage.setItem('sp_user', JSON.stringify(rest)); };
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -48,7 +51,7 @@ export function AuthProvider({ children }) {
     authAPI.me()
       .then(res => {
         setUser(res.data);
-        localStorage.setItem('sp_user', JSON.stringify(res.data));
+        cacheUser(res.data);
       })
       .catch(err => {
         // ONLY clear token on definitive 401 from /me
@@ -93,10 +96,13 @@ export function AuthProvider({ children }) {
     authAPI.me()
       .then(res => {
         setUser(res.data);
-        localStorage.setItem('sp_user', JSON.stringify(res.data));
+        cacheUser(res.data);
       })
       .catch(() => {});
   };
+
+  // After this browser unlocks the privacy key: fetch the profile again so names show readable
+  const refresh = () => authAPI.me().then(res => { setUser(res.data); cacheUser(res.data); return res.data; }).catch(() => null);
 
   const logout = () => {
     localStorage.removeItem('sp_token');
@@ -105,7 +111,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, signup, logout, loginWithToken }}>
+    <AuthContext.Provider value={{ user, loading, login, signup, logout, loginWithToken, refresh }}>
       {children}
     </AuthContext.Provider>
   );

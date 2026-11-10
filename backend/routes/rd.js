@@ -129,6 +129,7 @@ router.post('/', requireAuth, async (req, res) => {
     institution_type:    b.institution_type || 'bank',
     nickname:            b.nickname || null,
     account_reference:   b.account_reference || null,
+    account_reference_enc: (require('../services/privacy').isEnc(b.account_reference_enc) ? b.account_reference_enc : null),   // full number, encrypted on the device
     monthly_installment: b.monthly_installment,
     interest_rate_pa:    b.interest_rate_pa,
     compounding_freq:    b.compounding_freq || 'quarterly',
@@ -156,7 +157,7 @@ router.put('/:id', requireAuth, async (req, res) => {
   if (b.form_15g) b.tds_applicable = false;
 
   const allowed = [
-    'institution_name','institution_type','nickname','account_reference',
+    'institution_name','institution_type','nickname','account_reference','account_reference_enc',
     'monthly_installment','interest_rate_pa','compounding_freq','is_senior_rate',
     'start_date','tenure_months','missed_installments','penalty_per_100',
     'tds_applicable','form_15g','tds_rate',

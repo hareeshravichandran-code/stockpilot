@@ -123,6 +123,7 @@ router.post('/', requireAuth, async (req, res) => {
     institution_type:   b.institution_type || 'bank',
     nickname:           b.nickname || null,
     branch_ref:         b.branch_ref || null,
+    branch_ref_enc:     (require('../services/privacy').isEnc(b.branch_ref_enc) ? b.branch_ref_enc : null),   // full number, encrypted on the device
     principal_amount:   b.principal_amount,
     interest_rate_pa:   b.interest_rate_pa,
     compounding_freq:   b.compounding_freq || 'quarterly',
@@ -153,7 +154,7 @@ router.put('/:id', requireAuth, async (req, res) => {
   if (b.form_15g) b.tds_applicable = false;
 
   const allowed = [
-    'institution_name','institution_type','nickname','branch_ref',
+    'institution_name','institution_type','nickname','branch_ref','branch_ref_enc',
     'principal_amount','interest_rate_pa','compounding_freq','payout_type',
     'payout_frequency','is_senior_rate','start_date','tenor_days',
     'on_maturity_action','auto_renew_type','renewal_count',

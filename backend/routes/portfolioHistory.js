@@ -8,6 +8,7 @@
  * GET  /api/portfolio/history/backfill/status — poll last-run status from sync_sessions
  */
 const router      = require('express').Router();
+const { profileOf } = require('../services/privacy');
 const requireAuth = require('../middleware/requireAuth');
 const supabase    = require('../services/supabase');
 const SyncLogger  = require('../services/logger');
@@ -203,8 +204,9 @@ router.post('/backfill', requireAuth, async (req, res) => {
     .eq('user_id', userId).eq('provider', 'gmail').single();
   if (!conn) return res.status(400).json({ error: 'No Gmail account connected' });
 
-  const { data: userProfile } = await supabase
+  let { data: userProfile } = await supabase
     .from('users').select('pan, dob').eq('id', userId).single();
+  userProfile = profileOf(req, userProfile || {});
 
   const { fetchEmails } = require('../services/gmail');
   const { parseCAS }    = require('../services/casParser');

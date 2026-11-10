@@ -115,14 +115,15 @@ router.post('/apply', requireAuth, async (req, res) => {
         const digits = String(folio || '').replace(/\D/g, '');
         if (!digits) return;
         const { data: have } = await supabase.from('mf_holdings').select('id, folio_number, fund_name').eq('user_id', uid);
-        const sameFolio = (have || []).filter(h => String(h.folio_number || '').replace(/\D/g, '') === digits);
+        const sameFolio = (have || []).filter(h => String(h.folio_number || '').replace(/\D/g, '').slice(-4) === digits.slice(-4));   // last 4: encrypted accounts keep only those
         const scheme = str(it.scheme, 160);
         const exists = sameFolio.some(h => !scheme || !h.fund_name || h.fund_name.toLowerCase().slice(0, 12) === scheme.toLowerCase().slice(0, 12)) && sameFolio.length > 0;
         if (exists) out.updated++;
         else {
-          const { error } = await supabase.from('mf_holdings').insert({ user_id: uid, folio_number: folio, fund_name: scheme || `${it.amc || 'Mutual fund'} folio ${folio}`,
+          const row = await require('../services/privacy').lockRow(uid, { user_id: uid, folio_number: folio, fund_name: scheme || `${it.amc || 'Mutual fund'} folio ••${digits.slice(-4)}`,
             fund_house: str(it.amc, 80), nav: num(it.nav), nav_date: isDate(it.last_date) ? it.last_date : null, statement_date: isDate(it.last_date) ? it.last_date : null,
-            source: 'sms', updated_at: nowIso() });
+            source: 'sms', updated_at: nowIso() }, { refs: ['folio_number'] });
+          const { error } = await supabase.from('mf_holdings').insert(row);
           if (error) throw error;
           out.created++;
         }

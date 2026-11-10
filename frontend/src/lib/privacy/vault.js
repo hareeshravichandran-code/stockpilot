@@ -27,6 +27,7 @@ export const vault = {
   get keys() { return current?.keys || null; },
   get selfName() { return current?.selfName || ''; },
   unlocked: () => !!current?.keys,
+  setSelf(name) { if (current && name && !K.isEnc(name)) current = { ...current, selfName: name }; },
 
   /** Load this browser's saved keys for the user, if any. */
   async load(uid, selfName) {
@@ -75,6 +76,11 @@ export async function unlockKeys(server, secret) {
     try { dek = await K.unwrapDek(secret, w); break; } catch { /* try the other lock */ }
   }
   if (!dek) throw new Error('That passphrase or recovery code does not match.');
+  return keysFromServerDek(server, dek);
+}
+
+/** Full keys from the raw DEK (the private key is stored encrypted with it). */
+export async function keysFromServerDek(server, dek) {
   const tmp = await K.keysFromDek(dek);
   const pkcs8 = K.b64u.dec(await K.decrypt(tmp, server.priv));
   return { keys: await K.keysFromDek(dek, pkcs8), dek };
@@ -107,15 +113,31 @@ export async function sealRule(r) {
   return { ...r, pattern_tok: await K.tokens(keys, r.merchant_pattern), merchant_pattern: await K.encrypt(keys, r.merchant_pattern.toLowerCase().trim(), { deterministic: true }) };
 }
 
-/** Decrypts every encrypted string anywhere in a response. Unreadable values show as a lock. */
+/** Decrypts every encrypted value anywhere in a response, including values the server placed inside longer
+ *  text ("EMI paid from “ev1:…”"). "<field>_enc" fills "<field>" when that one only holds the last 4.
+ *  Unreadable values show as a lock. */
+const ENC_IN_TEXT = /e[vp]1:[A-Za-z0-9_-]{16,}/g;
+async function openStr(keys, v) {
+  if (K.isEnc(v) && !/\s/.test(v)) { try { return await K.decrypt(keys, v); } catch { return '🔒'; } }
+  if (!v.includes('v1:') && !v.includes('p1:')) return v;
+  const parts = await Promise.all((v.match(ENC_IN_TEXT) || []).map(async m => { try { return [m, await K.decrypt(keys, m)]; } catch { return [m, '🔒']; } }));
+  let out = v; for (const [m, d] of parts) out = out.split(m).join(d);
+  return out;
+}
+const masked = (v) => v == null || v === '' || /^XX[A-Za-z0-9]{1,4}$/.test(String(v));
 export async function openDeep(v) {
   const keys = vault.keys;
   if (!keys) return v;
-  if (typeof v === 'string') { if (!K.isEnc(v)) return v; try { return await K.decrypt(keys, v); } catch { return '🔒'; } }
+  if (typeof v === 'string') return openStr(keys, v);
   if (Array.isArray(v)) return Promise.all(v.map(openDeep));
   if (v && typeof v === 'object') {
     const out = {};
     await Promise.all(Object.keys(v).map(async k => { out[k] = await openDeep(v[k]); }));
+    for (const k of Object.keys(v)) {
+      if (!k.endsWith('_enc') || !K.isEnc(v[k])) continue;
+      const base = k.slice(0, -4);
+      if (masked(v[base])) out[base] = out[k];
+    }
     return out;
   }
   return v;

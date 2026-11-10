@@ -8,6 +8,7 @@
  */
 
 const router      = require('express').Router();
+const { profileOf } = require('../services/privacy');
 const requireAuth = require('../middleware/requireAuth');
 const supabase    = require('../services/supabase');
 const multer      = require('multer');
@@ -92,8 +93,9 @@ router.post('/upload', requireAuth, upload.single('pdf'), async (req, res) => {
 
   try {
     // Get user PAN for PDF password
-    const { data: userProfile } = await supabase
+    let { data: userProfile } = await supabase
       .from('users').select('pan, dob, name').eq('id', req.user.id).single();
+    userProfile = profileOf(req, userProfile || {});
 
     // Generate password candidates (MFCentral password = PAN in uppercase)
     const passwords = userProfile?.pan
@@ -192,7 +194,7 @@ router.delete('/:id', requireAuth, async (req, res) => {
 
 // ── Helper: upsert one MF holding ────────────────────────────────────
 async function saveMFHolding(userId, h) {
-  const record = {
+  let record = {
     user_id:        userId,
     isin:           h.isin           || null,
     folio_number:   h.folio_number   || null,
@@ -208,6 +210,7 @@ async function saveMFHolding(userId, h) {
     cas_updated_at: new Date().toISOString(),
     updated_at:     new Date().toISOString(),
   };
+  record = await require('../services/privacy').lockRow(userId, record, { refs: ['folio_number'] });
 
   // Upsert strategy: by ISIN (demat) > folio (SOA) > insert new
   let error;

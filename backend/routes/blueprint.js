@@ -25,6 +25,7 @@
 const router      = require('express').Router();
 const requireAuth = require('../middleware/requireAuth');
 const supabase    = require('../services/supabase');
+const { nameHas, NAME_SIGNALS, nameSignals, plain, isEnc } = require('../services/privacy');
 const multer      = require('multer');
 const { computeFD } = require('./fd');
 const { computeRD } = require('./rd');
@@ -262,7 +263,7 @@ async function ensureExpenseGoal(uid, buckets) {
   const { data: flag } = await supabase.from('users').select('bp_expense_goal').eq('id', uid).maybeSingle();
   if (flag?.bp_expense_goal) return;                                   // created once already (user may have deleted it)
   const mark = () => supabase.from('users').update({ bp_expense_goal: true }).eq('id', uid);
-  const existing = buckets.find(b => b.kind === 'goal' && !b.special_kind && /month(ly)?\s*(house(hold)?\s*)?expens|household expens|living expens/i.test(b.name || ''));
+  const existing = buckets.find(b => b.kind === 'goal' && !b.special_kind && nameHas(b, 'household_expense', NAME_SIGNALS.household_expense));
   if (existing) {
     await supabase.from('bp_buckets').update({ special_kind: 'monthly_expense', updated_at: new Date().toISOString() }).eq('id', existing.id);
     existing.special_kind = 'monthly_expense';
@@ -306,7 +307,7 @@ async function linkPolicies(uid, buckets) {
       free.splice(free.indexOf(pick), 1);
     } else {
       // New goal next to the other insurance goals (or in the first layer)
-      const near = buckets.find(b => /insur|premium/i.test(b.name || '')) || buckets.find(b => b.kind === 'goal');
+      const near = buckets.find(b => nameHas(b, 'insurance', NAME_SIGNALS.insurance)) || buckets.find(b => b.kind === 'goal');
       let layer = near?.layer_id, board = near?.board_id;
       if (!layer) {
         const { data: ly } = await supabase.from('bp_layers').select('id, board_id').eq('user_id', uid).order('sort_order').limit(1);
@@ -370,7 +371,7 @@ async function firstLayerSpot(uid, buckets) {
 
 async function ensureSpecialCards(uid, buckets) {
   const [{ data: ms }, { data: u }] = await Promise.all([
-    supabase.from('money_masters').select('id, kind, subtype, title, institution, ref, amount, due_day, meta, status').eq('owner_id', uid).neq('status', 'closed'),
+    supabase.from('money_masters').select('id, kind, subtype, title, institution, ref, amount, due_day, meta, status, signals').eq('owner_id', uid).neq('status', 'closed'),
     supabase.from('users').select('bp_special').eq('id', uid).maybeSingle(),
   ]);
   const masters = ms || [];
@@ -417,9 +418,12 @@ async function ensureSpecialCards(uid, buckets) {
     const key = `loan:${m.id}`;
     let emi = buckets.find(b => b.master_id === m.id && !b.is_loan);
     if (!emi && !done[key]) {
-      const word = (m.meta?.loan_type || (m.title || '').match(/home|car|personal|education|gold|vehicle|two.?wheeler/i)?.[0] || '').toLowerCase();
+      // Loan type: the master's own setting, its name signals (encrypted names), or its readable name
+      const LOAN_WORDS = ['home', 'car', 'personal', 'education', 'gold', 'vehicle'];
+      const raw = (m.meta?.loan_type || (m.signals || []).find(x => LOAN_WORDS.includes(x)) || plain(m.title).match(/home|car|personal|education|gold|vehicle|two.?wheeler/i)?.[0] || '').toLowerCase();
+      const word = /two.?wheeler/.test(raw) ? 'vehicle' : raw;
       emi = buckets.find(b => b.kind === 'goal' && b.is_emi && !b.master_id && (
-        (word && new RegExp(word, 'i').test(b.name || '')) || (num(m.amount) > 0 && Math.abs(num(b.target_amount) - num(m.amount)) <= num(m.amount) * 0.05)));
+        (word && (NAME_SIGNALS[word] ? nameHas(b, word, NAME_SIGNALS[word]) : new RegExp(word, 'i').test(plain(b.name)))) || (num(m.amount) > 0 && Math.abs(num(b.target_amount) - num(m.amount)) <= num(m.amount) * 0.05)));
       if (emi) await patch(emi, { special_kind: 'loan_emi', master_id: m.id });
       else {
         const spot = await firstLayerSpot(uid, buckets);
@@ -450,7 +454,7 @@ async function ensureSpecialCards(uid, buckets) {
   // Emergency fund: last salary x months (6 by default), linkable to a bank account, folio or asset like any goal
   let ef = buckets.find(b => b.special_kind === 'emergency');
   if (!ef && !done.emergency) {
-    ef = buckets.find(b => b.kind === 'goal' && !b.special_kind && /emergenc|rainy day|contingen/i.test(b.name || ''));
+    ef = buckets.find(b => b.kind === 'goal' && !b.special_kind && nameHas(b, 'emergency', NAME_SIGNALS.emergency));
     if (ef) await patch(ef, { special_kind: 'emergency', special_cfg: { base: 'salary', months: 6, ...(ef.special_cfg || {}) } });
     else {
       const spot = await firstLayerSpot(uid, buckets);
@@ -798,6 +802,8 @@ const BUCKET_FIELDS = ['name', 'icon', 'color', 'recurrence_day', 'recurrence_mo
 
 function cleanBucket(body) {
   const b = pick(body || {}, BUCKET_FIELDS);
+  if (b.name !== undefined && b.name !== null && !isEnc(b.name)) b.name = String(b.name).slice(0, 120);
+  const sig = nameSignals(body?.signals); if (sig) b.signals = sig;     // public words of an encrypted name
   for (const k of ['target_amount', 'manual_value', 'expected_amount']) if (b[k] !== undefined) b[k] = b[k] === '' || b[k] === null ? null : num(b[k]);
   if (b.target_date === '') b.target_date = null;
   if (b.recurrence && !['none', 'weekly', 'monthly', 'yearly'].includes(b.recurrence)) b.recurrence = 'none';
@@ -1078,12 +1084,13 @@ router.get('/buckets/:id/notes', requireAuth, async (req, res) => {
 });
 
 router.post('/buckets/:id/comments', requireAuth, async (req, res) => {
-  const body = (req.body?.body || '').trim();
+  const raw = req.body?.body || '';
+  const body = isEnc(raw) ? (raw.length <= 16000 ? raw : '') : raw.trim().slice(0, 4000);
   if (!body) return res.status(400).json({ error: 'Comment is empty' });
   const { data: owns } = await supabase.from('bp_buckets').select('id').eq('id', req.params.id).eq('user_id', req.user.id).maybeSingle();
   if (!owns) return res.status(404).json({ error: 'Bucket not found' });
   const { data, error } = await supabase.from('bp_comments').insert({
-    user_id: req.user.id, bucket_id: req.params.id, body: body.slice(0, 4000),
+    user_id: req.user.id, bucket_id: req.params.id, body,
   }).select().single();
   if (error) return res.status(500).json({ error: error.message });
   res.status(201).json(data);

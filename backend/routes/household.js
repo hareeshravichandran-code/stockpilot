@@ -12,6 +12,7 @@
  *   GET    /api/household/calendar?from&to  every dated thing from every module
  */
 const router = require('express').Router();
+const { profileOf, isEnc, encOk } = require('../services/privacy');
 const requireAuth = require('../middleware/requireAuth');
 const supabase = require('../services/supabase');
 const { computeFD } = require('./fd');
@@ -30,7 +31,7 @@ const REPEATS = ['none', 'monthly', 'quarterly', 'half_yearly', 'yearly'];
 const COLORS = ['moss', 'aubergine', 'prussian', 'terracotta', 'mulberry', 'marigold', 'teal', 'ink'];
 
 // ── Family scope ─────────────────────────────────────────────────────
-async function familyScope(uid) {
+async function familyScope(uid, req = null) {
   const { data: mine } = await supabase.from('family_members').select('group_id').eq('user_id', uid);
   const groups = (mine || []).map(m => m.group_id);
   let ids = [uid];
@@ -40,14 +41,16 @@ async function familyScope(uid) {
   }
   const { data: users } = await supabase.from('users').select('id, name, email, dob').in('id', ids);
   const byId = Object.fromEntries((users || []).map(u => [u.id, u]));
+  // Encrypted accounts: the user's own name / birthday come from the device for this request only
+  if (req && byId[uid]) byId[uid] = profileOf(req, byId[uid]);
   return { ids, users: byId };
 }
-const firstName = (u) => ((u?.name || u?.email || 'Member').split(/[ @]/)[0]);
+const firstName = (u) => (((isEnc(u?.name) ? null : u?.name) || u?.email || 'Member').split(/[ @]/)[0]);
 
 // ── Field cleaning ───────────────────────────────────────────────────
 const isDate = (s) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(s));
 const cleanDate = (v) => (v === '' || v === null ? null : isDate(v) ? v : undefined);
-const cleanText = (v, max = 200) => (v === null || v === '' ? null : typeof v === 'string' ? v.trim().slice(0, max) : undefined);
+const cleanText = (v, max = 200) => (v === null || v === '' ? null : encOk(v) ? v : typeof v === 'string' ? v.trim().slice(0, max) : undefined);   // encrypted values pass untouched
 const cleanNum = (v) => (v === '' || v === null ? null : Number.isFinite(parseFloat(v)) && parseFloat(v) >= 0 ? parseFloat(v) : undefined);
 const last4 = (v) => (v === '' || v === null ? null : typeof v === 'string' ? (v.replace(/[^A-Za-z0-9]/g, '').slice(-4) || null) : undefined);
 const oneOf = (list) => (v) => (list.includes(v) ? v : undefined);
@@ -115,7 +118,7 @@ function crud(table, spec, opts = {}) {
   const r = require('express').Router();
   r.get('/', requireAuth, async (req, res) => {
     try {
-      const scope = await familyScope(req.user.id);
+      const scope = await familyScope(req.user.id, req);
       const { data, error } = await supabase.from(table).select('*').in('owner_id', scope.ids).order(opts.order || 'created_at');
       if (error) throw error;
       res.json({ items: (data || []).map(x => ({ ...x, mine: x.owner_id === req.user.id, added_by: x.owner_id === req.user.id ? null : firstName(scope.users[x.owner_id]) })) });
@@ -154,7 +157,7 @@ function crud(table, spec, opts = {}) {
 
 // Members need their own GET (auto self, de-duplication) and a guard on deleting yourself
 router.get('/members', requireAuth, async (req, res) => {
-  try { res.json({ items: await loadMembers(req.user.id, await familyScope(req.user.id)) }); }
+  try { res.json({ items: await loadMembers(req.user.id, await familyScope(req.user.id, req)) }); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 router.delete('/members/:id', requireAuth, async (req, res, next) => {
@@ -216,8 +219,8 @@ const ageOn = (dob, on) => { const a = parse(dob), b = parse(on); let n = b.getU
 const POLICY_LABEL = { term: 'Term insurance', life: 'Life insurance', health: 'Health insurance', vehicle: 'Vehicle insurance', home: 'Home insurance', accident: 'Accident cover', travel: 'Travel insurance', other: 'Insurance' };
 const DOC_LABEL = { passport: 'Passport', driving_licence: 'Driving licence', pan: 'PAN', aadhaar: 'Aadhaar', voter_id: 'Voter ID', vehicle_rc: 'Vehicle RC', puc: 'PUC certificate', property_tax: 'Property tax', school_fees: 'School fees', subscription: 'Subscription', other: 'Document' };
 
-async function buildCalendar(uid, from, to) {
-  const scope = await familyScope(uid);
+async function buildCalendar(uid, from, to, req = null) {
+  const scope = await familyScope(uid, req);
   const ids = scope.ids;
   const members = await loadMembers(uid, scope);
   const mName = Object.fromEntries(members.map(m => [m.id, m.is_me ? 'You' : m.name]));
@@ -346,7 +349,7 @@ router.get('/calendar', requireAuth, async (req, res) => {
     const from = isDate(req.query.from) ? req.query.from : t;
     let to = isDate(req.query.to) ? req.query.to : ymd(new Date(Date.now() + 90 * DAY));
     if (parse(to) - parse(from) > 400 * DAY) to = ymd(new Date(parse(from).getTime() + 400 * DAY));
-    res.json({ from, to, ...(await buildCalendar(req.user.id, from, to)) });
+    res.json({ from, to, ...(await buildCalendar(req.user.id, from, to, req)) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -356,13 +359,13 @@ router.get('/calendar', requireAuth, async (req, res) => {
 router.get('/overview', requireAuth, async (req, res) => {
   try {
     const uid = req.user.id;
-    const scope = await familyScope(uid);
+    const scope = await familyScope(uid, req);
     const t = todayStr();
     const [members, pol, docs, cal] = await Promise.all([
       loadMembers(uid, scope),
       supabase.from('insurance_policies').select('*').in('owner_id', scope.ids),
       supabase.from('family_documents').select('*').in('owner_id', scope.ids),
-      buildCalendar(uid, t, ymd(new Date(Date.now() + 60 * DAY))),
+      buildCalendar(uid, t, ymd(new Date(Date.now() + 60 * DAY)), req),
     ]);
     const policies = (pol.data || []).filter(p => p.status === 'active');
     const allDocs = docs.data || [];

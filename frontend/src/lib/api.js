@@ -1,5 +1,6 @@
 import axios from 'axios';
-import { vault, sealTxn, sealRule, openDeep } from './privacy/vault';
+import { vault, openDeep } from './privacy/vault';
+import { sealRequest, profileHeader, rememberProfile } from './privacy/fields';
 
 const api = axios.create({
   baseURL: process.env.REACT_APP_API_URL || 'http://localhost:4000',
@@ -9,20 +10,12 @@ const api = axios.create({
 api.interceptors.request.use(async config => {
   const token = localStorage.getItem('sp_token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
-  // End-to-end encryption: names and texts are encrypted here, before they leave the browser
+  // End-to-end encryption: names, numbers and notes are encrypted here, before they leave the browser
   if (vault.unlocked() && config.data && ['post', 'put'].includes(String(config.method).toLowerCase())) {
-    const url = config.url || '';
-    if (/^\/api\/expense\/transactions(\/bulk|\/[^/]+)?$/.test(url)) {
-      config.data = Array.isArray(config.data) ? await Promise.all(config.data.map(sealTxn)) : await sealTxn(config.data);
-    } else if (/^\/api\/expense\/sms-rules$/.test(url)) {
-      config.data = await sealRule(config.data);
-    } else if (url === '/api/setup/apply' && config.data.step === 'rules') {
-      config.data = { ...config.data, items: await Promise.all(config.data.items.map(async it => {
-        const r = await sealRule({ merchant_pattern: it.pattern });
-        return { ...it, pattern: r.merchant_pattern, pattern_tok: r.pattern_tok };
-      })) };
-    }
+    config.data = await sealRequest(config.url, config.method, config.data);
   }
+  const ph = profileHeader(config.url);
+  if (ph) config.headers['X-Kanalyst-Profile'] = ph;
   return config;
 });
 
@@ -30,6 +23,7 @@ api.interceptors.response.use(
   async res => {
     // Encrypted values come back readable for this user (only this browser holds the key)
     if (vault.unlocked() && res.data && typeof res.data === 'object') res.data = await openDeep(res.data);
+    if (vault.unlocked() && /\/api\/auth\/me$/.test(res.config?.url || '')) rememberProfile(res.data);
     return res;
   },
   err => {
@@ -306,6 +300,9 @@ export const privacyAPI = {
   update:    (body)         => api.put('/api/privacy/keys', body),
   plain:     (table)        => api.get('/api/privacy/plain', { params: { table } }),
   encrypted: (table, rows)  => api.post('/api/privacy/encrypted', { table, rows }),
-  migrated:  ()             => api.post('/api/privacy/migrated'),
+  migrated:  (v)            => api.post('/api/privacy/migrated', { v }),
+  tables:    ()             => api.get('/api/privacy/tables'),
+  backup:    (body)         => api.put('/api/privacy/drive', body),
+  removeBackup: ()          => api.delete('/api/privacy/drive'),
   deleteAccount: ()         => api.delete('/api/auth/delete-account'),
 };

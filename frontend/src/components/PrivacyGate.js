@@ -1,37 +1,45 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { privacyAPI } from '../lib/api';
-import { vault, createKeys, unlockKeys, onVaultChange } from '../lib/privacy/vault';
-import { migrateAll } from '../lib/privacy/migrate';
+import { vault, createKeys, unlockKeys, onVaultChange, keysFromServerDek } from '../lib/privacy/vault';
+import { backupToDrive, dekFromDrive } from '../lib/privacy/drive';
+import { migrateAll, MIGRATION_V } from '../lib/privacy/migrate';
+import { isEnc } from '../lib/privacy/kcrypto';
 import './PrivacyGate.css';
 
 // Every account is end-to-end encrypted. Before any money page opens, this browser must hold the key:
 // first time -> choose a passphrase and save the recovery code; new browser -> unlock once.
 export default function PrivacyGate({ children }) {
-  const { user } = useAuth();
+  const { user, refresh } = useAuth();
   const [state, setState] = useState({ phase: 'loading' });
   const [, force] = useState(0);
   useEffect(() => onVaultChange(() => force(n => n + 1)), []);
+  // Once unlocked: read the profile again (name, PAN, birthday come back encrypted until now)
+  const unlocked = vault.unlocked();
+  useEffect(() => {
+    if (!unlocked) return;
+    refresh?.().then(me => { if (me?.name) vault.setSelf(me.name); });
+  }, [unlocked]);
 
   useEffect(() => {
     if (!user?.id) return;
     let alive = true;
     (async () => {
       try {
-        const has = await vault.load(user.id, user.name || '');
+        const has = await vault.load(user.id, isEnc(user.name) ? '' : (user.name || ''));
         const { data } = await privacyAPI.keys();
         if (!alive) return;
         if (!data.ready && !data.required) setState({ phase: 'skip' });
         else if (!data.ready) setState({ phase: 'intro', server: data });
         else if (!has) setState({ phase: 'unlock', server: data });
-        else if (!data.migrated_at) setState({ phase: 'migrate', server: data });
+        else if (!data.migrated_at || (data.migrated_v || 0) < MIGRATION_V) setState({ phase: 'migrate', server: data });
         else setState({ phase: 'open' });
       } catch (e) {
         if (alive) setState({ phase: 'error', error: e.response?.data?.error || e.message });
       }
     })();
     return () => { alive = false; };
-  }, [user?.id, user?.name]);
+  }, [user?.id]);
 
   if (state.phase === 'skip' || (state.phase === 'open' && vault.unlocked())) return children;
   if (state.phase === 'open' && !vault.unlocked()) return <Shell><Unlock server={state.server} onDone={() => setState({ phase: 'open' })} /></Shell>;
@@ -40,8 +48,8 @@ export default function PrivacyGate({ children }) {
       {state.phase === 'loading' && <p className="pg-muted">Checking your privacy key…</p>}
       {state.phase === 'error' && <><h1>Could not check your key</h1><p className="pg-err">{state.error}</p><button className="pg-btn" onClick={() => window.location.reload()}>Try again</button></>}
       {state.phase === 'intro' && <Intro onNext={() => setState({ ...state, phase: 'create' })} />}
-      {state.phase === 'create' && <Create user={user} onDone={(code) => setState({ phase: 'code', code })} />}
-      {state.phase === 'code' && <Code code={state.code} onDone={() => setState({ phase: 'migrate' })} />}
+      {state.phase === 'create' && <Create user={user} onDone={(code, dek) => setState({ phase: 'code', code, dek })} />}
+      {state.phase === 'code' && <Code code={state.code} dek={state.dek} user={user} onDone={() => setState({ phase: 'migrate' })} />}
       {state.phase === 'unlock' && <Unlock server={state.server} onDone={(srv) => setState({ phase: srv?.migrated_at ? 'open' : 'migrate' })} />}
       {state.phase === 'migrate' && <Migrate onDone={() => setState({ phase: 'open' })} />}
     </Shell>
@@ -89,10 +97,10 @@ function Create({ user, onDone }) {
     if (p1 !== p2) return setErr('The two passphrases are different.');
     setBusy(true); setErr('');
     try {
-      const { body, code, keys } = await createKeys(p1);
+      const { body, code, keys, dek } = await createKeys(p1);
       await privacyAPI.create(body);
       await vault.remember(user.id, keys, user.name || '');
-      onDone(code);
+      onDone(code, dek);
     } catch (e2) { setErr(e2.response?.data?.error || e2.message); } finally { setBusy(false); }
   };
   return (
@@ -108,8 +116,13 @@ function Create({ user, onDone }) {
   );
 }
 
-function Code({ code, onDone }) {
+function Code({ code, dek, user, onDone }) {
   const [ok, setOk] = useState(false);
+  const [drive, setDrive] = useState(''); const [dErr, setDErr] = useState('');
+  const toDrive = async () => {
+    setDrive('busy'); setDErr('');
+    try { await backupToDrive(user.id, user.email, dek); setDrive('done'); } catch (e) { setDrive(''); setDErr(e.message); }
+  };
   const save = () => {
     const blob = new Blob([`Kanalyst recovery code\n\n${code}\n\nKeep this safe. With it you can unlock your data if you forget your privacy passphrase.\n`], { type: 'text/plain' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'kanalyst-recovery-code.txt'; a.click();
@@ -123,6 +136,13 @@ function Code({ code, onDone }) {
         <button type="button" className="pg-btn ghost" onClick={() => navigator.clipboard?.writeText(code)}>Copy</button>
         <button type="button" className="pg-btn ghost" onClick={save}>Download</button>
       </div>
+      <div className="pg-drive">
+        <b>Also keep a backup in my Google Drive</b>
+        <span>Unlock a new phone or browser by just picking your Google account. Kanalyst cannot open it on its own.</span>
+        {drive === 'done' ? <em>✓ Backed up to Google Drive</em>
+          : <button type="button" className="pg-btn ghost" disabled={drive === 'busy'} onClick={toDrive}>{drive === 'busy' ? 'Saving…' : 'Back up to Google Drive'}</button>}
+        {dErr && <p className="pg-err">{dErr}</p>}
+      </div>
       <label className="pg-check"><input type="checkbox" checked={ok} onChange={e => setOk(e.target.checked)} /> I have saved my recovery code</label>
       <button className="pg-btn" disabled={!ok} onClick={onDone}>Continue</button>
     </>
@@ -134,6 +154,16 @@ function Unlock({ server, onDone }) {
   const [useCode, setUseCode] = useState(false);
   const [remember, setRemember] = useState(true);
   const [busy, setBusy] = useState(false); const [err, setErr] = useState('');
+  const viaDrive = async () => {
+    setBusy(true); setErr('');
+    try {
+      const srv = server || (await privacyAPI.keys()).data;
+      const u = JSON.parse(localStorage.getItem('sp_user') || '{}');
+      const { keys } = await keysFromServerDek(srv, await dekFromDrive(srv, u.email));
+      if (remember) await vault.remember(u.id, keys, u.name || ''); else vault.hold(u.id, keys, u.name || '');
+      onDone(srv);
+    } catch (e2) { setErr(e2.message); } finally { setBusy(false); }
+  };
   const go = async (e) => {
     e.preventDefault(); setBusy(true); setErr('');
     try {
@@ -156,6 +186,7 @@ function Unlock({ server, onDone }) {
       <button className="pg-btn" disabled={busy || !secret}>{busy ? 'Unlocking…' : 'Unlock'}</button>
       <button type="button" className="pg-link" onClick={() => { setUseCode(!useCode); setSecret(''); setErr(''); }}>
         {useCode ? 'Use my passphrase instead' : 'Forgot it? Use my recovery code'}</button>
+      {server?.wrap_drive && <button type="button" className="pg-btn ghost" disabled={busy} onClick={viaDrive}>Unlock with my Google Drive backup</button>}
     </form>
   );
 }
