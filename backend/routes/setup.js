@@ -145,15 +145,20 @@ router.post('/apply', requireAuth, async (req, res) => {
         {}, { title: str(it.title), amount: num(it.amount), due_day: num(it.due_day) });
         note(r);
       } else if (step === 'rules') {
-        // Category rules for grouped spends: future SMS from this name get the category
-        const pattern = String(it.pattern || '').toLowerCase().trim().slice(0, 80);
-        if (pattern.length < 3 || !str(it.category_id, 40)) return;
+        // Category rules for grouped spends: future SMS from this name get the category.
+        // Encrypted accounts send the pattern encrypted plus its word fingerprints (pattern_tok).
+        const { isEnc } = require('../services/privacy');
+        const enc = isEnc(it.pattern);
+        const pattern = enc ? String(it.pattern).slice(0, 400) : String(it.pattern || '').toLowerCase().trim().slice(0, 80);
+        const ptok = Array.isArray(it.pattern_tok) ? it.pattern_tok.filter(x => typeof x === 'string').slice(0, 20) : null;
+        if ((!enc && pattern.length < 3) || (enc && !ptok?.length) || !str(it.category_id, 40)) return;
         const { data: ex } = await supabase.from('user_sms_rules').select('id').eq('user_id', uid).eq('merchant_pattern', pattern).maybeSingle();
-        if (ex) { await supabase.from('user_sms_rules').update({ category_id: it.category_id, user_confirmed: true, updated_at: Date.now() }).eq('id', ex.id); out.updated++; }
-        else { await supabase.from('user_sms_rules').insert({ id: require('crypto').randomUUID(), user_id: uid, merchant_pattern: pattern, category_id: it.category_id, match_count: num(it.count) || 1, user_confirmed: true, created_at: Date.now(), updated_at: Date.now() }); out.created++; }
+        if (ex) { await supabase.from('user_sms_rules').update({ category_id: it.category_id, user_confirmed: true, ...(ptok ? { pattern_tok: ptok } : {}), updated_at: Date.now() }).eq('id', ex.id); out.updated++; }
+        else { await supabase.from('user_sms_rules').insert({ id: require('crypto').randomUUID(), user_id: uid, merchant_pattern: pattern, ...(ptok ? { pattern_tok: ptok } : {}), category_id: it.category_id, match_count: num(it.count) || 1, user_confirmed: true, created_at: Date.now(), updated_at: Date.now() }); out.created++; }
         // Existing uncategorised transactions from this merchant follow the rule
-        await supabase.from('expense_transactions').update({ category_id: it.category_id, updated_at: Date.now() })
-          .eq('user_id', uid).is('category_id', null).ilike('merchant', `%${pattern}%`);
+        let q = supabase.from('expense_transactions').update({ category_id: it.category_id, updated_at: Date.now() }).eq('user_id', uid).is('category_id', null);
+        q = ptok?.length ? q.contains('merchant_tok', ptok) : q.ilike('merchant', `%${pattern}%`);
+        await q;
       }
     };
     // A few at a time: each item is several round trips, and 18 folios one by one took longer than the app waits

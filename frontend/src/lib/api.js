@@ -1,18 +1,37 @@
 import axios from 'axios';
+import { vault, sealTxn, sealRule, openDeep } from './privacy/vault';
 
 const api = axios.create({
   baseURL: process.env.REACT_APP_API_URL || 'http://localhost:4000',
   timeout: 30000,
 });
 
-api.interceptors.request.use(config => {
+api.interceptors.request.use(async config => {
   const token = localStorage.getItem('sp_token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
+  // End-to-end encryption: names and texts are encrypted here, before they leave the browser
+  if (vault.unlocked() && config.data && ['post', 'put'].includes(String(config.method).toLowerCase())) {
+    const url = config.url || '';
+    if (/^\/api\/expense\/transactions(\/bulk|\/[^/]+)?$/.test(url)) {
+      config.data = Array.isArray(config.data) ? await Promise.all(config.data.map(sealTxn)) : await sealTxn(config.data);
+    } else if (/^\/api\/expense\/sms-rules$/.test(url)) {
+      config.data = await sealRule(config.data);
+    } else if (url === '/api/setup/apply' && config.data.step === 'rules') {
+      config.data = { ...config.data, items: await Promise.all(config.data.items.map(async it => {
+        const r = await sealRule({ merchant_pattern: it.pattern });
+        return { ...it, pattern: r.merchant_pattern, pattern_tok: r.pattern_tok };
+      })) };
+    }
+  }
   return config;
 });
 
 api.interceptors.response.use(
-  res => res,
+  async res => {
+    // Encrypted values come back readable for this user (only this browser holds the key)
+    if (vault.unlocked() && res.data && typeof res.data === 'object') res.data = await openDeep(res.data);
+    return res;
+  },
   err => {
     const url = err.config?.url || '';
     if (err.response?.status === 401 && !url.includes('/auth/me')) {
@@ -280,3 +299,13 @@ export const retirementAPI = {
 };
 
 export default api;
+
+export const privacyAPI = {
+  keys:      ()             => api.get('/api/privacy/keys'),
+  create:    (body)         => api.post('/api/privacy/keys', body),
+  update:    (body)         => api.put('/api/privacy/keys', body),
+  plain:     (table)        => api.get('/api/privacy/plain', { params: { table } }),
+  encrypted: (table, rows)  => api.post('/api/privacy/encrypted', { table, rows }),
+  migrated:  ()             => api.post('/api/privacy/migrated'),
+  deleteAccount: ()         => api.delete('/api/auth/delete-account'),
+};

@@ -337,12 +337,13 @@ async function linkPolicies(uid, buckets) {
 //  Each is created once (users.bp_special remembers it, so a card the user deletes stays deleted);
 //  an existing box that clearly is that thing is adopted instead of creating a duplicate.
 // ═══════════════════════════════════════════════════════════════════
-const EMI_EXCLUDE = (g) => g.key === 'g_emi' || /loan|emi/i.test(g.key) || /\b(loans?|emis?)\b/i.test(g.name || '') || /\b(loan|emi)\b/i.test(g.merchant || '');
+const EMI_EXCLUDE = (g) => g.key === 'g_emi' || /loan|emi/i.test(g.key) || /\b(loans?|emis?)\b/i.test(g.name || '')
+  || /\b(loan|emi)\b/i.test(require('../services/privacy').plain(g.merchant)) || (Array.isArray(g.signals) && (g.signals.includes('emi') || g.signals.includes('loan')));
 
 function spendOnly(f) {
   const cut = {};
   const items = (f.items || []).filter(t => {
-    if (EMI_EXCLUDE({ key: t.key, name: t.group, merchant: t.merchant })) { cut[t.key] = (cut[t.key] || 0) + t.amount; return false; }
+    if (EMI_EXCLUDE({ key: t.key, name: t.group, merchant: t.merchant, signals: t.signals })) { cut[t.key] = (cut[t.key] || 0) + t.amount; return false; }
     return true;
   });
   const groups = f.sections.expense.groups.filter(g => !EMI_EXCLUDE(g)).map(g => ({ ...g, actual: Math.max(0, g.actual - (cut[g.key] || 0)) }))

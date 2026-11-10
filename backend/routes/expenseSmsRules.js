@@ -47,6 +47,7 @@ router.post('/sms-rules', authMiddleware, async (req, res) => {
         category_id:      category_id,
         match_count:      match_count || 1,
         user_confirmed:   user_confirmed || false,
+        ...(Array.isArray(req.body.pattern_tok) ? { pattern_tok: req.body.pattern_tok.slice(0, 20) } : {}),
         updated_at:       Date.now()
       }, { onConflict: 'user_id,merchant_pattern' })
       .select()

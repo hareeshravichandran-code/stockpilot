@@ -277,7 +277,7 @@ function defaultEvent(m) {
 }
 
 const NON_SPEND = ['p_transfer', 'cc_bill', 'self_transfer'];
-const txnText = (t) => `${t.merchant || ''} ${t.description || ''} ${t.sms_body || ''}`.toLowerCase();
+const { txnText, has: hasSig } = require('../services/privacy');
 
 /** Does this bank transaction belong to this master? Keywords win; otherwise kind-specific defaults. */
 function matches(m, t) {
@@ -287,7 +287,9 @@ function matches(m, t) {
   const kw = (m.match && Array.isArray(m.match.keywords)) ? m.match.keywords : [];
   const amtOk = () => m.match?.any_amount || !num(m.amount) || Math.abs(num(t.amount) - num(m.amount)) <= Math.max(2, num(m.amount) * 0.15);
   if (m.match?.sender && t.sms_sender && !String(t.sms_sender).toUpperCase().includes(m.match.sender)) return false;
-  if (kw.length) return kw.some(k => text.includes(k)) && amtOk();
+  const tokSet = new Set(Array.isArray(t.merchant_tok) ? t.merchant_tok : []);
+  const kwTok = Array.isArray(m.match?.keyword_tok) ? m.match.keyword_tok : [];   // fingerprints of the keywords (encrypted accounts)
+  if (kw.length || kwTok.length) return (kw.some(k => text.includes(k)) || kwTok.some(k => tokSet.has(k))) && amtOk();
   // A fixed payment with no name in its SMS (e.g. an EMI by NACH): same bank, same amount (±1%)
   if (m.meta && (m.meta.fixed === '1' || m.meta.fixed === true)) {
     const bankWords = (m.institution || '').toLowerCase().split(/\s+/).filter(w => w.length > 2 && !['bank', 'ltd', 'limited', 'your'].includes(w));
@@ -295,18 +297,21 @@ function matches(m, t) {
     return sameBank && num(m.amount) > 0 && Math.abs(num(t.amount) - num(m.amount)) <= num(m.amount) * 0.01;
   }
   const inst = (m.institution || '').toLowerCase().split(/\s+/).filter(w => w.length > 2 && !['bank', 'ltd', 'limited', 'mutual', 'fund', 'india'].includes(w));
-  const hasInst = inst.length && inst.some(w => text.includes(w));
+  const sig = Array.isArray(t.signals) ? t.signals : [];
+  const hasInst = inst.length && inst.some(w => text.includes(w) || sig.includes('org:' + w));
   const ref = m.ref_key && m.ref_key.length >= 2 ? m.ref_key : null;
-  const hasRef = ref && text.replace(/\D/g, ' ').split(/\s+/).some(d => d.endsWith(ref));
+  const hasRef = ref && (text.replace(/\D/g, ' ').split(/\s+/).some(d => d.endsWith(ref)) || String(t.account_last4 || '').endsWith(ref)
+    || sig.some(s => s.startsWith('x:') && s.endsWith(ref)));
+  const is = (s, rx) => hasSig(t, s, rx);
   switch (m.kind) {
-    case 'loan': return /\bemi\b|\bloan\b/.test(text) && !/credit\s*card/.test(text) && (hasRef || hasInst) && amtOk();
-    case 'card': return /credit\s*card|\bcc\b/.test(text) && /payment|towards|bill/.test(text) && !!hasRef;
-    case 'sip': return /\bsip\b|mutual|\bmf\b|nach|units/.test(text) && (hasRef || hasInst) && amtOk();
-    case 'rd': return /\brd\b|recurring/.test(text) && (hasRef || hasInst) && amtOk();
+    case 'loan': return (is('emi', /\bemi\b/) || is('loan', /\bloan\b/)) && !is('card', /credit\s*card/) && (hasRef || hasInst) && amtOk();
+    case 'card': return is('card', /credit\s*card|\bcc\b/) && is('bill', /payment|towards|bill/) && !!hasRef;
+    case 'sip': return (is('sip', /\bsip\b/) || is('mutual', /mutual|\bmf\b/) || is('nach', /nach/) || is('units', /units/)) && (hasRef || hasInst) && amtOk();
+    case 'rd': return is('rd', /\brd\b|recurring/) && (hasRef || hasInst) && amtOk();
     case 'subscription': return !!hasInst && amtOk();
     case 'income':
-      if (m.subtype === 'salary') return (/salary|\bsal\b|payroll/.test(text) || hasInst) && amtOk();
-      if (m.subtype === 'dividend') return /div|dividend/.test(text) && (hasInst || !inst.length);
+      if (m.subtype === 'salary') return (is('salary', /salary|\bsal\b|payroll/) || hasInst) && amtOk();
+      if (m.subtype === 'dividend') return is('dividend', /div|dividend/) && (hasInst || !inst.length);
       return !!hasInst && amtOk();
     case 'expense': return !!hasInst && amtOk();
     default: return false;
@@ -339,7 +344,7 @@ async function linkActuals(uid, { force = false } = {}) {
   const [{ data: masters }, { data: events }, { data: txns }] = await Promise.all([
     supabase.from('money_masters').select('*').eq('owner_id', uid).eq('status', 'active'),
     supabase.from('recurring_events').select('*').eq('owner_id', uid).eq('master_table', 'money_masters'),
-    supabase.from('expense_transactions').select('id, amount, type, merchant, description, sms_body, sms_sender, bank_name, date_time, category_id, master_id')
+    supabase.from('expense_transactions').select('id, amount, type, merchant, description, sms_body, sms_sender, bank_name, account_last4, date_time, category_id, master_id, signals, merchant_tok')
       .eq('user_id', uid).eq('is_deleted', false).gte('date_time', since).order('date_time', { ascending: true }).range(0, 4999),
   ]);
   const ms = (masters || []).filter(m => m.kind !== 'bank_account');
@@ -659,7 +664,7 @@ router.get('/month', requireAuth, async (req, res) => {
     const startMs = Date.UTC(y, mo - 1, 1) - 330 * 60000, endMs = Date.UTC(y, mo, 1) - 330 * 60000;   // IST month
     const { buildCalendar } = require('./household');
     const [{ data: txns }, { data: masters }, cal, { data: divs }] = await Promise.all([
-      supabase.from('expense_transactions').select('id, amount, type, merchant, description, sms_body, date_time, category_id, master_id')
+      supabase.from('expense_transactions').select('id, amount, type, merchant, description, sms_body, date_time, category_id, master_id, signals, merchant_tok')
         .eq('user_id', uid).eq('is_deleted', false).gte('date_time', startMs).lt('date_time', endMs).order('date_time', { ascending: true }).range(0, 2999),
       supabase.from('money_masters').select('id, kind, subtype, title').eq('owner_id', uid),
       buildCalendar(uid, from, to),

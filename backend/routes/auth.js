@@ -379,16 +379,21 @@ router.delete('/delete-account', requireAuth, async (req, res) => {
       }
     } catch(_){}
 
+    // Everything the account owns (tables keyed by user_id, then by owner_id), then the user
     const tables = [
+      'bp_comments','bp_attachments','bp_bucket_assets','bp_links','bp_buckets','bp_layers','bp_boards',
       'email_connections','holdings','mf_holdings','mf_statements',
-      'transactions','dividends','income_entries','income_rules',
-      'expense_transactions','expense_categories','expense_sms_rules',
-      'goals','fixed_deposits','recurring_deposits','nps_data',
-      'portfolio_snapshots','portfolio_history','sync_logs',
-      'family_members','family_invites','password_reset_tokens',
+      'transactions','dividends','dividend_income','income_entries','income_rules',
+      'expense_transactions','expense_categories','expense_budgets','expense_rules','expense_sms_rules','user_sms_rules','custom_fields',
+      'goals','goal_assets','goal_cycles','fixed_deposits','recurring_deposits','nps_data','nps_holdings','asset_balances','retirement_plans',
+      'portfolio_snapshots','portfolio_history','sync_logs','google_sheets_config',
+      'family_members','family_invites','password_reset_tokens','diag_sms','diag_uploads','support_messages',
     ];
     for (const t of tables) {
       try { await supabase.from(t).delete().eq('user_id', uid); } catch(_) {}
+    }
+    for (const t of ['event_payments','recurring_events','money_masters','insurance_policies','household_members','family_events','family_documents']) {
+      try { await supabase.from(t).delete().eq('owner_id', uid); } catch(_) {}
     }
     await supabase.from('users').delete().eq('id', uid);
     console.log(JSON.stringify({ event: 'ACCOUNT_DELETED', userId: uid }));

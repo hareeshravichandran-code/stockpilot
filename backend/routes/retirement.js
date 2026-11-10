@@ -64,7 +64,7 @@ async function analyseTransactions(uid, userName) {
   const since = Date.now() - 400 * 864e5;
   const [txns, { data: cats }] = await Promise.all([
     fetchAll(() => supabase.from('expense_transactions')
-      .select('amount, type, category_id, merchant, description, payment_type, date_time')
+      .select('amount, type, category_id, merchant, description, payment_type, date_time, signals')
       .eq('user_id', uid).eq('is_deleted', false).eq('type', 'DEBIT').gte('date_time', since)),
     supabase.from('expense_categories').select('id, name, type, parent_id'),
   ]);
@@ -108,7 +108,10 @@ async function analyseTransactions(uid, userName) {
     const c = t.category_id ? catById[t.category_id] : null;
     const name = c?.name;
     const parent = c?.parent_id ? catById[c.parent_id]?.name : null;
-    const merchant = String(t.merchant || t.description || '').trim();
+    const { plain } = require('../services/privacy');
+    const merchant = String(plain(t.merchant) || plain(t.description) || '').trim();
+    const sg = Array.isArray(t.signals) ? t.signals : [];
+    const shown = String(t.merchant || t.description || '').trim();   // encrypted names pass through for the device to show
 
     if (c) {
       if (inList(name, CAT.sip)) { addTo(sips, name, amt, k, { source: 'category' }); continue; }
@@ -126,12 +129,12 @@ async function analyseTransactions(uid, userName) {
     }
     // Not categorised: classify by merchant and payment type
     const pt = String(t.payment_type || '').toUpperCase();
-    if (RX.cardBill.test(merchant) || (pt === 'CREDIT_CARD' && !merchant)) { groups.cardBill.amount += amt; groups.cardBill.count++; continue; }
-    if (selfRx && selfRx.test(merchant)) { groups.selfTransfer.amount += amt; groups.selfTransfer.count++; continue; }
-    if (RX.invest.test(merchant)) { addTo(sips, merchant.replace(/\s+/g, ' ').slice(0, 40), amt, k, { source: 'merchant' }); continue; }
-    if (RX.emi.test(merchant)) { addTo(emis, merchant.slice(0, 40), amt, k, { type: 'other' }); continue; }
-    if (RX.insurance.test(merchant)) { groups.insurance.amount += amt; groups.insurance.count++; continue; }
-    if (pt === 'BANK_TRANSFER' && !merchant) { groups.bankTransfer.amount += amt; groups.bankTransfer.count++; continue; }
+    if (RX.cardBill.test(merchant) || sg.includes('cardbill') || (pt === 'CREDIT_CARD' && !shown)) { groups.cardBill.amount += amt; groups.cardBill.count++; continue; }
+    if ((selfRx && selfRx.test(merchant)) || sg.includes('self')) { groups.selfTransfer.amount += amt; groups.selfTransfer.count++; continue; }
+    if (RX.invest.test(merchant) || sg.includes('invest')) { addTo(sips, (merchant || shown).replace(/\s+/g, ' ').slice(0, 40), amt, k, { source: 'merchant' }); continue; }
+    if (RX.emi.test(merchant) || sg.includes('emi') || sg.includes('loan')) { addTo(emis, (merchant || shown).slice(0, 40), amt, k, { type: 'other' }); continue; }
+    if (RX.insurance.test(merchant) || sg.includes('insurance')) { groups.insurance.amount += amt; groups.insurance.count++; continue; }
+    if (pt === 'BANK_TRANSFER' && !shown) { groups.bankTransfer.amount += amt; groups.bankTransfer.count++; continue; }
     groups.livingRaw.amount += amt; groups.livingRaw.count++;
   }
 

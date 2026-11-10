@@ -45,14 +45,18 @@ async function loadCategories(uid) {
 
 async function loadRules(uid) {
   const [u, g] = await Promise.all([
-    supabase.from('user_sms_rules').select('merchant_pattern, category_id').eq('user_id', uid),
+    supabase.from('user_sms_rules').select('merchant_pattern, category_id, pattern_tok').eq('user_id', uid),
     supabase.from('universal_merchant_rules').select('merchant_pattern, category_id').gte('confidence_score', 0.6).limit(3000),
   ]);
   const norm = (s) => String(s || '').toLowerCase().trim();
-  const own = (u.data || []).filter(r => r.category_id && norm(r.merchant_pattern).length >= 3).map(r => [norm(r.merchant_pattern), r.category_id]);
+  const { isEnc, ruleMatches } = require('./privacy');
+  // Encrypted rules match by word fingerprints; readable ones by text, as before
+  const ownTok = (u.data || []).filter(r => r.category_id && Array.isArray(r.pattern_tok) && r.pattern_tok.length);
+  const own = (u.data || []).filter(r => r.category_id && !isEnc(r.merchant_pattern) && norm(r.merchant_pattern).length >= 3).map(r => [norm(r.merchant_pattern), r.category_id]);
   const shared = (g.data || []).filter(r => r.category_id && norm(r.merchant_pattern).length >= 4).map(r => [norm(r.merchant_pattern), r.category_id]);
-  return (merchant) => {
-    const m = norm(merchant);
+  return (merchant, t) => {
+    if (t) for (const r of ownTok) if (ruleMatches(r, t)) return r.category_id;
+    const m = isEnc(merchant) ? '' : norm(merchant);
     if (m.length < 3) return null;
     for (const [p, c] of own) if (m === p || m.includes(p)) return c;
     for (const [p, c] of shared) if (m.includes(p)) return c;
@@ -68,7 +72,7 @@ function clean(rows, userName) {
   let dups = 0, transfers = 0;
   for (const t of rows) if (NON_SPEND.has(t.category_id)) { t._skip = 'transfer'; transfers++; }
   // Payee is you → moving money between your own accounts
-  for (const t of rows) if (!t._skip && isMe(t.merchant)) { t._skip = 'transfer'; transfers++; }
+  for (const t of rows) if (!t._skip && ((Array.isArray(t.signals) && t.signals.includes('self')) || isMe(require('./privacy').plain(t.merchant)))) { t._skip = 'transfer'; transfers++; }
   // Debit in one account + credit of the same amount in another within a day → transfer
   const credits = rows.filter(t => t.type === 'CREDIT' && !t._skip);
   for (const d of rows) {
@@ -100,7 +104,7 @@ function classify(t, cats, ruleCat, masterKind) {
   if (mk && MASTER_GROUP[mk.kind]) return MASTER_GROUP[mk.kind];
   if (mk && mk.kind === 'income') return { section: 'income', key: 'inc_' + (mk.subtype || 'income'), name: { salary: 'Salary', dividend: 'Dividends', rental: 'Rent received', interest: 'Interest', freelance: 'Freelance' }[mk.subtype] || 'Income', color: '#5f7f1f' };
   if (mk && mk.kind === 'expense') return { section: 'expense', key: 'exp_' + (mk.subtype || 'other'), name: { rent: 'Rent', school_fee: 'School fees', maid: 'Help / maid', utility: 'Utilities' }[mk.subtype] || 'Regular expenses', color: '#964062' };
-  const catId = t.category_id || ruleCat(t.merchant);
+  const catId = t.category_id || ruleCat(t.merchant, t);
   if (catId && REFUND.has(catId) && t.type === 'CREDIT') return { section: 'refund', key: 'p_refund', name: 'Refunds & cashback', color: '#8a7d6a' };
   const c = catId ? cats.byId[catId] : null;
   const top = c ? cats.top(catId) : null;
@@ -123,7 +127,7 @@ async function monthFlow(uid, month, opts = {}) {
   const from = monthStartMs(months[0]);
   const to = monthStartMs(addMonths(month, 1));
   const [{ data: txns }, cats, ruleCat, { data: ms }, { data: me }] = await Promise.all([
-    supabase.from('expense_transactions').select('id, amount, type, category_id, merchant, date_time, sms_sender, payment_type, reference_no, account_last4, master_id')
+    supabase.from('expense_transactions').select('id, amount, type, category_id, merchant, date_time, sms_sender, payment_type, reference_no, account_last4, master_id, signals, merchant_tok, merchant_key')
       .eq('user_id', uid).eq('is_deleted', false).gte('date_time', from - 2 * 864e5).lt('date_time', to + 2 * 864e5).limit(20000),
     loadCategories(uid),
     loadRules(uid),
@@ -153,7 +157,7 @@ async function monthFlow(uid, month, opts = {}) {
     const G = (S[g.key] = S[g.key] || { key: g.key, name: g.name, color: g.color, actual: 0, count: 0, uncategorised: !!g.uncategorised, inferred: 0 });
     G.actual += num(t.amount); G.count++; if (g.inferred) G.inferred++;
     if (opts.items && mo === month && g.section === 'expense')
-      items.push({ id: t.id, date: dayOf(t.date_time), merchant: t.merchant || null, amount: Math.round(num(t.amount)), key: g.key, group: g.name, color: g.color });
+      items.push({ id: t.id, date: dayOf(t.date_time), merchant: t.merchant || null, signals: t.signals || null, amount: Math.round(num(t.amount)), key: g.key, group: g.name, color: g.color });
   }
 
   const prev = months.slice(3, 6);                                                 // the 3 months before this one
@@ -185,8 +189,8 @@ async function monthFlow(uid, month, opts = {}) {
     const byMerchant = {};
     for (const t of rows) {
       if (t._skip || t.type !== 'DEBIT' || !t.merchant || num(t.amount) > 5000 || t.master_id) continue;
-      const k = t.merchant.trim().toLowerCase();
-      if (k.length < 3 || /^\?|unknown|upi|neft|imps|transfer/.test(k)) continue;
+      const k = require('./privacy').payeeKey(t);   // fingerprint for encrypted payees
+      if (!k || k.length < 3 || /^\?|unknown|upi|neft|imps|transfer/.test(k)) continue;
       (byMerchant[k] = byMerchant[k] || []).push(t);
     }
     for (const list of Object.values(byMerchant)) {
@@ -198,11 +202,12 @@ async function monthFlow(uid, month, opts = {}) {
       const isSubCat = list.some(t => SUB_CATS.has(t.category_id));
       const recent = list.filter(t => monthOf(t.date_time) >= months[1]);
       const perMonth = recent.length / ms6.size;
-      const everyday = list.some(t => /^(p_food|food_|grocery|p_grocery|p_fuel|petrol|cab|auto|p_travel)/.test(t.category_id || '') || /swiggy|zomato|blinkit|zepto|bigbasket|instamart|uber|ola|rapido|petrol|fuel/i.test(t.merchant));
+      const everyday = list.some(t => /^(p_food|food_|grocery|p_grocery|p_fuel|petrol|cab|auto|p_travel)/.test(t.category_id || '') || (Array.isArray(t.signals) && t.signals.includes('everyday')) || /swiggy|zomato|blinkit|zepto|bigbasket|instamart|uber|ola|rapido|petrol|fuel/i.test(require('./privacy').plain(t.merchant)));
       if (!isSubCat && (!steady || perMonth > 1.4 || everyday)) continue;
       const last = list[list.length - 1];
-      const name = last.merchant.trim();
-      if (subMasters.some(m => (m.title || '').toLowerCase().includes(name.toLowerCase().split(/\s+/)[0]))) continue;
+      const name = last.merchant.trim();   // may be encrypted: the device shows the name
+      const readable = require('./privacy').plain(name);
+      if (readable && subMasters.some(m => (m.title || '').toLowerCase().includes(readable.toLowerCase().split(/\s+/)[0]))) continue;
       subscriptions.push({ merchant: name, amount: Math.round(median), months: ms6.size, last: dayOf(last.date_time), due_day: +dayOf(last.date_time).slice(8, 10) });
     }
     subscriptions.sort((a, b) => b.months - a.months || b.amount - a.amount);

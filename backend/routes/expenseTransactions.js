@@ -122,6 +122,7 @@ router.post('/transactions', authMiddleware, async (req, res) => {
         reference_no,
         sms_sender:   req.body.sms_sender   || null,
         payment_type: req.body.payment_type || null,
+        ...require('../services/privacy').txnExtras(req.body),
         is_deleted:   false,
         created_at:   Date.now(),
         updated_at:   Date.now()
@@ -161,6 +162,9 @@ router.post('/transactions/bulk', authMiddleware, async (req, res) => {
       reference_no: t.reference_no || null,
       sms_sender:   t.sms_sender   || null,
       payment_type: t.payment_type || null,
+      // Full SMS text is kept only end-to-end encrypted (never in readable form)
+      sms_body:     require('../services/privacy').isEnc(t.sms_body) ? t.sms_body : null,
+      ...require('../services/privacy').txnExtras(t),
       is_deleted:   false,
       created_at:   Date.now(),
       updated_at:   Date.now()
@@ -225,7 +229,7 @@ router.put('/transactions/:id', authMiddleware, async (req, res) => {
 
     const { data, error } = await supabase
       .from('expense_transactions')
-      .update({ amount, type, category_id, merchant, note, description, updated_at: Date.now() })
+      .update({ amount, type, category_id, merchant, note, description, ...require('../services/privacy').txnExtras(req.body), updated_at: Date.now() })
       .eq('id', id)
       .eq('user_id', req.userId)
       .select()
