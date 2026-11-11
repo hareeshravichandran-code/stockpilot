@@ -29,9 +29,6 @@ const app = express();
 // ── Security middleware ──
 app.use(helmet());
 app.use(morgan('dev'));
-// Support images and diagnostics (logs, SMS batches) need bigger bodies than the 100 KB default
-app.use(['/api/support', '/api/diag', '/api/sms-issues'], express.json({ limit: '15mb' }));
-app.use(express.json());
 
 // ── CORS ──
 app.use(cors({
@@ -44,6 +41,14 @@ app.use(cors({
   },
   credentials: true
 }));
+
+// Body parsers come after CORS so that errors (e.g. a body too large) still reach the browser readably
+// Support images and diagnostics (logs, SMS batches) need bigger bodies than the 100 KB default
+app.use(['/api/support', '/api/diag', '/api/sms-issues', '/api/privacy', '/api/epf'], express.json({ limit: '15mb' }));
+// Encrypted values are longer than plain text: bulk writes need more room than the 100 KB default
+app.use(['/api/expense/transactions/bulk', '/api/expense/sync', '/api/setup', '/api/masters'], express.json({ limit: '8mb' }));
+app.use(express.json());
+
 
 // ── Trust Railway proxy ──
 app.set('trust proxy', 1);

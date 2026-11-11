@@ -17,10 +17,14 @@ export async function migrateAll(onProgress = () => {}) {
       if (!rows.length) break;
       const sealed = await Promise.all(rows.map(r => (table === 'rules' ? sealRule(r) : table === 'transactions' ? sealTxn(r)
         : sealFields(r, { text: spec.text, ref: spec.ref, date: spec.date, sig: spec.signals ? spec.text[0] : null }))));
-      const { data: res } = await privacyAPI.encrypted(table, sealed);
-      done += res.done || 0;
-      onProgress(done);
-      if (!res.done) break;          // nothing could be saved: stop rather than loop
+      // Send in small batches (encrypted text is long)
+      let saved = 0;
+      for (let i = 0; i < sealed.length; i += 100) {
+        const { data: res } = await privacyAPI.encrypted(table, sealed.slice(i, i + 100));
+        saved += res.done || 0; done += res.done || 0;
+        onProgress(done);
+      }
+      if (!saved) break;             // nothing could be saved: stop rather than loop
     }
   }
   await privacyAPI.migrated(MIGRATION_V);
