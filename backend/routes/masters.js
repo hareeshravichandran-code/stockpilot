@@ -743,7 +743,7 @@ router.get('/candidates', requireAuth, async (req, res) => {
       const next = new Date(Date.UTC(lastDay.getUTCFullYear(), lastDay.getUTCMonth() + step, lastDay.getUTCDate()));
       const reviewedAt = r ? Date.parse(r.reviewed_at) : null;
       out.push({
-        fp, payee: last.merchant, sender: last.sms_sender || last.bank_name || null, body: last.sms_body || null,
+        fp, payee: last.merchant, sender: last.sms_sender || last.bank_name || null, body: (steady.find(t => t.sms_body) || {}).sms_body || null,
         account: last.account_last4 || null, amount: Math.round(med), frequency: freq, count: steady.length,
         first_date: ymd(new Date(days[0] + 5.5 * 3600e3)), last_date: ymd(lastDay), next_date: ymd(next),
         due_day: lastDay.getUTCDate(), due_month: lastDay.getUTCMonth() + 1, category_id: last.category_id || null,
