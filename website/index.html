@@ -3,299 +3,187 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Kanalyst: your family's money, plans and paperwork in one home</title>
-<meta name="description" content="Kanalyst tracks investments, goals, retirement, loans, insurance, documents and dates for every person in your family. Built in India.">
-<meta property="og:title" content="Kanalyst: one home for your family's money">
-<meta property="og:description" content="Investments, goals, retirement, insurance, documents and dates for the whole family.">
+<title>Kanalyst: your family's money in one home</title>
+<meta name="description" content="Kanalyst brings your family's investments, spending, goals, insurance, documents and dates into one encrypted home. Built in India.">
+<meta property="og:title" content="Kanalyst: your family's money in one home">
+<meta property="og:description" content="Investments, spending, goals, insurance and dates for the whole family. Encrypted on your device. Never sold.">
 <meta property="og:url" content="https://kanalyst.in/">
-<meta name="theme-color" content="#efe8d7">
+<meta name="theme-color" content="#F3EEE3">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Mono:wght@400;500&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="site.css">
 </head>
 <body>
 
-<nav class="nav">
+<nav class="nav" aria-label="Main">
   <a class="logo" href="/"><span class="mark" aria-hidden="true"></span>Kanalyst</a>
   <div class="nav-links">
-    <a href="#rooms">Features</a>
-    <a href="#see">See it</a>
-    <a href="#flow">How it works</a>
-    <a href="/privacy.html">Privacy</a>
+    <a href="#features">Features</a>
+    <a href="#security">Security</a>
+    <a href="#community">Community</a>
+    <a href="#about">About</a>
     <a class="btn ghost" href="https://app.kanalyst.in/login">Log in</a>
-    <a class="btn" href="https://app.kanalyst.in/signup">Start free</a>
+    <a class="btn pop" href="https://app.kanalyst.in/signup">Start free</a>
   </div>
 </nav>
 
-<!-- ═══ Hero ═══════════════════════════════════════════════════ -->
+<!-- ═══ Hero ═══ -->
 <header class="hero">
   <div class="hero-copy">
-    <h1>One home for everything your family runs on.</h1>
-    <p>Money, goals, retirement, insurance, documents and dates. For every person in your house.</p>
+    <span class="eyebrow"><i></i>Family finance, built in India</span>
+    <h1>Your family's money, <em>in one home.</em></h1>
+    <p>Investments, spending, goals, insurance and dates for everyone in your house.</p>
     <div class="cta">
-      <a class="btn lg" href="https://app.kanalyst.in/signup">Create your family home</a>
-      <a class="btn lg ghost" href="#see">See it working</a>
+      <a class="btn pop lg" href="https://app.kanalyst.in/signup">Create your home</a>
+      <a class="btn ghost lg" href="#features">What's inside</a>
     </div>
-    <ul class="hero-proof" aria-label="Highlights">
-      <li><b>8</b><span>modules, one place</span></li>
-      <li><b>1</b><span>shared family home</span></li>
-      <li><b>₹0</b><span>to start</span></li>
+    <ul class="chips" aria-label="Highlights">
+      <li><b>Free</b> to start</li>
+      <li><b>Web</b> + Android</li>
+      <li><b>Encrypted</b> on your device</li>
     </ul>
   </div>
 
   <div class="home" id="home">
     <div class="stage" role="group" aria-label="A sample family in Kanalyst. Choose a person to see their things.">
+      <svg class="orbit" viewBox="0 0 100 100" aria-hidden="true">
+        <circle cx="50" cy="50" r="40" class="o1"/><circle cx="50" cy="50" r="27" class="o2"/>
+        <circle r="1.1" class="sat"><animateMotion dur="26s" repeatCount="indefinite" path="M50 10 a40 40 0 1 1 -0.01 0"/></circle>
+        <circle r=".8" class="sat s2"><animateMotion dur="18s" repeatCount="indefinite" path="M50 23 a27 27 0 1 0 0.01 0"/></circle>
+      </svg>
       <svg class="lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"></svg>
       <div class="house" aria-hidden="true">
-        <svg viewBox="0 0 64 60"><defs><clipPath id="kh"><path d="M32 3.5 C33.6 3.5 34.6 4.1 35.8 5.1 L59 24.6 C60.4 25.8 61 27 61 28.8 V52 C61 55.3 58.3 58 55 58 H9 C5.7 58 3 55.3 3 52 V28.8 C3 27 3.6 25.8 5 24.6 L28.2 5.1 C29.4 4.1 30.4 3.5 32 3.5 Z"/></clipPath></defs><g clip-path="url(#kh)"><rect width="32" height="31" fill="#2f4577"/><rect x="32" width="32" height="31" fill="#5f7f1f"/><rect x="32" y="31" width="32" height="29" fill="#e3a018"/><rect y="31" width="32" height="29" fill="#964062"/></g><path d="M26 58 V44 C26 40.7 28.7 38 32 38 C35.3 38 38 40.7 38 44 V58 Z" fill="#faf5e8"/></svg>
-
-        <span>Our home</span>
+        <span class="glow"></span>
+        <svg viewBox="0 0 64 60"><defs><clipPath id="kh"><path d="M32 3.5 C33.6 3.5 34.6 4.1 35.8 5.1 L59 24.6 C60.4 25.8 61 27 61 28.8 V52 C61 55.3 58.3 58 55 58 H9 C5.7 58 3 55.3 3 52 V28.8 C3 27 3.6 25.8 5 24.6 L28.2 5.1 C29.4 4.1 30.4 3.5 32 3.5 Z"/></clipPath></defs><g clip-path="url(#kh)"><rect width="32" height="31" fill="#2f4577"/><rect x="32" width="32" height="31" fill="#5f7f1f"/><rect x="32" y="31" width="32" height="29" fill="#e3a018"/><rect y="31" width="32" height="29" fill="#964062"/></g><path class="door" d="M26 58 V44 C26 40.7 28.7 38 32 38 C35.3 38 38 40.7 38 44 V58 Z" fill="#FAF7F0"/></svg>
+        <b>Our home</b>
       </div>
     </div>
     <div class="readout" aria-live="polite">
       <div class="readout-head"></div>
       <ul class="readout-list"></ul>
-      <div class="pick" role="group" aria-label="Choose a person"></div>
     </div>
-    <p class="sample">Sample family. Tap a person.</p>
+    <div class="pick" role="group" aria-label="Choose a person"></div>
   </div>
 </header>
 
-<!-- ═══ Rooms (modules) ════════════════════════════════════════ -->
-<section id="rooms" class="sec">
-  <h2>Eight rooms. One house.</h2>
+<!-- ═══ Features ═══ -->
+<section id="features" class="sec">
+  <div class="sec-head">
+    <span class="eyebrow"><i></i>Features</span>
+    <h2>Everything in one place.</h2>
+  </div>
   <div class="bento">
-    <article class="b money reveal">
-      <h3>Money</h3>
-      <p>Stocks, funds, FDs, NPS, EPF. Live prices.</p>
-      <div class="mbar"><i style="--w:38"></i><i style="--w:31"></i><i style="--w:14"></i><i style="--w:10"></i><i style="--w:7"></i></div>
-      <div class="mleg"><span>Stocks</span><span>Funds</span><span>Deposits</span><span>NPS</span><span>EPF</span></div>
+    <article class="card wide dark reveal">
+      <div class="card-t"><h3>Net worth</h3><p>Mutual funds, stocks, NPS, FDs, RDs, EPF, PPF.</p></div>
+      <div class="nw"><span class="nw-v" data-to="2370000">₹0</span>
+        <div class="nw-bar"><i style="--w:32"></i><i style="--w:17"></i><i style="--w:16"></i><i style="--w:14"></i><i style="--w:14"></i><i style="--w:7"></i></div>
+        <div class="nw-leg"><span>MF</span><span>EPF</span><span>NPS</span><span>FD</span><span>Stocks</span><span>PPF</span></div></div>
     </article>
-    <article class="b goals reveal">
-      <h3>Blueprint</h3>
-      <p>Draw goals. Map funds. Watch them fill.</p>
-      <ul class="rings">
-        <li><svg viewBox="0 0 36 36"><circle cx="18" cy="18" r="15"/><circle class="v" cx="18" cy="18" r="15" style="--p:82"/></svg><span>Emergency</span><b>82%</b></li>
-        <li><svg viewBox="0 0 36 36"><circle cx="18" cy="18" r="15"/><circle class="v" cx="18" cy="18" r="15" style="--p:34"/></svg><span>College</span><b>34%</b></li>
-        <li><svg viewBox="0 0 36 36"><circle cx="18" cy="18" r="15"/><circle class="v" cx="18" cy="18" r="15" style="--p:61"/></svg><span>New car</span><b>61%</b></li>
-      </ul>
+    <article class="card pop-card reveal">
+      <div class="card-t"><h3>Spending from SMS</h3><p>Your phone reads bank SMS. No typing.</p></div>
+      <div class="sms">
+        <div class="bubble"><small>AX-HDFCBK</small>Rs.649 spent on card x6007 at NETFLIX</div>
+        <div class="arrow">↓</div>
+        <div class="tag"><i></i>Entertainment · ₹649</div>
+      </div>
     </article>
-    <article class="b retire reveal">
-      <h3>Retirement</h3>
-      <p>The year you can stop working.</p>
-      <svg class="curve" viewBox="0 0 200 90" aria-hidden="true"><path class="need" d="M0 70 C60 66 110 50 200 30"/><path class="have" d="M0 86 C70 82 120 60 200 6"/><circle cx="152" cy="40" r="4.5"/><text x="144" y="58">2045</text></svg>
+    <article class="card reveal">
+      <div class="card-t"><h3>Bills & dates</h3><p>EMIs, card bills, premiums, school fees.</p></div>
+      <div class="days"><span>9</span><span>10</span><span class="due">11</span><span>12</span><span class="on">13</span><span>14</span><span>15</span></div>
     </article>
-    <article class="b insurance reveal">
-      <h3>Insurance</h3>
-      <p>Who's covered. When it renews.</p>
-      <div class="covers"><span><b>₹1.6Cr</b><i class="face" data-p="arjun"></i>Arjun</span><span><b>₹60L</b><i class="face" data-p="meera"></i>Meera</span><span><b>₹10L</b><i class="face" data-p="nila"></i>Nila</span><span><b>₹5L</b><i class="face" data-p="paati"></i>Paati</span></div>
+    <article class="card reveal">
+      <div class="card-t"><h3>Subscriptions found</h3><p>Repeating payments spotted for you.</p></div>
+      <ul class="subs"><li><b>Google Play</b><span>₹130/mo</span></li><li><b>Netflix</b><span>₹649/mo</span></li><li class="new"><b>Gym</b><span>Review</span></li></ul>
     </article>
-    <article class="b documents reveal">
-      <h3>Documents</h3>
-      <p>Reminded before anything expires.</p>
-      <ul class="exp">
-        <li class="urgent"><span>Car PUC</span><b>9 days</b><i style="--w:6"></i></li>
-        <li><span>Passport</span><b>15 months</b><i style="--w:40"></i></li>
-        <li><span>Licence</span><b>4 years</b><i style="--w:100"></i></li>
-      </ul>
+    <article class="card reveal">
+      <div class="card-t"><h3>Goals</h3><p>Plan school fees, a car, a home.</p></div>
+      <svg class="rings" viewBox="0 0 120 50" aria-hidden="true">
+        <circle cx="25" cy="25" r="18" class="t"/><circle cx="25" cy="25" r="18" class="v" style="--p:72"/>
+        <circle cx="70" cy="25" r="18" class="t"/><circle cx="70" cy="25" r="18" class="v" style="--p:40"/>
+        <text x="25" y="29">72%</text><text x="70" y="29">40%</text></svg>
     </article>
-    <article class="b calendar reveal">
-      <h3>Calendar</h3>
-      <p>Every date from every room.</p>
-      <div class="month" aria-hidden="true"></div>
+    <article class="card reveal">
+      <div class="card-t"><h3>Retirement</h3><p>When can you stop working?</p></div>
+      <svg class="curve" viewBox="0 0 200 70" aria-hidden="true"><path class="need" d="M0 60 C60 55 120 40 200 14"/><path class="have" d="M0 66 C70 62 120 30 200 4"/><circle cx="148" cy="24" r="4"/></svg>
     </article>
-    <article class="b spend reveal">
-      <h3>Spending</h3>
-      <p>Read from bank SMS. Sorted for you.</p>
-      <div class="spendbars" aria-hidden="true"><i style="--h:62"></i><i style="--h:58"></i><i style="--h:71"></i><i style="--h:54"></i><i style="--h:66"></i><i style="--h:49"></i></div>
-    </article>
-    <article class="b family reveal">
-      <h3>Family</h3>
-      <p>Everyone, including kids and parents. Share with your partner.</p>
-      <div class="faces" aria-hidden="true"><span>A</span><span>M</span><span>D</span><span>P</span><span class="add">+</span></div>
+    <article class="card full reveal">
+      <div class="card-t"><h3>The whole family</h3><p>People, insurance, documents and renewals. One shared home.</p></div>
+      <div class="fam"><i class="face" data-p="arjun"></i><i class="face" data-p="meera"></i><i class="face" data-p="nila"></i><i class="face" data-p="paati"></i>
+        <span class="pill">Health cover · renews Aug</span><span class="pill warn">Car PUC · 9 days</span></div>
     </article>
   </div>
 </section>
 
-<!-- ═══ See it (tabbed product preview) ═══════════════════════ -->
-<section id="see" class="sec see">
-  <div class="see-head">
-    <h2>See it working.</h2>
-    <div class="tabs" role="tablist" aria-label="Product views">
-      <button role="tab" aria-selected="true" data-v="dash">Dashboard</button>
-      <button role="tab" aria-selected="false" data-v="blue">Blueprint</button>
-      <button role="tab" aria-selected="false" data-v="ret">Retirement</button>
-      <button role="tab" aria-selected="false" data-v="fam">Family</button>
+<!-- ═══ Security ═══ -->
+<section id="security" class="sec-dark">
+  <div class="sec">
+    <div class="sec-head">
+      <span class="eyebrow light"><i></i>Security</span>
+      <h2>Your data is yours. <em>Only yours.</em></h2>
     </div>
-  </div>
-  <div class="window" aria-live="polite">
-    <div class="wbar" aria-hidden="true"><i></i><i></i><i></i><span>app.kanalyst.in</span></div>
-    <div class="wbody">
-      <!-- Dashboard -->
-      <div class="view on" data-v="dash">
-        <div class="v-dash">
-          <div class="nw">
-            <span class="k">Net worth</span>
-            <b class="count" data-to="4280000" data-fmt="inr">₹0</b>
-            <div class="nwbar"><i style="--w:30;--c:var(--aubergine)"></i><i style="--w:19;--c:var(--moss)"></i><i style="--w:17;--c:var(--teal)"></i><i style="--w:15;--c:var(--prussian)"></i><i style="--w:13;--c:var(--terracotta)"></i><i style="--w:6;--c:var(--marigold)"></i></div>
-          </div>
-          <div class="fam-strip">
-            <span class="fsk">Family</span>
-            <span class="fs-faces"><i>A</i><i>M</i><i>D</i><i>P</i></span>
-            <span class="fs-t t1"><b>4</b>Insurance</span><span class="fs-t t2"><b>6</b>Documents</span><span class="fs-t t3"><b>13</b>Dates</span>
-          </div>
-          <div class="tiles4"><span><small>Income</small><b>₹1.8L</b></span><span><small>Spent</small><b>₹62K</b></span><span><small>Saved</small><b>₹1.18L</b></span><span><small>Dividends</small><b>₹14K</b></span></div>
-        </div>
-      </div>
-      <!-- Blueprint -->
-      <div class="view" data-v="blue">
-        <div class="v-blue">
-          <div class="lane"><span class="ln">This year</span><div class="bk" style="--p:82"><b>Emergency fund</b><small>₹3L</small><i></i></div><div class="bk emi" style="--p:40"><b>Car EMI</b><small>₹14.5K/mo</small><i></i></div><div class="coin" aria-hidden="true"></div></div>
-          <div class="lane"><span class="ln">3 years</span><div class="bk" style="--p:61"><b>New car</b><small>₹9L</small><i></i></div><div class="bk loan" style="--p:55"><b>Car loan</b><small>₹6L left</small><i></i></div></div>
-          <div class="lane"><span class="ln">Later</span><div class="bk ret" style="--p:24"><b>Retirement</b><small>₹4.6Cr</small><i></i></div><div class="bk" style="--p:34"><b>Nila's college</b><small>₹25L</small><i></i></div></div>
-        </div>
-      </div>
-      <!-- Retirement -->
-      <div class="view" data-v="ret">
-        <div class="v-ret">
-          <div class="rt-big"><span class="k">You can retire in</span><b>2045</b><small>at age 55</small></div>
-          <svg class="rt-chart" viewBox="0 0 300 140" aria-hidden="true">
-            <path class="need" d="M0 110 C100 104 180 84 300 52"/>
-            <path class="have" d="M0 134 C110 128 190 92 300 10"/>
-            <line x1="214" y1="0" x2="214" y2="140" class="tl"/>
-            <circle cx="214" cy="73" r="6"/>
-          </svg>
-          <div class="rt-loans"><span>Home loan ends 2043</span><span>Car loan ends 2029, EMI then invested</span></div>
-        </div>
-      </div>
-      <!-- Family -->
-      <div class="view" data-v="fam">
-        <div class="v-fam">
-          <div class="att">
-            <span class="k">Needs attention</span>
-            <div class="ar over"><b>3d</b><span>Driving licence</span><em>overdue</em></div>
-            <div class="ar soon"><b>4d</b><span>Term premium</span><em>₹1.6K</em></div>
-            <div class="ar"><b>6d</b><span>Nila's school fees</span><em>₹48K</em></div>
-            <div class="ar"><b>12d</b><span>Nila turns 8</span><em></em></div>
-          </div>
-          <div class="cov">
-            <span class="k">Who is covered</span>
-            <div class="cr"><i>A</i><span class="bars"><em class="l" style="--w:100"></em><em class="h" style="--w:100"></em></span></div>
-            <div class="cr"><i>M</i><span class="bars"><em class="l" style="--w:40"></em><em class="h" style="--w:100"></em></span></div>
-            <div class="cr"><i>D</i><span class="bars"><em class="l" style="--w:2"></em><em class="h" style="--w:100"></em></span></div>
-            <div class="cr"><i>P</i><span class="bars"><em class="l" style="--w:2"></em><em class="h" style="--w:50"></em></span></div>
-          </div>
-        </div>
-      </div>
+    <div class="cipher reveal" aria-hidden="true">
+      <div class="c-row"><span class="c-k">Before</span><span class="c-plain">Rs.649 spent at NETFLIX · PAN ABCDE1234F</span></div>
+      <div class="c-lock"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></div>
+      <div class="c-row"><span class="c-k">What we store</span><span class="c-enc" data-text="ev1:9epwhq0yrNiuE5XAsfndFbfSwEfxVMu90c2ox2cH">ev1:9epwhq0yrNiuE5XAsfndFbfSwEfxVMu90c2ox2cH</span></div>
     </div>
+    <div class="trio">
+      <div class="reveal"><span class="n">01</span><h3>Encrypted on your device</h3><p>Names, messages, account numbers and PAN are locked before they leave your phone or browser.</p></div>
+      <div class="reveal"><span class="n">02</span><h3>We can't read it</h3><p>Your key lives in your Google account and your phone's screen lock. Not on our servers.</p></div>
+      <div class="reveal"><span class="n">03</span><h3>Never sold. No ads.</h3><p>We don't sell or share your data. Bank SMS are read on your phone; only a locked copy is kept.</p></div>
+    </div>
+    <p class="fine">Amounts and dates stay readable so totals and reminders work. <a href="/privacy.html">Read the privacy policy →</a></p>
   </div>
 </section>
 
-<!-- ═══ Retire-when slider ════════════════════════════════════ -->
-<section class="sec slider-sec" aria-labelledby="sl-h">
-  <div class="sl-copy">
-    <h2 id="sl-h">Move one number. Watch your future move.</h2>
-    <label for="sip" class="sl-label">Invest each month <output id="sip-out">₹40,000</output></label>
-    <input id="sip" type="range" min="5000" max="150000" step="5000" value="40000">
-    <p class="sl-note">Sample: age 32, ₹10L saved, ₹60K monthly spend, 11% growth, 6% inflation.</p>
-  </div>
-  <div class="sl-out" aria-live="polite">
-    <span class="k">Retire at</span>
-    <b id="ret-age">55</b>
-    <svg id="sl-chart" viewBox="0 0 320 160" aria-hidden="true"><path id="sl-need" class="need"/><path id="sl-have" class="have"/><circle id="sl-dot" r="6"/></svg>
-    <div class="sl-leg"><span><i class="h"></i>Your money</span><span><i class="n"></i>What you need</span></div>
-  </div>
-</section>
-
-<!-- ═══ How data flows in ═════════════════════════════════════ -->
-<section id="flow" class="sec flow-sec">
-  <h2>It fills itself in.</h2>
-  <div class="flow">
-    <svg class="flow-svg" viewBox="0 0 900 360" aria-hidden="true">
-      <g class="paths"></g>
+<!-- ═══ Community ═══ -->
+<section id="community" class="sec">
+  <div class="motto reveal">
+    <svg class="net" viewBox="0 0 300 220" aria-hidden="true">
+      <g class="edges"><path d="M150 110 L60 50"/><path d="M150 110 L240 46"/><path d="M150 110 L50 170"/><path d="M150 110 L250 176"/><path d="M150 110 L150 20"/><path d="M150 110 L150 200"/><path d="M60 50 L150 20"/><path d="M240 46 L250 176"/><path d="M50 170 L150 200"/></g>
+      <g class="dots"><circle cx="150" cy="110" r="14" class="hub"/><circle cx="60" cy="50" r="8"/><circle cx="240" cy="46" r="9"/><circle cx="50" cy="170" r="7"/><circle cx="250" cy="176" r="8"/><circle cx="150" cy="20" r="6"/><circle cx="150" cy="200" r="7"/></g>
     </svg>
-    <ul class="src">
-      <li><b>Bank SMS</b><span>Android app</span></li>
-      <li><b>CAS</b><span>NSDL, CDSL</span></li>
-      <li><b>NPS</b><span>Statements</span></li>
-      <li><b>Brokers</b><span>Live NSE prices</span></li>
-      <li><b>You</b><span>Edit anything</span></li>
-    </ul>
-    <div class="hub"><span class="mark big" aria-hidden="true"></span><b>Kanalyst</b></div>
-    <ul class="dst">
-      <li style="--c:var(--moss)">Net worth</li>
-      <li style="--c:var(--aubergine)">Goals</li>
-      <li style="--c:var(--prussian)">Retirement</li>
-      <li style="--c:var(--terracotta)">Spending</li>
-      <li style="--c:var(--marigold)">Calendar</li>
-    </ul>
-  </div>
-</section>
-
-<!-- ═══ A month ═══════════════════════════════════════════════ -->
-<section class="sec june" aria-labelledby="jn-h">
-  <h2 id="jn-h">June, before it happens.</h2>
-  <ol class="line">
-    <li style="--c:var(--moss);--x:0"><span class="d">1 Jun</span><b>FD matures</b><span>₹2.1L back</span></li>
-    <li style="--c:var(--moss);--x:.14"><span class="d">5 Jun</span><b>SIPs</b><span>₹35,000</span></li>
-    <li style="--c:var(--marigold);--x:.31"><span class="d">10 Jun</span><b>School fees</b><span>₹48,000</span></li>
-    <li style="--c:var(--prussian);--x:.38"><span class="d">12 Jun</span><b>Health premium</b><span>₹22,400</span></li>
-    <li style="--c:var(--marigold);--x:.45"><span class="d">14 Jun</span><b>Paati turns 75</b><span></span></li>
-    <li style="--c:var(--terracotta);--x:.66"><span class="d">20 Jun</span><b>Home loan EMI</b><span>₹26,035</span></li>
-    <li style="--c:var(--mulberry);--x:.79"><span class="d">24 Jun</span><b>PUC expires</b><span>Renew</span></li>
-  </ol>
-</section>
-
-<!-- ═══ Phone + SMS ═══════════════════════════════════════════ -->
-<section class="sec phone-sec" aria-labelledby="ph-h">
-  <div class="phone" aria-hidden="true">
-    <div class="ph-screen">
-      <div class="sms"><small>HDFCBK</small>Rs 1,240 debited at BIGBASKET on 05-Jun.</div>
-      <div class="arrow">↓</div>
-      <div class="txn"><i></i><span><b>BigBasket</b><small>Groceries</small></span><em>₹1,240</em></div>
-      <div class="txn t2"><i></i><span><b>Parag Parikh SIP</b><small>Investment</small></span><em>₹10,000</em></div>
-      <div class="txn t3"><i></i><span><b>Home loan EMI</b><small>Loan</small></span><em>₹26,035</em></div>
+    <div class="motto-t">
+      <span class="eyebrow"><i></i>Our motto</span>
+      <h2>Forming a financial community. <em>Learn, share, grow.</em></h2>
+      <ul class="ticks">
+        <li>Share what worked for your family</li>
+        <li>Learn the basics, without jargon</li>
+        <li>No tips for sale. No hidden agenda.</li>
+      </ul>
     </div>
   </div>
-  <div class="ph-copy">
-    <h2 id="ph-h">Web and Android.</h2>
-    <p>Bank texts become sorted spending on your phone. Plan the big picture on the web.</p>
-    <ul class="ticks">
-      <li>Only bank senders are read</li>
-      <li>Works offline, syncs when online</li>
-      <li>Same account on web and phone</li>
-    </ul>
-  </div>
 </section>
 
-<!-- ═══ Privacy ═══════════════════════════════════════════════ -->
-<section class="sec priv" aria-labelledby="pv-h">
-  <h2 id="pv-h">Private by design.</h2>
-  <div class="priv-grid">
-    <div><span class="ic" aria-hidden="true">◎</span><b>Reads only</b><p>Never moves money.</p></div>
-    <div><span class="ic" aria-hidden="true">⌘</span><b>Encrypted</b><p>In transit and at rest.</p></div>
-    <div><span class="ic" aria-hidden="true">✕</span><b>Delete anytime</b><p>One click removes everything.</p></div>
-    <div><span class="ic" aria-hidden="true">₹</span><b>Never sold</b><p>Your data stays yours.</p></div>
+<!-- ═══ About ═══ -->
+<section id="about" class="sec">
+  <div class="about reveal">
+    <div>
+      <span class="eyebrow"><i></i>About us</span>
+      <h2>Built by one person in Chennai.</h2>
+      <p>Questions, ideas or feedback? Write to me.</p>
+    </div>
+    <a class="mail" href="mailto:Hareeshravichandran@gmail.com">
+      <small>Hareesh Ravichandran</small>
+      <b>Hareeshravichandran@gmail.com</b>
+      <span>Write to me →</span>
+    </a>
   </div>
-  <a class="more" href="/privacy.html">Read the privacy policy</a>
 </section>
 
 <section class="end">
   <h2>Bring the whole house together.</h2>
-  <a class="btn lg light" href="https://app.kanalyst.in/signup">Create your family home</a>
+  <a class="btn pop lg" href="https://app.kanalyst.in/signup">Start free</a>
 </section>
 
 <footer class="foot">
-  <span class="logo small"><span class="mark" aria-hidden="true"></span>Kanalyst</span>
-  <a href="https://app.kanalyst.in/login">Log in</a>
-  <a href="/privacy.html">Privacy</a>
-  <a href="mailto:hello@kanalyst.in">hello@kanalyst.in</a>
-  <span>© 2026 Kanalyst. Built in India.</span>
+  <a class="logo small" href="/"><span class="mark" aria-hidden="true"></span>Kanalyst</a>
+  <span>© 2026 Kanalyst · Made in India</span>
+  <span><a href="/privacy.html">Privacy</a> · <a href="mailto:Hareeshravichandran@gmail.com">Contact</a></span>
 </footer>
 
 <script src="people.js"></script>
-<script src="site.js" defer></script>
+<script src="site.js"></script>
 </body>
 </html>
