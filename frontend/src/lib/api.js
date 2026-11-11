@@ -247,6 +247,8 @@ export const mastersAPI = {
   createEvent: (data)     => api.post('/api/masters/events', data),
   updateEvent: (id, data) => api.put(`/api/masters/events/${encodeURIComponent(id)}`, data),
   removeEvent: (id)       => api.delete(`/api/masters/events/${encodeURIComponent(id)}`),
+  candidates:  ()         => api.get('/api/masters/candidates', { timeout: 45000 }),
+  review:      (data)     => api.post('/api/masters/candidates/review', data),
 };
 
 export const moneyflowAPI = {

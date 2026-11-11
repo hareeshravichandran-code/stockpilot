@@ -41,7 +41,7 @@ const keywordTok = async (o) => {
 /** [path regex, methods, how to seal the body] */
 const RULES = [
   [/^\/api\/expense\/transactions(\/bulk|\/[^/]+)?$/, ['post', 'put'], (d) => (Array.isArray(d) ? Promise.all(d.map(sealTxn)) : sealTxn(d))],
-  [/^\/api\/expense\/sms-rules$/, ['post'], sealRule],
+  [/^\/api\/expense\/sms-rules(\/[^/]+)?$/, ['post', 'put'], sealRule],
   [/^\/api\/expense\/sync\/push$/, ['post'], async (d) => ({ ...d, sms_rules: await each(d.sms_rules, sealRule) })],
   [/^\/api\/setup\/apply$/, ['post'], async (d) => {
     if (d.step === 'rules') return { ...d, items: await each(d.items, async it => { const r = await sealRule({ merchant_pattern: it.pattern }); return { ...it, pattern: r.merchant_pattern, pattern_tok: r.pattern_tok }; }) };

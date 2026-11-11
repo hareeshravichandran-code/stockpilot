@@ -25,6 +25,7 @@ router.get('/sms-rules', authMiddleware, async (req, res) => {
       .from('user_sms_rules')
       .select('*')
       .eq('user_id', req.userId)
+      .eq('is_deleted', false)
       .order('match_count', { ascending: false });
     if (error) throw error;
     res.json(data || []);
@@ -58,6 +59,30 @@ router.post('/sms-rules', authMiddleware, async (req, res) => {
     console.error('[sms-rules POST]', err.message);
     res.status(500).json({ error: err.message });
   }
+});
+
+// PUT /api/expense/sms-rules/:id — edit a rule (pattern and/or category)
+router.put('/sms-rules/:id', authMiddleware, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const patch = { updated_at: Date.now(), user_confirmed: true };
+    if (typeof b.merchant_pattern === 'string' && b.merchant_pattern.trim()) patch.merchant_pattern = b.merchant_pattern.trim().slice(0, 8000);
+    if (typeof b.category_id === 'string' && b.category_id) patch.category_id = b.category_id.slice(0, 80);
+    if (Array.isArray(b.pattern_tok)) patch.pattern_tok = b.pattern_tok.filter(x => typeof x === 'string').slice(0, 20);
+    const { data, error } = await supabase.from('user_sms_rules').update(patch).eq('id', req.params.id).eq('user_id', req.userId).select().maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Rule not found' });
+    res.json(data);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE /api/expense/sms-rules/:id — soft delete, so the phone removes it on its next sync
+router.delete('/sms-rules/:id', authMiddleware, async (req, res) => {
+  try {
+    const { error } = await supabase.from('user_sms_rules').update({ is_deleted: true, updated_at: Date.now() }).eq('id', req.params.id).eq('user_id', req.userId);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // GET /api/expense/transactions/refs — return all reference_nos for deduplication

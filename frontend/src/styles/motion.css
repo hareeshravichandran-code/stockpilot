@@ -43,3 +43,11 @@ button:active:not(:disabled) { transform: scale(.97); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
 }
+
+/* Income & expense: switch + Manage */
+.cf-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.cf-manage { display: inline-flex; align-items: center; gap: 8px; border: 0; background: #111111; color: #FAF7F0; border-radius: 999px; padding: 10px 18px; font: inherit; font-weight: 600; font-size: 14px; cursor: pointer; transition: transform .2s cubic-bezier(.32,.72,0,1), background .2s; }
+.cf-manage:hover { background: #D9541E; transform: translateY(-1px); }
+.cf-manage small { font-weight: 400; opacity: .65; font-size: 12px; }
+@media (max-width: 640px) { .cf-manage small { display: none; } }
+@media (max-width: 520px) { .db-live-badge { display: none !important; } .db-topbar-right { min-width: 0; flex-wrap: wrap; justify-content: flex-end; } }

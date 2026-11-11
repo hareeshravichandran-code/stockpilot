@@ -128,7 +128,7 @@ export default function MoneyFlow({ embedded = false }) {
             {(data.left_out.duplicates > 0 || data.left_out.transfers > 0) && <> Left out: {data.left_out.duplicates > 0 && <><b>{data.left_out.duplicates}</b> repeated SMS for the same payment ({inrShort(data.left_out.duplicate_amount)})</>}
               {data.left_out.duplicates > 0 && data.left_out.transfers > 0 && ' and '}
               {data.left_out.transfers > 0 && <><b>{data.left_out.transfers}</b> transfers between your own accounts ({inrShort(data.left_out.transfer_amount)})</>}.</>}
-            {data.uncategorised > 0 && <> <span className="mf-warn">{inrShort(data.uncategorised)} of spending has no category yet</span>: sort it in the app (Manage → Categorise) and it moves into its group.</>}
+            {data.uncategorised > 0 && <> <span className="mf-warn">{inrShort(data.uncategorised)} of spending has no category yet</span>: sort it with Manage → Bulk Categorise (here or in the app) and it moves into its group.</>}
           </p>
 
           <div className="mf-grid">

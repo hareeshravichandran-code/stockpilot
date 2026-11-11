@@ -4,6 +4,7 @@ import { Modal, Field, Empty, errMsg } from './shared';
 import { kindOf, KindIcon, inrShort } from '../money/kinds';
 
 import LogoLoader from '../components/LogoLoader';
+import Recurring from './Recurring';
 // Every expected payment or receipt lives here: EMIs (loan), card bills (card), SIPs (fund folio),
 // premiums (insurance), RD instalments (RD) and events you add yourself (rent, school fee, reminders).
 export const LEVELS = [
@@ -139,6 +140,7 @@ export default function Events({ notify }) {
         <button type="button" className="fo-btn" onClick={() => setForm({})}>+ New event</button>
       </div>
       {err && <div className="fo-banner">{err}</div>}
+      <Recurring notify={notify} prefer="event" onChanged={load} />
       <div className="fo-chips ev-filters">
         {[['all', `All ${list.length}`], ...LEVELS.map(([v, l]) => [v, `${l} ${list.filter(e => e.level === v).length}`]), ['manual', `Added by you ${list.filter(e => e.source === 'manual').length}`]].map(([v, l]) => (
           <button key={v} type="button" className={filter === v ? 'on' : ''} onClick={() => setFilter(v)}>{l}</button>))}
@@ -149,17 +151,18 @@ export default function Events({ notify }) {
       {groups.map(g => (
         <section key={g.level} className={`ev-group lv-${g.level}`}>
           <h2><i />{g.label} <small>{g.hint}</small></h2>
-          <div className="ev-grid">
-            {g.items.map(e => {
+          <div className="ev-grid ev-list">
+            {g.items.map((e, i) => {
               const k = kindOf(e.kind);
               return (
-                <button key={e.id} type="button" className={`ev-card${e.blink ? ' blink' : ''}${e.status === 'paused' ? ' paused' : ''}`} style={{ '--c': k.c }} onClick={() => setForm({ event: e })}>
+                <button key={e.id} type="button" className={`ev-card${e.blink ? ' blink' : ''}${e.status === 'paused' ? ' paused' : ''}`} style={{ '--c': k.c, '--i': i }} onClick={() => setForm({ event: e })}>
                   <span className="ev-ic"><KindIcon kind={e.kind} size={18} color={e.blink ? '#fff' : undefined} /></span>
                   <span className="ev-body">
                     <b>{e.title}</b>
-                    <small>{whenText(e)}{e.amount ? ` · ${inrShort(e.amount)}` : ''}</small>
+                    <small>{whenText(e)}</small>
                     <span className="ev-link">{e.linked ? <>↳ {e.linked.title} · {LINK_LABEL[e.linked.type] || e.linked.type}</> : e.source === 'manual' ? 'Added by you' : 'No master'}</span>
                   </span>
+                  <span className={`ev-amt${e.direction === 'in' ? ' in' : ''}`}>{e.amount ? inrShort(e.amount) : '—'}</span>
                   <span className="ev-due">
                     <b>{fmtDue(e.next_due)}</b>
                     <small>{e.status === 'paused' ? 'Paused' : dueText(e)}</small>

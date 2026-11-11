@@ -120,7 +120,7 @@ export default function ManageExpense({ onClose }) {
         {/* Header */}
         <div style={S.header}>
           <div style={S.hRow}>
-            <div style={S.hTitle}>⚙️ Manage Expenses</div>
+            <div style={S.hTitle}>Manage income & expense</div>
             <button style={S.closeBtn} onClick={onClose}>✕</button>
           </div>
           <div style={S.tabRow}>

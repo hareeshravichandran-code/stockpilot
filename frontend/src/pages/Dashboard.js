@@ -8,11 +8,11 @@ import Dividends from './Dividends';
 import ManageExpense from './ManageExpense';
 import RetirementPlanner from './RetirementPlanner';
 import HistoricalSyncPanel from './HistoricalSyncPanel';
-import { NetWorthHero, MoneyTiles, GoalsSnapshot, FamilyStrip, inr } from './DashboardOverview';
 import MoneyCalendar from '../money/MoneyCalendar';
 import FamilyPanel from '../components/FamilyPanel';
 import MoneyFlow from './MoneyFlow';
 import Epfo from './Epfo';
+import OverviewV2 from './OverviewV2';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import './Dashboard.css';
 
@@ -1315,235 +1315,29 @@ export default function Dashboard() {
 
         <div className="db-content">
           {/* DASHBOARD */}
-          {tab === 'dashboard' && (
-            <div className="fade-in">
-              {(() => {
-                const stocksVal = s.totalMarket || 0;
-                const mfVal     = mfData?.summary?.totalValue || 0;
-                const npsVal    = parseFloat(npsData.latest?.total_value || 0);
-                const fdRdVal   = (fdSummary.totalCurrentValue || 0) + (rdSummary.totalCurrentValue || 0);
-                // Each asset class gets its own hue (MF and NPS used to share one)
-                const parts = [
-                  { name: 'Stocks',        value: stocksVal,              color: 'var(--sand)' },
-                  { name: 'Mutual funds',  value: mfVal,                  color: 'var(--violet)' },
-                  { name: 'NPS',           value: npsVal,                 color: 'var(--indigo)' },
-                  { name: 'Bank deposits', value: fdRdVal,                color: 'var(--peach)' },
-                  { name: 'PPF',           value: assetBalances.ppf || 0, color: 'var(--gold)' },
-                  { name: 'EPF',           value: assetBalances.epf || 0, color: 'var(--teal)' },
-                  { name: 'SSY',           value: assetBalances.ssy || 0, color: 'var(--rose)' },
-                ];
-                const owed = (liabilities.homeLoan || 0) + (liabilities.creditCard || 0);
-                const asOf = s.casDate ? new Date(s.casDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : null;
-                return (
-                  <div className={`ov-wrap ${refreshing ? 'kv-loading' : ''}`}>
-                  {/* Family combined bar - only in family mode */}
-                    {familyMode && familyStatus.inFamily && (() => {
-                      const fTotal    = holdings.reduce((s,h)=>s+(h.marketValue||0),0);
-                      const fInvested = holdings.reduce((s,h)=>s+((h.quantity||0)*(h.avg_cost||0)),0);
-                      const fPnl      = fTotal - fInvested;
-                      return (
-                        <div style={{background:'var(--indigo-soft)',border:'1px solid rgba(58,56,51,0.20)',borderRadius:12,padding:'14px 20px',marginBottom:16,display:'flex',gap:28,alignItems:'center',flexWrap:'wrap'}}>
-                          <div style={{display:'flex',alignItems:'center',gap:8}}>
-                            <span style={{fontSize:18}}>👨‍👩‍👧‍👦</span>
-                            <span style={{color:'#111111',fontWeight:700,fontSize:13}}>Family Portfolio</span>
-                          </div>
-                          {[
-                            {label:'Combined Value',  val:fmtFull(fTotal),    color:'#2F6B45', cls:'kv-refresh'},
-                            {label:'Total Invested',  val:fmtFull(fInvested), color:'var(--text-3)'},
-                            {label:'Total P&L',       val:fmtFull(fPnl),      color:fPnl>=0?'#2F6B45':'#9E2B25'},
-                            {label:'Holdings',        val:holdings.length+' stocks', color:'#111111'},
-                          ].map(stat=>(
-                            <div key={stat.label}>
-                              <div style={{color:'var(--text-3)',fontSize:10,fontWeight:600,letterSpacing:0.5,marginBottom:2}}>{stat.label}</div>
-                              <div style={{color:stat.color,fontWeight:700,fontSize:16}}>{stat.val}</div>
-                            </div>
-                          ))}
-                        </div>
-                      );
-                    })()}
-
-                    <NetWorthHero parts={parts} liabilities={owed} hideValues={hideValues} asOf={asOf}
-                      onUpdateBalances={() => setShowAssetModal(true)} />
-                    <MoneyCalendar hideValues={hideValues} onOpenMasters={() => loadTab('m-all')} onOpenEvents={() => loadTab('m-events')} />
-                    <FamilyStrip onOpen={(t) => nav(t === 'home' ? '/family' : `/family?tab=${t}`)} />
-                    <MoneyTiles income={monthlyIncome} spent={monthlyExpenses} dividends={dividendTotal}
-                      yieldPct={s.yieldOnMarket} hideValues={hideValues} />
-                    <div className="ov-row">
-                      <GoalsSnapshot hideValues={hideValues} onOpen={() => nav('/blueprint')} />
-                      <div className="ov-card ov-quick">
-                        <header className="ov-card-head"><div><div className="ov-card-title">Where your money sits</div><div className="ov-card-sub">Open any module</div></div></header>
-                        <div className="ov-quick-grid">
-                          {[
-                            { id: 'holdings',     label: 'Stocks',        v: stocksVal },
-                            { id: 'mutualfunds',  label: 'Mutual funds',  v: mfVal },
-                            { id: 'bankdeposits', label: 'Bank deposits', v: fdRdVal },
-                            { id: 'nps',          label: 'NPS',           v: npsVal },
-                            { id: 'retirement',   label: 'Retirement plan', v: null },
-                            { id: 'expenses',     label: 'Expenses',      v: monthlyExpenses },
-                          ].map(q => (
-                            <button key={q.id} className="ov-quick-btn" onClick={() => loadTab(q.id)}>
-                              <span>{q.label}</span>
-                              <b>{q.v === null ? 'Plan' : hideValues ? '••••' : inr(q.v)}</b>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* No email connected prompt */}
-              {emailStatus.length === 0 && (
-                <div className="db-connect-prompt" style={{ marginTop: 18 }}>
-                  <div className="db-connect-prompt-icon">📬</div>
-                  <div>
-                    <strong>Connect your email to auto-sync your portfolio</strong>
-                    <p>We'll read your broker emails to track trades, dividends & holdings automatically.</p>
-                  </div>
-                  <button className="db-connect-btn-inline" onClick={() => setShowConnectModal(true)}>
-                    Connect Gmail →
-                  </button>
-                </div>
-              )}
-
-              {/* Charts */}
-              <div className="db-grid-3" style={{ marginTop: 18 }}>
-                <div className="db-card">
-                  <div className="db-card-header">
-                    <div>
-                      <div className="db-card-title">Portfolio history</div>
-                      <div className="db-card-sub">{historyData.length > 0 ? `${historyData.length} snapshots · ${historySummary.dateRange?.from||''} – ${historySummary.dateRange?.to||''}` : 'Sync CAS emails to build history'}</div>
-                    </div>
-                    <div style={{display:'flex',gap:6,alignItems:'center'}}>
-                      <div className="k-seg">
-                        {[1,3,5].map(y=>(
-                          <button key={y} onClick={()=>{setHistoryYears(y);loadHistory(y);}} className={historyYears===y?'on':''}>
-                            {y}Y
-                          </button>
-                        ))}
-                      </div>
-                      {historySummary.growthPct && <span style={{fontSize:12,fontWeight:700,fontFamily:'var(--font-mono)',color:parseFloat(historySummary.growthPct)>=0?'var(--mint)':'var(--coral)'}}>{parseFloat(historySummary.growthPct)>=0?'+':''}{historySummary.growthPct}%</span>}
-                    </div>
-                  </div>
-                  {historyLoading ? (
-                    <div style={{height:220,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--text-4)',fontSize:13}}>Loading history…</div>
-                  ) : growthData.length <= 1 ? (
-                    <div style={{height:220,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:8,color:'var(--text-3)'}}>
-                      <div style={{fontSize:32}}>📊</div>
-                      <div style={{fontSize:13}}>No history yet — sync CAS emails or run Historical Sync from Settings</div>
-                    </div>
-                  ) : (
-                    <ResponsiveContainer width="100%" height={220}>
-                      <AreaChart data={growthData} margin={{ top:10, right:20, left:0, bottom:0 }}
-                        onClick={e=>{if(e?.activePayload?.[0]?.payload?.fullDate) loadHistoryDetail(e.activePayload[0].payload.fullDate);}}>
-                        <defs>
-                          <linearGradient id="mktGrad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#2F6B45" stopOpacity={0.25}/>
-                            <stop offset="95%" stopColor="#2F6B45" stopOpacity={0}/>
-                          </linearGradient>
-                          <linearGradient id="costGrad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#111111" stopOpacity={0.25}/>
-                            <stop offset="95%" stopColor="#111111" stopOpacity={0}/>
-                          </linearGradient>
-                        </defs>
-                        <XAxis dataKey="month" stroke="var(--border-2)" tick={{ fontSize:10, fill:'var(--text-3)' }} interval="preserveStartEnd"/>
-                        <YAxis stroke="var(--border-2)" tick={{ fontSize:10, fill:'var(--text-3)' }} tickFormatter={v=>v>=10000000?`₹${(v/10000000).toFixed(1)}Cr`:v>=100000?`₹${(v/100000).toFixed(1)}L`:`₹${(v/1000).toFixed(0)}K`} width={60}/>
-                        <Tooltip contentStyle={{ background:'var(--surface)', border:'1px solid var(--border-2)', borderRadius:8, fontSize:11 }} formatter={(v,name)=>[fmtFull(v),name==='market'?'Portfolio Value':name==='cost'?'Invested':name]} labelStyle={{color:'var(--text-3)',marginBottom:4}} cursor={{stroke:'#111111',strokeWidth:1,strokeDasharray:'4 4'}}/>
-                        <Area type="monotone" dataKey="cost"   stroke="#111111" strokeWidth={1.5} strokeDasharray="4 3" fill="url(#costGrad)" dot={false} name="Invested"/>
-                        <Area type="monotone" dataKey="market" stroke="#2F6B45" strokeWidth={2.5} fill="url(#mktGrad)" dot={{r:3,fill:'#2F6B45',strokeWidth:0}} activeDot={{r:5}} name="Portfolio Value"/>
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  )}
-                  {historyDetail && historyDetailDate && (
-                    <div style={{borderTop:'1px solid var(--border-2)',padding:'12px 0 4px',marginTop:8}}>
-                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-                        <div style={{fontSize:12,color:'#111111',fontWeight:600}}>📅 Snapshot: {new Date(historyDetailDate+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})} <span style={{color:'var(--text-3)',fontWeight:400,marginLeft:8}}>{historyDetail.holding_count} stocks · {historyDetail.mf_count} funds</span></div>
-                        <button onClick={()=>{setHistoryDetail(null);setHistoryDetailDate(null);}} style={{background:'none',border:'none',color:'var(--text-3)',cursor:'pointer',fontSize:13}}>✕</button>
-                      </div>
-                      <div style={{display:'flex',gap:20,flexWrap:'wrap'}}>
-                        {[{label:'Total',val:fmtFull(historyDetail.total_value||0),color:'#2F6B45'},{label:'Equities',val:fmtFull(historyDetail.total_equity_value||0),color:'#2F6B45'},{label:'MF',val:fmtFull(historyDetail.total_mf_value||0),color:'#111111'},{label:'Invested',val:fmtFull(historyDetail.total_invested||0),color:'var(--text-3)'},{label:'Gain/Loss',val:fmtFull(historyDetail.total_gain_loss||0),color:parseFloat(historyDetail.total_gain_loss||0)>=0?'#2F6B45':'#9E2B25'}].map(s=>(
-                          <div key={s.label}><div style={{fontSize:10,color:'var(--text-3)'}}>{s.label}</div><div style={{fontSize:14,fontWeight:700,color:s.color}}>{s.val}</div></div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                <div className="db-card">
-                  <div className="db-card-header">
-                    <div className="db-card-title">Sector split</div>
-                  </div>
-                  <div style={{ display:'flex', flexDirection:'column', alignItems:'center', padding:'12px 0' }}>
-                    <PieChart width={160} height={160}>
-                      <Pie data={sectorData} cx={75} cy={75} innerRadius={50} outerRadius={75} paddingAngle={2} dataKey="value">
-                        {sectorData.map((entry) => (
-                          <Cell key={entry.name} fill={SECTOR_COLORS[entry.name] || '#6b7280'} />
-                        ))}
-                      </Pie>
-                    </PieChart>
-                    <div style={{ width:'100%', padding:'0 16px' }}>
-                      {sectorData.map(s => (
-                        <div key={s.name} className="db-legend-row">
-                          <span className="db-legend-dot" style={{ background: SECTOR_COLORS[s.name] || '#6b7280' }}></span>
-                          <span className="db-legend-label">{s.name}</span>
-                          <span className="db-legend-val">{fmt(s.value)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
+          {tab === 'dashboard' && (() => {
+            const stocksVal = s.totalMarket || 0;
+            const mfVal     = mfData?.summary?.totalValue || 0;
+            const npsVal    = parseFloat(npsData.latest?.total_value || 0);
+            const fdRdVal   = (fdSummary.totalCurrentValue || 0) + (rdSummary.totalCurrentValue || 0);
+            const parts = [
+              { name: 'Stocks', value: stocksVal }, { name: 'Mutual funds', value: mfVal }, { name: 'NPS', value: npsVal },
+              { name: 'Bank deposits', value: fdRdVal }, { name: 'PPF', value: assetBalances.ppf || 0 },
+              { name: 'EPF', value: assetBalances.epf || 0 }, { name: 'SSY', value: assetBalances.ssy || 0 },
+            ];
+            const owed = (liabilities.homeLoan || 0) + (liabilities.creditCard || 0);
+            const asOf = s.casDate ? new Date(s.casDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : null;
+            return (
+              <div className={`fade-in ${refreshing ? 'kv-loading' : ''}`}>
+                <OverviewV2 name={user?.name} parts={parts} owed={owed} asOf={asOf} hideValues={hideValues}
+                  income={monthlyIncome} spent={monthlyExpenses} dividends={dividendTotal} yieldPct={s.yieldOnMarket}
+                  onTab={loadTab} onNav={nav} onUpdateBalances={() => setShowAssetModal(true)}
+                  emailConnected={emailStatus.length > 0} onConnect={() => setShowConnectModal(true)}
+                  growthData={growthData} historyYears={historyYears} onYears={(y) => { setHistoryYears(y); loadHistory(y); }}
+                  historySummary={historySummary} sectorData={sectorData} holdings={holdings} />
               </div>
-
-              {/* Top Holdings */}
-              <div className="db-card" style={{ marginTop: 20 }}>
-                <div className="db-card-header">
-                  <div className="db-card-title">Top stock holdings</div>
-                  <button className="db-card-action" onClick={() => loadTab('holdings')}>View all →</button>
-                </div>
-                <div style={{overflowX:'auto'}}>
-                <table className="db-table">
-                  <thead>
-                    <tr>
-                      {familyMode && <th>Member</th>}<th>Stock</th><th>Qty</th><th className="right">Avg Cost</th>
-                      <th className="right">LTP</th><th className="right">Value</th><th className="right">P&L</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {holdings.slice(0, 8).map(h => (
-                      <tr key={h.symbol}>
-                        <td><div className="db-stock-name">{h.company || h.symbol}<MemberBadge entry={h}/></div><div className="db-stock-sym">{h.symbol}</div></td>
-                        <td>{h.quantity}</td>
-                        <td className="right mono">₹{Number(h.avg_cost).toFixed(2)}</td>
-                        <td className="right mono">₹{Number(h.ltp).toFixed(2)}</td>
-                        <td className="right mono">{fmt(h.marketValue)}</td>
-                        <td className={`right mono ${h.pnl >= 0 ? 'pos' : 'neg'}`}>{pct(h.pnlPct)}</td>
-                        <td style={{textAlign:'center'}}>
-                          {(() => {
-                            const linkedGoal = goals.find(g => g.assets?.some(a => a.asset_ref === (h.isin||h.symbol)));
-                            return linkedGoal ? (
-                              <span title={linkedGoal.name} style={{fontSize:11,padding:'2px 7px',borderRadius:10,background:'rgba(17,17,17,0.12)',color:'#111111',cursor:'pointer',whiteSpace:'nowrap'}}
-                                onClick={()=>setLinkingAsset({type:'stock',ref:h.isin||h.symbol,name:h.company||h.symbol,value:(h.quantity||0)*(h.last_price||0)})}>
-                                🎯 {linkedGoal.name.slice(0,12)}{linkedGoal.name.length>12?'…':''}
-                              </span>
-                            ) : (
-                              <button title="Link to Goal" onClick={()=>setLinkingAsset({type:'stock',ref:h.isin||h.symbol,name:h.company||h.symbol,value:(h.quantity||0)*(h.last_price||0)})}
-                                style={{background:'none',border:'1px dashed var(--text-4)',borderRadius:6,fontSize:11,cursor:'pointer',color:'var(--text-3)',padding:'2px 8px',transition:'all 0.15s'}}
-                                onMouseOver={e=>{e.target.style.borderColor='#111111';e.target.style.color='#111111';}}
-                                onMouseOut={e=>{e.target.style.borderColor='var(--text-4)';e.target.style.color='var(--text-3)';}}>
-                                🎯 Link
-                              </button>
-                            );
-                          })()}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                </div>
-              </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* STOCK HOLDINGS */}
           {tab === 'holdings' && (
@@ -2308,11 +2102,18 @@ export default function Dashboard() {
 
           {/* EXPENSES TAB */}
           {tab === 'cashflow' && (
-            <div className="k-seg" role="tablist" aria-label="Income and expense">
-              {[['flow', 'Money flow'], ['income', 'Income'], ['expenses', 'Expenses']].map(([v, l]) => (
-                <button key={v} type="button" role="tab" aria-selected={cfView === v} className={cfView === v ? 'on' : ''}
-                  onClick={() => { setCfView(v); if (v === 'income') loadIncome(); if (v === 'expenses') loadExpenses(); }}>{l}</button>
-              ))}
+            <div className="cf-bar">
+              <div className="k-seg" role="tablist" aria-label="Income and expense">
+                {[['flow', 'Money flow'], ['income', 'Income'], ['expenses', 'Expenses']].map(([v, l]) => (
+                  <button key={v} type="button" role="tab" aria-selected={cfView === v} className={cfView === v ? 'on' : ''}
+                    onClick={() => { setCfView(v); if (v === 'income') loadIncome(); if (v === 'expenses') loadExpenses(); }}>{l}</button>
+                ))}
+              </div>
+              <button type="button" className="cf-manage" onClick={() => setShowManageExpense(true)}
+                title="Categories, SMS rules, categorise in bulk, budgets, custom fields and Google Sheets">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>
+                Manage <small>categories · rules · budgets</small>
+              </button>
             </div>
           )}
           {tab === 'cashflow' && cfView === 'flow' && <div className="fade-in"><MoneyFlow embedded /></div>}

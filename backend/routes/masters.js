@@ -122,7 +122,25 @@ router.get('/', requireAuth, async (req, res) => {
     ]);
     if (m.error) throw m.error;
     const folios = (f.data || []).map(h => ({ id: String(h.id), fund_name: h.fund_name, folio_number: h.folio_number, current_value: num(h.current_value) }));
-    res.json({ masters: m.data || [], events: e.data || [], policies: p.data || [], rds: r.data || [], folios });
+    // Actuals per master for the cards: last payment, 12-month total and a 6-month trail
+    const since = Date.now() - 366 * 864e5;
+    const { data: tx } = await supabase.from('expense_transactions').select('master_id, amount, date_time, type')
+      .eq('user_id', uid).eq('is_deleted', false).not('master_id', 'is', null).gte('date_time', since);
+    const stats = {};
+    const monthOf = (ms) => new Date(Number(ms) + 5.5 * 3600e3).toISOString().slice(0, 7);
+    const months = [...Array(6)].map((_, i) => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - (5 - i)); return d.toISOString().slice(0, 7); });
+    for (const t of tx || []) {
+      const st = (stats[t.master_id] = stats[t.master_id] || { last_amount: null, last_date: null, count: 0, total_12m: 0, trail: Object.fromEntries(months.map(k => [k, 0])) });
+      st.count++; st.total_12m += num(t.amount) || 0;
+      if (!st.last_date || Number(t.date_time) > st.last_date) { st.last_date = Number(t.date_time); st.last_amount = num(t.amount); }
+      const k = monthOf(t.date_time); if (k in st.trail) st.trail[k] += num(t.amount) || 0;
+    }
+    const masters = (m.data || []).map(x => {
+      const st = stats[x.id];
+      return { ...x, actual: st ? { last_amount: st.last_amount, last_date: new Date(st.last_date + 5.5 * 3600e3).toISOString().slice(0, 10), count: st.count,
+        total_12m: Math.round(st.total_12m), trail: months.map(k => Math.round(st.trail[k])) } : null };
+    });
+    res.json({ masters, events: e.data || [], policies: p.data || [], rds: r.data || [], folios });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -157,9 +175,22 @@ async function upsertMaster(uid, f) {
     if (hit) return { status: 'linked', table: 'recurring_deposits', id: hit.rd_id || hit.id };
   }
 
+  // A bank account never shares its number with one of the user's cards (card SMS are not bank accounts)
+  if (f.kind === 'bank_account' && rKey) {
+    const { data: cards } = await supabase.from('money_masters').select('id, ref_key').eq('owner_id', uid).eq('kind', 'card').eq('inst_key', iKey);
+    const card = (cards || []).find(c => refMatch(c.ref_key, rKey));
+    if (card) return { status: 'linked', table: 'money_masters', id: card.id };
+  }
   const { data: same } = await supabase.from('money_masters').select('*')
-    .eq('owner_id', uid).eq('kind', f.kind).eq('inst_key', iKey);
-  const ex = (same || []).find(x => x.ref_key === rKey) || (rKey ? (same || []).find(x => refMatch(x.ref_key, rKey)) : null);
+    .eq('owner_id', uid).eq('kind', f.kind).eq('inst_key', iKey).neq('status', 'closed');
+  // Nothing to tell two of them apart (no bank, no number): a new one, never a merge
+  const anon = !rKey && !iKey && !['card', 'bank_account', 'loan'].includes(f.kind);
+  let ex = anon ? null : (same || []).find(x => (x.ref_key || '') === rKey) || (rKey ? (same || []).find(x => refMatch(x.ref_key, rKey)) : null);
+  // Cards and accounts: one without a number and one with the number from the same bank are the same thing
+  if (!ex && ['card', 'bank_account', 'loan'].includes(f.kind)) {
+    if (!rKey && (same || []).length === 1) ex = same[0];
+    else if (rKey) { const blank = (same || []).filter(x => !x.ref_key); if (blank.length === 1) { ex = blank[0]; await supabase.from('money_masters').update({ ref: rKey, ref_key: rKey }).eq('id', ex.id); } }
+  }
   if (ex) {
     // Fill gaps only; never overwrite what the user set.
     const patch = {};
@@ -236,7 +267,8 @@ router.post('/balances', requireAuth, async (req, res) => {
   try {
     const uid = req.user.id;
     const list = (Array.isArray(req.body?.accounts) ? req.body.accounts : []).slice(0, 30);
-    const { data: accts } = await supabase.from('money_masters').select('id, institution, inst_key, ref_key, meta').eq('owner_id', uid).eq('kind', 'bank_account');
+    const { data: accts } = await supabase.from('money_masters').select('id, institution, inst_key, ref_key, meta').eq('owner_id', uid).eq('kind', 'bank_account').neq('status', 'closed');
+    const { data: cardRows } = await supabase.from('money_masters').select('ref_key').eq('owner_id', uid).eq('kind', 'card');
     let updated = 0, created = 0;
     for (const a of list) {
       const bal = num(a.balance); const rk = refKey(a.last4); const ik = instKey(a.bank);
@@ -247,6 +279,9 @@ router.post('/balances', requireAuth, async (req, res) => {
         await supabase.from('money_masters').update({ meta: { ...(hit.meta || {}), balance: bal, balance_at: a.as_of }, updated_at: nowIso() }).eq('id', hit.id);
         updated++;
       } else {
+        // Not a new account when the number is one of the user's cards, or another bank's account already has it
+        // (older app versions sometimes took the bank from the message text instead of the sender)
+        if ((cardRows || []).some(c => refMatch(c.ref_key, rk)) || (accts || []).some(m => refMatch(m.ref_key, rk))) continue;
         const { error } = await supabase.from('money_masters').insert(await lockTitle(uid, { owner_id: uid, kind: 'bank_account', institution: str(a.bank), inst_key: ik, ref: rk, ref_key: rk,
           title: `${str(a.bank) || 'Bank'} ••${rk}`, frequency: 'irregular', meta: { balance: bal, balance_at: a.as_of }, source: 'sms_balance', status: 'active' }));
         if (!error) created++;
@@ -654,6 +689,97 @@ router.delete('/events/:id', requireAuth, async (req, res) => {
     if (e.master_table !== 'manual') return res.status(400).json({ error: 'This event belongs to a master. Pause it, or close the master.' });
     await supabase.from('recurring_events').delete().eq('id', e.id);
     res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Recurring payments found in SMS, waiting for the user to say what they are ──────────────
+// Debits with no master, grouped by payee fingerprint. A group that repeats at a steady interval with a steady
+// amount is a candidate: the user adds it as an event or a subscription, puts it off ("later": it stays listed
+// and new matching SMS keep counting) or ignores it.
+const SUBS_RX = /netflix|prime|hotstar|spotify|youtube|apple|google|icloud|jio|airtel|vi\b|zee5|sony|swiggy one|zomato gold|microsoft|adobe|chatgpt|openai|linkedin|gym|cult/i;
+function cadence(gaps) {
+  if (!gaps.length) return null;
+  const g = [...gaps].sort((a, b) => a - b)[Math.floor(gaps.length / 2)];
+  for (const [f, lo, hi] of [['monthly', 25, 36], ['quarterly', 80, 100], ['half_yearly', 170, 195], ['yearly', 350, 380]]) {
+    if (g >= lo && g <= hi && gaps.filter(x => x >= lo * 0.8 && x <= hi * 1.2).length >= Math.ceil(gaps.length * 0.6)) return f;
+  }
+  return null;
+}
+router.get('/candidates', requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.id;
+    const since = Date.now() - 400 * 864e5;
+    const [{ data: tx }, { data: rv }] = await Promise.all([
+      supabase.from('expense_transactions').select('id, amount, merchant, merchant_key, sms_sender, sms_body, bank_name, account_last4, date_time, type, category_id')
+        .eq('user_id', uid).eq('is_deleted', false).eq('type', 'DEBIT').is('master_id', null).gte('date_time', since).order('date_time', { ascending: false }).limit(5000),
+      supabase.from('recurring_reviews').select('*').eq('owner_id', uid),
+    ]);
+    const reviews = Object.fromEntries((rv || []).map(r => [r.fp, r]));
+    const groups = {};
+    const SKIP_CAT = new Set(['p_transfer', 'self_transfer', 'self', 'cc_bill']);       // own transfers and card bill payments
+    for (const t of tx || []) {
+      if (SKIP_CAT.has(t.category_id)) continue;
+      const fp = t.merchant_key || (typeof t.merchant === 'string' && !isEncV(t.merchant) ? t.merchant.trim().toLowerCase() : t.merchant);
+      if (!fp) continue;
+      (groups[fp] = groups[fp] || []).push(t);
+    }
+    const out = [];
+    for (const [fp, list] of Object.entries(groups)) {
+      if (list.length < 2) continue;
+      const amts = list.map(t => num(t.amount) || 0).sort((a, b) => a - b);
+      const med = amts[Math.floor(amts.length / 2)];
+      if (!med) continue;
+      const steady = list.filter(t => Math.abs((num(t.amount) || 0) - med) <= Math.max(med * 0.15, 5));
+      if (steady.length < 2 || steady.length < list.length * 0.6) continue;
+      const days = steady.map(t => Number(t.date_time)).sort((a, b) => a - b);
+      const gaps = days.slice(1).map((d, i) => (d - days[i]) / 864e5);
+      const freq = cadence(gaps);
+      if (!freq || (freq === 'monthly' && steady.length < 3 && gaps[0] > 36)) continue;
+      const r = reviews[fp];
+      if (r && (r.status === 'ignored' || r.status === 'added')) continue;
+      const last = steady[0];
+      const lastDay = new Date(Number(last.date_time) + 5.5 * 3600e3);
+      const step = STEP[freq] || 1;
+      const next = new Date(Date.UTC(lastDay.getUTCFullYear(), lastDay.getUTCMonth() + step, lastDay.getUTCDate()));
+      const reviewedAt = r ? Date.parse(r.reviewed_at) : null;
+      out.push({
+        fp, payee: last.merchant, sender: last.sms_sender || last.bank_name || null, body: last.sms_body || null,
+        account: last.account_last4 || null, amount: Math.round(med), frequency: freq, count: steady.length,
+        first_date: ymd(new Date(days[0] + 5.5 * 3600e3)), last_date: ymd(lastDay), next_date: ymd(next),
+        due_day: lastDay.getUTCDate(), due_month: lastDay.getUTCMonth() + 1, category_id: last.category_id || null,
+        suggest: SUBS_RX.test(isEncV(last.merchant) ? '' : String(last.merchant || '')) || (freq === 'monthly' && med <= 2000) ? 'subscription' : 'event',
+        status: r?.status === 'later' ? 'later' : 'pending', reviewed_at: r?.reviewed_at || null,
+        new_since_review: reviewedAt ? steady.filter(t => Number(t.date_time) > reviewedAt).length : 0,
+        history: steady.slice(0, 6).map(t => ({ date: ymd(new Date(Number(t.date_time) + 5.5 * 3600e3)), amount: num(t.amount) })),
+        txn_ids: steady.map(t => t.id),
+      });
+    }
+    out.sort((a, b) => (a.status === b.status ? 0 : a.status === 'pending' ? -1 : 1) || b.last_date.localeCompare(a.last_date));
+    res.json({ candidates: out, ignored: (rv || []).filter(r => r.status === 'ignored').length });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+// { fp, status: later | ignored | added | pending, target_kind?, target_id? }
+router.post('/candidates/review', requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.id; const b = req.body || {};
+    const fp = typeof b.fp === 'string' && b.fp.length <= 8000 ? b.fp : null;
+    if (!fp) return res.status(400).json({ error: 'Missing candidate' });
+    if (b.status === 'pending') { await supabase.from('recurring_reviews').delete().eq('owner_id', uid).eq('fp', fp); return res.json({ ok: true }); }
+    if (!['later', 'ignored', 'added'].includes(b.status)) return res.status(400).json({ error: 'Unknown status' });
+    const row = { owner_id: uid, fp, status: b.status, target_kind: str(b.target_kind, 20), target_id: str(b.target_id, 60), reviewed_at: nowIso() };
+    const { error } = await supabase.from('recurring_reviews').upsert(row, { onConflict: 'owner_id,fp' });
+    if (error) throw error;
+    // Added as a subscription (a master): its past debits become its actuals
+    let linked = 0;
+    if (b.status === 'added' && b.target_kind === 'subscription' && row.target_id) {
+      const { data: m } = await supabase.from('money_masters').select('id').eq('id', row.target_id).eq('owner_id', uid).maybeSingle();
+      const ids = (Array.isArray(b.txn_ids) ? b.txn_ids : []).filter(x => typeof x === 'string').slice(0, 500);
+      if (m && ids.length) {
+        const { data } = await supabase.from('expense_transactions').update({ master_id: m.id }).eq('user_id', uid).is('master_id', null).in('id', ids).select('id');
+        linked = (data || []).length;
+      }
+    }
+    res.json({ ok: true, linked });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

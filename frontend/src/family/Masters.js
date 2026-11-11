@@ -4,6 +4,7 @@ import { Modal, Field, Empty, errMsg, fmtDate } from './shared';
 import { kindOf, KindIcon, inrShort } from '../money/kinds';
 
 import LogoLoader from '../components/LogoLoader';
+import Recurring from './Recurring';
 // Every master has an event (when it's expected) and actuals (the bank SMS that matched it).
 const KINDS = [
   ['loan', 'Loans', 'Loan', 'emi'],
@@ -28,6 +29,108 @@ const perMonth = (m) => (+m.amount || 0) * ({ monthly: 1, quarterly: 1 / 3, half
 const whenText = (m) => m.frequency === 'irregular' ? 'No fixed date'
   : m.frequency === 'monthly' ? (m.due_day ? `Every month on the ${ord(m.due_day)}` : 'Every month')
   : `${FREQ.find(f => f[0] === m.frequency)?.[1] || ''}${m.due_month ? ` · ${MONTHS[m.due_month - 1]}` : ''}${m.due_day ? ` ${m.due_day}` : ''}`;
+
+/** Next date this master is expected (null for irregular). */
+function nextDue(m, today = new Date()) {
+  if (!m.due_day || m.frequency === 'irregular') return null;
+  const step = { monthly: 1, quarterly: 3, half_yearly: 6, yearly: 12 }[m.frequency] || 1;
+  const t0 = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  let y = today.getFullYear(), mo = m.frequency === 'monthly' || !m.due_month ? today.getMonth() : m.due_month - 1;
+  for (let i = 0; i < 30; i++) {
+    const last = new Date(y, mo + 1, 0).getDate();
+    const d = new Date(y, mo, Math.min(m.due_day, last));
+    if (d >= t0) return d;
+    mo += step; if (mo > 11) { y += Math.floor(mo / 12); mo %= 12; }
+  }
+  return null;
+}
+const daysTo = (d) => Math.round((d - new Date(new Date().toDateString())) / 864e5);
+const initials = (s) => String(s || '?').replace(/bank|ltd|limited|insurance|india/ig, '').trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase() || '•';
+
+/** One master as a card that looks like the thing it is (a card, an account, a loan, a subscription). */
+function MasterCard({ m, folios, onOpen, i }) {
+  const vk = visualKind(m);
+  const due = nextDue(m);
+  const dd = due ? daysTo(due) : null;
+  const soon = dd != null && dd <= 5;
+  const trail = m.actual?.trail || [];
+  const peak = Math.max(1, ...trail);
+  const dueText = due ? (dd === 0 ? 'Due today' : dd === 1 ? 'Due tomorrow' : `Due ${due.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}`) : whenText(m);
+  const last = m.actual?.last_date ? `Last ${inrShort(m.actual.last_amount)} · ${fmtDate(m.actual.last_date)}` : 'No payment seen yet';
+  const Trail = () => trail.some(v => v > 0) ? (
+    <span className="fm2-trail" aria-label="Last six months">{trail.map((v, k) => <i key={k} style={{ height: `${Math.max(6, (v / peak) * 100)}%`, '--k': k }} className={v ? '' : 'none'} />)}</span>) : null;
+
+  if (m.kind === 'card') return (
+    <button type="button" className={`fm2-ccard${soon ? ' soon' : ''}`} style={{ '--i': i }} onClick={onOpen}>
+      <span className="fm2-cc-top"><b>{m.institution || m.title}</b><span className="fm2-chip" aria-hidden="true" /></span>
+      <span className="fm2-cc-num">•••• •••• •••• {m.ref || '••••'}</span>
+      <span className="fm2-cc-foot">
+        <span><small>Typical bill</small><b>{m.amount ? inrShort(m.amount) : '—'}</b></span>
+        <span className={`fm2-due${soon ? ' hot' : ''}`}>{dueText}</span>
+      </span>
+      <span className="fm2-cc-last">{last}</span>
+    </button>
+  );
+  if (m.kind === 'bank_account') return (
+    <button type="button" className="fm2-card bank" style={{ '--i': i }} onClick={onOpen}>
+      <span className="fm2-head"><span className="fm2-mono">{initials(m.institution || m.title)}</span><span className="fm2-name"><b>{m.institution || m.title}</b><small>Savings ••{m.ref || '—'}</small></span></span>
+      <span className="fm2-big">{m.meta?.balance != null ? inrShort(m.meta.balance) : '—'}</span>
+      <span className="fm2-sub">{m.meta?.balance_at ? `Balance on ${fmtDate(m.meta.balance_at)}` : 'Balance appears with the next bank SMS'}</span>
+    </button>
+  );
+  return (
+    <button type="button" className={`fm2-card k-${m.kind}${m.status === 'closed' ? ' closed' : ''}${soon ? ' soon' : ''}`} style={{ '--i': i, '--c': kindOf(vk).c }} onClick={onOpen}>
+      <span className="fm2-head">
+        <span className="fm2-ic"><KindIcon kind={vk} size={18} color="#FAF7F0" /></span>
+        <span className="fm2-name"><b>{m.title}</b><small>{kindOf(vk).label}{m.institution && m.institution !== m.title ? ` · ${m.institution}` : ''}{m.ref ? ` ••${m.ref}` : ''}</small></span>
+        {m.source === 'discover' && <span className="fm2-src">SMS</span>}
+      </span>
+      <span className="fm2-row">
+        <span className={`fm2-big${m.kind === 'income' ? ' in' : ''}`}>{m.amount ? inrShort(m.amount) : '—'}<small>{m.frequency === 'yearly' ? '/yr' : m.frequency === 'monthly' ? '/mo' : ''}</small></span>
+        <Trail />
+      </span>
+      <span className="fm2-foot"><span className={`fm2-due${soon ? ' hot' : ''}`}>{dueText}</span><span>{last}</span></span>
+      {m.kind === 'sip' && m.linked_id && <span className="fm2-sub">↻ {folios.find(f => f.id === String(m.linked_id))?.fund_name || 'Folio linked'}</span>}
+    </button>
+  );
+}
+
+/** Summary tiles for one kind (cards, accounts, loans...). */
+function KindTiles({ tab, list }) {
+  const label = (KINDS.find(k => k[0] === tab) || [, 'Masters'])[1];
+  const soon = list.map(m => ({ m, d: nextDue(m) })).filter(x => x.d).sort((a, b) => a.d - b.d)[0];
+  const paid = list.reduce((a, m) => a + (m.actual?.total_12m || 0), 0);
+  if (tab === 'bank_account') {
+    const bal = list.reduce((a, m) => a + (+m.meta?.balance || 0), 0);
+    const at = list.map(m => m.meta?.balance_at).filter(Boolean).sort().pop();
+    return (<div className="fm-tiles">
+      <div className="fm-tile out"><small>Across {list.length} account{list.length === 1 ? '' : 's'}</small><b>{inrShort(bal)}</b><span>Latest balance from your bank SMS</span></div>
+      <div className="fm-tile in"><small>Last updated</small><b>{at ? fmtDate(at) : '—'}</b><span>Updates with each balance SMS</span></div>
+      <div className="fm-tile in"><small>Accounts</small><b>{list.length}</b><span>Closed ones are hidden</span></div>
+    </div>);
+  }
+  return (<div className="fm-tiles">
+    <div className="fm-tile out"><small>{label} · every month</small><b>{inrShort(list.reduce((a, m) => a + perMonth(m), 0))}</b><span>{list.length} active</span></div>
+    <div className="fm-tile in"><small>Paid in the last 12 months</small><b>{inrShort(paid)}</b><span>From the SMS linked to them</span></div>
+    <div className="fm-tile in"><small>Next due</small><b>{soon ? soon.d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '—'}</b><span>{soon ? soon.m.title : 'Nothing dated'}</span></div>
+  </div>);
+}
+
+/** A subscription / expense / income as one list row. */
+function MasterRow({ m, i, onOpen }) {
+  const vk = visualKind(m);
+  const due = nextDue(m); const dd = due ? daysTo(due) : null;
+  const trail = m.actual?.trail || []; const peak = Math.max(1, ...trail);
+  return (
+    <button type="button" className={`fm2-row${m.status === 'closed' ? ' closed' : ''}`} style={{ '--i': i, '--c': kindOf(vk).c }} onClick={onOpen}>
+      <span className="fm2-ic"><KindIcon kind={vk} size={17} color="#FAF7F0" /></span>
+      <span className="fm2-name"><b>{m.title}</b><small>{whenText(m)}{m.actual?.last_date ? ` · last ${fmtDate(m.actual.last_date)}` : ''}</small></span>
+      <span className="fm2-trail" aria-hidden="true">{trail.map((v, k) => <i key={k} style={{ height: `${Math.max(6, (v / peak) * 100)}%`, '--k': k }} className={v ? '' : 'none'} />)}</span>
+      <span className={`fm2-ramt${m.kind === 'income' ? ' in' : ''}`}>{m.amount ? inrShort(m.amount) : '—'}</span>
+      <span className={`fm2-due${dd != null && dd <= 5 ? ' hot' : ''}`}>{due ? (dd === 0 ? 'Today' : dd === 1 ? 'Tomorrow' : `In ${dd} days`) : '—'}</span>
+    </button>
+  );
+}
 
 function MasterForm({ master, kind0, folios = [], onClose, onSaved, notify }) {
   const [d, setD] = useState({
@@ -170,7 +273,9 @@ export default function Masters({ notify, go, kind = 'all' }) {
     catch (e) { setErr(errMsg(e)); setList([]); }
   }, []);
   useEffect(() => { load(); }, [load]);
-  const shown = useMemo(() => (list || []).filter(m => tab === 'all' || m.kind === tab), [list, tab]);
+  const [showClosed, setShowClosed] = useState(false);
+  const closedN = (list || []).filter(m => (tab === 'all' || m.kind === tab) && m.status === 'closed').length;
+  const shown = useMemo(() => (list || []).filter(m => (tab === 'all' || m.kind === tab) && (showClosed || m.status !== 'closed')), [list, tab, showClosed]);
   const out = (list || []).filter(m => m.kind !== 'income' && m.status !== 'closed').reduce((a, m) => a + perMonth(m), 0);
   const inn = (list || []).filter(m => m.kind === 'income' && m.status !== 'closed').reduce((a, m) => a + perMonth(m), 0);
 
@@ -181,32 +286,27 @@ export default function Masters({ notify, go, kind = 'all' }) {
         <button type="button" className="fo-btn" onClick={() => setForm({ kind: tab === 'all' ? 'loan' : tab })}>+ Add master</button>
       </div>
       {err && <div className="fo-banner">{err}</div>}
-      <div className="fm-tiles">
+      {tab !== 'all' && kind !== 'all' ? <KindTiles tab={tab} list={(list || []).filter(m => m.kind === tab && m.status !== 'closed')} /> : <div className="fm-tiles">
         <div className="fm-tile out"><small>Committed every month</small><b>{inrShort(out)}</b><span>EMIs, SIPs, bills and expenses</span></div>
         <div className="fm-tile in"><small>Expected in every month</small><b>{inrShort(inn)}</b><span>Salary, rent, dividends</span></div>
         <button type="button" className="fm-tile ins" onClick={() => go('insurance')}><small>Insurance</small><b>Policies ›</b><span>Premiums are in the Insurance tab</span></button>
-      </div>
-      <div className="fo-chips fm-tabs">
+      </div>}
+      {tab === 'subscription' && <Recurring notify={notify} prefer="subscription" onChanged={load} />}
+      {kind === 'all' && <div className="fo-chips fm-tabs">
         <button type="button" className={tab === 'all' ? 'on' : ''} onClick={() => setTab('all')}>All {list ? list.length : ''}</button>
         {KINDS.map(([v, l, , vk]) => {
           const n = (list || []).filter(m => m.kind === v).length;
           return <button key={v} type="button" className={tab === v ? 'on' : ''} onClick={() => setTab(v)}><KindIcon kind={vk} size={14} /> {l}{n ? ` ${n}` : ''}</button>;
         })}
-      </div>
+      </div>}
       {list === null ? <LogoLoader label="Loading masters…" />
         : !shown.length ? <Empty title={tab === 'all' ? 'No masters yet' : `No ${kindMeta(tab)[1].toLowerCase()} yet`}
             action={<button type="button" className="fo-btn" onClick={() => setForm({ kind: tab === 'all' ? 'loan' : tab })}>Add one</button>}>
             The phone app finds these from your bank SMS (Discover). You can also add them here, such as rent you pay or receive.</Empty>
-        : <div className="fm-grid">{shown.map(m => {
-            const vk = visualKind(m);
-            return (
-              <button key={m.id} type="button" className={`fm-card${m.status === 'closed' ? ' closed' : ''}`} style={{ '--c': kindOf(vk).c }} onClick={() => setDetail(m.id)}>
-                <span className="fm-ic"><KindIcon kind={vk} size={20} color="#FAF7F0" /></span>
-                <span className="fm-main"><b>{m.title}</b><small>{kindOf(vk).label}{m.institution && m.institution !== m.title ? ` · ${m.institution}` : ''}{m.ref ? ` ••${m.ref}` : ''}</small><small>{m.kind === 'bank_account' && m.meta?.balance != null ? <>Balance <b className="fm-bal">{inrShort(m.meta.balance)}</b> · {fmtDate(m.meta.balance_at)}</> : whenText(m)}</small>{m.kind === 'sip' && m.linked_id && <small className="fm-folio">↻ {folios.find(f => f.id === String(m.linked_id))?.fund_name || 'Folio linked'}</small>}</span>
-                <span className={`fm-amt${m.kind === 'income' ? ' in' : ''}`}>{m.amount ? inrShort(m.amount) : ''}</span>
-                {m.source === 'discover' && <span className="fm-src">from SMS</span>}
-              </button>);
-          })}</div>}
+        : ['subscription', 'expense', 'income'].includes(tab)
+          ? <div className="fm2-list">{shown.map((m, i) => <MasterRow key={m.id} m={m} i={i} onOpen={() => setDetail(m.id)} />)}</div>
+          : <div className="fm2-grid">{shown.map((m, i) => <MasterCard key={m.id} m={m} i={i} folios={folios} onOpen={() => setDetail(m.id)} />)}</div>}
+      {closedN > 0 && <button type="button" className="fm2-closed" onClick={() => setShowClosed(v => !v)}>{showClosed ? 'Hide' : 'Show'} {closedN} closed</button>}
       {form && <MasterForm master={form.master} kind0={form.kind} folios={folios} onClose={() => setForm(null)} onSaved={load} notify={notify} />}
       {detail && <MasterDetail id={detail} folios={folios} notify={notify} onChanged={load} onClose={() => setDetail(null)}
         onEdit={(m) => { setDetail(null); setForm({ master: m }); }} />}
