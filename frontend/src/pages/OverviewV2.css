@@ -9,7 +9,7 @@
 .o3-row.r3 { grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr); }
 .o3-row.r4 { grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); }
 .o3-row.r5 { grid-template-columns: minmax(0, 1fr); }
-.o3-card { background: var(--paper); border: 1px solid var(--line); border-radius: 24px; padding: 20px 22px; animation: k-rise .55s var(--ease) both; min-width: 0; }
+.o3-card { background: var(--paper); border: 1px solid var(--line); border-radius: 24px; padding: 20px 22px; animation: k-rise .32s var(--ease) both; min-width: 0; }
 .o3-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
 .o3-head p { margin: 3px 0 0; font-size: 13px; color: var(--ink3); }
 .o3-links { display: flex; gap: 6px; }
@@ -20,7 +20,7 @@
 .o3-none { color: var(--ink3); font-size: 13.5px; margin: 6px 0 0; } .o3-none.tall { padding: 70px 0; text-align: center; }
 
 /* Hero */
-.o3-hero { position: relative; overflow: hidden; background: var(--ink); color: var(--paper); border-radius: 28px; padding: 26px 28px 22px; animation: k-rise .55s var(--ease) both; }
+.o3-hero { position: relative; overflow: hidden; background: var(--ink); color: var(--paper); border-radius: 28px; padding: 26px 28px 22px; animation: k-rise .32s var(--ease) both; }
 .o3-hero::before { content: ''; position: absolute; width: 420px; height: 420px; right: -140px; top: -220px; border-radius: 50%;
   background: radial-gradient(circle, rgba(217,84,30,.45), transparent 65%); animation: o3-drift 9s ease-in-out infinite alternate; pointer-events: none; }
 @keyframes o3-drift { from { transform: translate(0,0) scale(1); } to { transform: translate(-60px,40px) scale(1.15); } }
@@ -45,7 +45,7 @@
 .o3-ghost:hover { opacity: 1; }
 
 /* This month */
-.o3-month { background: var(--pop); color: #fff; border-radius: 28px; padding: 24px; display: flex; flex-direction: column; gap: 16px; animation: k-rise .55s var(--ease) both; animation-delay: .08s; }
+.o3-month { background: var(--pop); color: #fff; border-radius: 28px; padding: 24px; display: flex; flex-direction: column; gap: 16px; animation: k-rise .32s var(--ease) both; animation-delay: .08s; }
 .o3-month-body { display: flex; align-items: center; gap: 18px; }
 .o3-ring { width: 104px; height: 104px; flex: 0 0 104px; }
 .o3-ring .trk { fill: none; stroke: rgba(255,255,255,.25); stroke-width: 7; }
@@ -61,7 +61,7 @@
 
 /* Next 14 days */
 .o3-strip { display: grid; grid-template-columns: repeat(14, minmax(46px, 1fr)); gap: 6px; overflow-x: auto; padding-bottom: 4px; }
-.o3-day { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 4px; border-radius: 14px; background: var(--cream); animation: k-rise .45s var(--ease) both; animation-delay: calc(var(--i) * 30ms); }
+.o3-day { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 4px; border-radius: 14px; background: var(--cream); animation: k-rise .45s var(--ease) both; animation-delay: calc(var(--i) * 18ms); }
 .o3-day small { font-size: 10.5px; color: var(--ink3); text-transform: uppercase; letter-spacing: .04em; }
 .o3-day b { font-size: 16px; font-weight: 600; }
 .o3-day.sun b { color: var(--ink3); }
@@ -75,7 +75,7 @@
 .o3-day.today .o3-dots i { background: var(--paper); }
 .o3-due { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px; margin-top: 14px; }
 .o3-due-i { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 14px; background: var(--cream); animation: k-slide-in .4s var(--ease) both; animation-delay: calc(var(--i) * 50ms + .3s); }
-.o3-due-i.hot { background: rgba(217,84,30,.1); box-shadow: inset 3px 0 0 var(--pop); }
+.o3-due-i.hot { background: rgba(217,84,30,.1); }
 .o3-due-ic { width: 32px; height: 32px; flex: 0 0 32px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; background: var(--ink); }
 .o3-due-i.hot .o3-due-ic { background: var(--pop); animation: k-pulse 1.6s ease-in-out infinite; }
 .o3-due-t { flex: 1; min-width: 0; display: flex; flex-direction: column; } .o3-due-t b { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

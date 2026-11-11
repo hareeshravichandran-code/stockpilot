@@ -51,3 +51,24 @@ button:active:not(:disabled) { transform: scale(.97); }
 .cf-manage small { font-weight: 400; opacity: .65; font-size: 12px; }
 @media (max-width: 640px) { .cf-manage small { display: none; } }
 @media (max-width: 520px) { .db-live-badge { display: none !important; } .db-topbar-right { min-width: 0; flex-wrap: wrap; justify-content: flex-end; } }
+
+/* ── Craft pass (Emil Kowalski / Impeccable rules) ─────────────────────────── */
+:root { --ease-out: cubic-bezier(.23,1,.32,1); --ease-in-out: cubic-bezier(.77,0,.175,1); }
+::selection { background: rgba(217,84,30,.22); color: #111111; }
+html { accent-color: #D9541E; caret-color: #D9541E; scrollbar-color: #CFC6B4 transparent; }
+a { text-underline-offset: 3px; }
+/* Money reads in columns: numbers keep their width while they count */
+.o3-nw, .o3-mlist b, .o3-tile b, .o3-due-a, .o3-hold-v b, .o3-bars b, .fm2-big, .fm2-ramt, .fm2-cc-num, .fm2-cc-foot b,
+.rc-amt b, .ev-amt, .mc2-tot b, .fm-tile b, .mf-tile b, .k-num { font-variant-numeric: tabular-nums; }
+/* Everything pressable answers the press */
+button, .btn, a.btn, .k-btn, .k-act, .fo-btn, .rc-b, .cf-manage, .o3-cta, .o3-links button, .o3-tile, .o3-legend button, .fm2-card, .fm2-ccard, .fm2-row, .rc-main, .ev-card, .k-seg button {
+  -webkit-tap-highlight-color: transparent; }
+.fo-btn:active:not(:disabled), .rc-b:active:not(:disabled), .cf-manage:active, .o3-cta:active, .o3-links button:active, .k-seg button:active,
+.o3-tile:active, .fm2-card:active, .fm2-ccard:active, .fm2-row:active, .ev-card:active, .k-btn:active, .k-act:active, .o3-legend button:active {
+  transform: scale(.97); transition: transform 100ms var(--ease-out); }
+/* Hover lifts only where there is a real pointer */
+@media not ((hover: hover) and (pointer: fine)) {
+  .o3-tile:hover, .fm2-card:hover, .fm2-ccard:hover, .cf-manage:hover, .o3-cta:hover { transform: none; box-shadow: none; }
+}
+.o3-tile, .fm2-card, .fm2-ccard { transition: transform 220ms var(--ease-out), box-shadow 220ms var(--ease-out), background-color .2s ease; }
+.fm2-card:hover, .fm2-ccard:hover { box-shadow: 0 16px 34px -14px rgba(17,17,17,.28); }

@@ -166,7 +166,9 @@ textarea.fo-in { resize: vertical; }
 .fo-week { background: var(--fo-well); border-radius: 14px; padding: 12px 14px; }
 .fo-week-k { font-size: 13px; font-weight: 600; color: var(--fo-ink-2); margin-bottom: 6px; }
 .fo-week ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.fo-week li { display: grid; grid-template-columns: 52px 1fr auto; gap: 8px; font-size: 13.5px; padding-left: 8px; border-left: 3px solid var(--c); }
+.fo-week li { display: grid; grid-template-columns: 52px 1fr auto; gap: 8px; font-size: 13.5px; padding-left: 16px; position: relative; }
+.fo-week li::before, .fo-agenda button::before { content: ''; position: absolute; left: 10px; top: 14px; width: 7px; height: 7px; border-radius: 50%; background: var(--c); }
+.fo-week li::before { left: 0; top: 7px; }
 .fo-week li.more { border: 0; color: var(--fo-ink-3); display: block; }
 .fo-week-d { color: var(--fo-ink-3); }
 .fo-week-t { overflow-wrap: anywhere; }
@@ -279,7 +281,7 @@ textarea.fo-in { resize: vertical; }
 .fo-cal-side h3 { font-size: 20px; }
 .fo .fo-cal-next { margin-top: 20px; margin-bottom: 8px; font-size: 17px; padding-top: 14px; border-top: 1px solid var(--fo-line); }
 .fo-agenda { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.fo-agenda button { width: 100%; text-align: left; border: 0; background: var(--fo-well); border-radius: 12px; padding: 9px 12px; border-left: 4px solid var(--c); display: flex; flex-direction: column; gap: 2px; cursor: default; color: var(--fo-ink); }
+.fo-agenda button { width: 100%; text-align: left; border: 0; background: var(--fo-well); border-radius: 12px; padding: 9px 12px 9px 26px; position: relative; display: flex; flex-direction: column; gap: 2px; cursor: default; color: var(--fo-ink); }
 .fo-agenda button.editable { cursor: pointer; }
 .fo-ag-mod { font-size: 11.5px; font-weight: 600; color: var(--c); }
 .fo-ag-title { font-weight: 600; font-size: 14px; overflow-wrap: anywhere; }
@@ -481,7 +483,7 @@ textarea.fo-in { resize: vertical; }
 .rc-tag.fresh { background: var(--fo-pop); color: #fff; animation: k-blink 1.4s ease-in-out infinite; }
 .rc-chev { color: var(--fo-ink-3); font-size: 20px; transition: transform .25s; } .rc-chev.on { transform: rotate(90deg); }
 .rc-more { margin: 12px 0 0 54px; display: flex; flex-direction: column; gap: 10px; animation: k-rise .3s ease both; }
-.rc-msg { background: var(--fo-cream); border-left: 3px solid var(--fo-ink); border-radius: 4px 12px 12px 4px; padding: 10px 14px; }
+.rc-msg { background: var(--fo-cream); border-radius: 12px; padding: 10px 14px; }
 .rc-msg small { color: var(--fo-ink-3); font-size: 11.5px; } .rc-msg p { margin: 4px 0 0; font-family: 'DM Mono', monospace; font-size: 12.5px; line-height: 1.55; color: var(--fo-ink-2); word-break: break-word; }
 .rc-hist { display: flex; gap: 8px; flex-wrap: wrap; } .rc-hist span { background: var(--fo-well); border-radius: 10px; padding: 5px 10px; font-size: 13px; font-weight: 600; display: flex; flex-direction: column; }
 .rc-hist small { font-weight: 400; font-size: 11px; color: var(--fo-ink-3); }
