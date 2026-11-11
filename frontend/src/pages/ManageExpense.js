@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { expenseAPI } from '../lib/api';
 
+import LogoLoader from '../components/LogoLoader';
 /* ─────────────────────── helpers ─────────────────────────── */
 const CAT_ICONS = ['🏷️','🍕','🛍️','🚗','🏠','💊','📚','✈️','🎮','💆','⚡','💰','🎁','🏋️','🍎','☕','🏦','📊','🎯','🌿','💎','🔥','🛡️','🥦','🥜'];
-const CAT_COLORS = ['#5d3b78','#a82c2c','#1f6b4a','#2d6b6b','#a8741a','#34487a','#964062','#6b8e23','#b8551f','#8a7d6a'];
+const CAT_COLORS = ['#111111','#9E2B25','#2F6B45','#5A564F','#A39B8B','#3A3833','#6F6A61','#2F6B45','#8C8270','#85817A'];
 const FIELD_TYPES = [
   { id: 'TEXT',      label: 'Text Input',             icon: '✏️' },
   { id: 'DROPDOWN',  label: 'Dropdown',               icon: '📋' },
@@ -24,13 +25,13 @@ const MANAGE_TABS = [
 /* ─────────────────────── styles ─────────────────────────── */
 const S = {
   overlay: {
-    position:'fixed', inset:0, background:'rgba(26,22,18,0.4)', backdropFilter:'blur(6px)',
+    position:'fixed', inset:0, background:'rgba(17,17,17,0.4)', backdropFilter:'blur(6px)',
     WebkitBackdropFilter:'blur(6px)', zIndex:1000, display:'flex', alignItems:'stretch', justifyContent:'flex-end',
   },
   panel: {
     width:'min(900px,95vw)', background:'var(--surface)', borderLeft:'1px solid var(--border-2)',
     display:'flex', flexDirection:'column', height:'100vh', overflow:'hidden',
-    boxShadow:'-12px 0 40px rgba(26,22,18,0.08)',
+    boxShadow:'-12px 0 40px rgba(17,17,17,0.08)',
   },
   header: {
     padding:'18px 24px 0', borderBottom:'1px solid var(--border)',
@@ -216,7 +217,7 @@ function CategoriesTab({ cats, parentCats, subCats, reload }) {
 
       {/* Create form */}
       {showForm && (
-        <div style={{...S.card, border:'1px solid rgba(107,142,35,0.25)', marginBottom:20}}>
+        <div style={{...S.card, border:'1px solid rgba(47,107,69,0.25)', marginBottom:20}}>
           <div style={{fontSize:13, fontWeight:600, color:'var(--lime)', marginBottom:12}}>New Category</div>
           <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10}}>
             <div>
@@ -267,7 +268,7 @@ function CategoriesTab({ cats, parentCats, subCats, reload }) {
 
       {/* Standard categories section */}
       <div style={S.sectionTitle}>🗂️ Standard Categories</div>
-      <div style={{...S.card, background:'var(--indigo-soft)', border:'1px solid rgba(52,72,122,0.20)', fontSize:12, color:'var(--indigo)', marginBottom:12}}>
+      <div style={{...S.card, background:'var(--indigo-soft)', border:'1px solid rgba(58,56,51,0.20)', fontSize:12, color:'var(--indigo)', marginBottom:12}}>
         🔒 System categories are shared across all users and cannot be deleted. You can add subcategories under any of them.
       </div>
       {systemCats.length === 0
@@ -353,7 +354,7 @@ function RulesTab() {
       </div>
 
       {showForm && (
-        <div style={{...S.card, border:'1px solid rgba(107,142,35,0.25)', marginBottom:16}}>
+        <div style={{...S.card, border:'1px solid rgba(47,107,69,0.25)', marginBottom:16}}>
           <div style={{fontSize:13, fontWeight:600, color:'var(--lime)', marginBottom:12}}>{editing ? 'Edit Rule' : 'New Rule'}</div>
           <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10}}>
             <div>
@@ -376,7 +377,7 @@ function RulesTab() {
         </div>
       )}
 
-      {loading ? <div style={S.empty}>Loading…</div> :
+      {loading ? <LogoLoader /> :
        rules.length === 0 ? <div style={S.empty}><div style={{fontSize:32,marginBottom:8}}>📱</div><div>No SMS rules yet. Create rules to auto-categorise transactions.</div></div> :
        rules.map(rule => (
         <div key={rule.id} style={S.card}>
@@ -438,7 +439,7 @@ function BulkTab({ transactions, categories, reload }) {
 
   return (
     <div>
-      {done && <div style={{...S.card, background:'var(--lime-soft)', border:'1px solid rgba(107,142,35,0.25)', color:'var(--lime)', marginBottom:12, fontSize:13}}>{done}</div>}
+      {done && <div style={{...S.card, background:'var(--lime-soft)', border:'1px solid rgba(47,107,69,0.25)', color:'var(--lime)', marginBottom:12, fontSize:13}}>{done}</div>}
 
       {/* Controls */}
       <div style={{...S.card, marginBottom:16}}>
@@ -579,7 +580,7 @@ function BudgetTab({ parentCats }) {
       </div>
 
       {showForm && (
-        <div style={{...S.card, border:'1px solid rgba(107,142,35,0.25)', marginBottom:16}}>
+        <div style={{...S.card, border:'1px solid rgba(47,107,69,0.25)', marginBottom:16}}>
           <div style={{fontSize:13,fontWeight:600,color:'var(--lime)',marginBottom:12}}>New Budget — {displayMonth()}</div>
           <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10}}>
             <div>
@@ -710,7 +711,7 @@ function FieldsTab({ categories, subCats }) {
       </div>
 
       {showForm && (
-        <div style={{...S.card, border:'1px solid rgba(107,142,35,0.25)', marginBottom:16}}>
+        <div style={{...S.card, border:'1px solid rgba(47,107,69,0.25)', marginBottom:16}}>
           <div style={{fontSize:13,fontWeight:600,color:'var(--lime)',marginBottom:12}}>{editing?'Edit Field':'New Custom Field'}</div>
           <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:12}}>
             <div>
@@ -925,7 +926,7 @@ function SheetsTab() {
         </div>
       </div>
 
-      <div style={{...S.card,background:'var(--indigo-soft)',border:'1px solid rgba(52,72,122,0.20)',fontSize:12,color:'var(--indigo)',marginTop:12}}>
+      <div style={{...S.card,background:'var(--indigo-soft)',border:'1px solid rgba(58,56,51,0.20)',fontSize:12,color:'var(--indigo)',marginTop:12}}>
         <div style={{fontWeight:600,marginBottom:4}}>ℹ️ How it works</div>
         <div>The Android Kanalyst app writes transactions directly to this sheet. This web config mirrors the same settings — changes here sync to your mobile app on next open.</div>
       </div>

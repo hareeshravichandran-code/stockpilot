@@ -4,6 +4,7 @@ import { supportAPI, smsIssuesAPI } from '../lib/api';
 import { Bubbles, Composer, fmtWhen } from './supportChat';
 import './Support.css';
 
+import LogoLoader from '../components/LogoLoader';
 // Admin inbox: every user's thread, replies with screenshots, and their diagnostics uploads
 export default function AdminSupport({ embedded = false }) {
   const nav = useNavigate();
@@ -23,7 +24,7 @@ export default function AdminSupport({ embedded = false }) {
       <aside className="sp-list">
         {!embedded && <header className="sp-head small"><button className="sp-back" onClick={() => nav('/dashboard')}>←</button><h1>Support inbox</h1></header>}
         {err && <div className="sp-err">{err}</div>}
-        {!threads ? <div className="sp-empty">Loading…</div> : threads.length === 0 ? <div className="sp-empty">No messages yet.</div> :
+        {!threads ? <LogoLoader /> : threads.length === 0 ? <div className="sp-empty">No messages yet.</div> :
           threads.map(t => (
             <button key={t.user_id} className={`sp-thread ${sel === t.user_id ? 'on' : ''}`} onClick={() => setSel(t.user_id)}>
               <b>{t.user?.name || t.user?.email || t.user_id.slice(0, 8)}</b>
@@ -33,7 +34,7 @@ export default function AdminSupport({ embedded = false }) {
             </button>))}
       </aside>
       <section className="sp-main">
-        {!sel ? <div className="sp-empty">Pick a conversation.</div> : !thread ? <div className="sp-empty">Loading…</div> : (
+        {!sel ? <div className="sp-empty">Pick a conversation.</div> : !thread ? <LogoLoader /> : (
           <>
             <div className="sp-head small"><div><h1>{thread.user?.name}</h1><p>{thread.user?.email}</p></div></div>
             {thread.uploads.length > 0 && (

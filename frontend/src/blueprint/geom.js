@@ -186,15 +186,15 @@ export function avoidOverlap(pos, w, h, siblings, boardW) {
 
 // ── Goal colours (hues from the Kanalyst token set) ─────────────────
 export const GOAL_COLORS = [
-  { id: 'moss',       label: 'Moss',       hex: '#6b8e23' },
-  { id: 'forest',     label: 'Forest',     hex: '#1f6b4a' },
-  { id: 'teal',       label: 'Teal',       hex: '#2d6b6b' },
-  { id: 'prussian',   label: 'Prussian',   hex: '#34487a' },
-  { id: 'aubergine',  label: 'Aubergine',  hex: '#5d3b78' },
-  { id: 'mulberry',   label: 'Mulberry',   hex: '#964062' },
-  { id: 'madder',     label: 'Madder',     hex: '#a82c2c' },
-  { id: 'terracotta', label: 'Terracotta', hex: '#b8551f' },
-  { id: 'sienna',     label: 'Sienna',     hex: '#a8741a' },
+  { id: 'moss',       label: 'Moss',       hex: '#2F6B45' },
+  { id: 'forest',     label: 'Forest',     hex: '#2F6B45' },
+  { id: 'teal',       label: 'Teal',       hex: '#5A564F' },
+  { id: 'prussian',   label: 'Prussian',   hex: '#3A3833' },
+  { id: 'aubergine',  label: 'Aubergine',  hex: '#111111' },
+  { id: 'mulberry',   label: 'Mulberry',   hex: '#6F6A61' },
+  { id: 'madder',     label: 'Madder',     hex: '#9E2B25' },
+  { id: 'terracotta', label: 'Terracotta', hex: '#8C8270' },
+  { id: 'sienna',     label: 'Sienna',     hex: '#A39B8B' },
   { id: 'slate',      label: 'Slate',      hex: '#5b6470' },
 ];
 export const colorHex = (id) => (GOAL_COLORS.find(c => c.id === id) || {}).hex || null;

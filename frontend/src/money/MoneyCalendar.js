@@ -95,119 +95,114 @@ export default function MoneyCalendar({ hideValues, onOpenMasters, onOpenEvents,
 
   const net = data ? (data.totals.income || 0) - (data.totals.expense || 0) : 0;
 
+  // Month grid: weeks as rows (blank cells before the 1st)
+  const lead = new Date(cursor.getFullYear(), cursor.getMonth(), 1).getDay();
+  const cells = data ? [...Array(lead).fill(null), ...Object.keys(byDay).map(Number)] : [];
+  const monthName = cursor.toLocaleDateString('en-IN', { month: 'long' });
+
+  const dayCell = (dn, i) => {
+    if (dn == null) return <span key={'b' + i} className="mc2-blank" />;
+    const x = byDay[dn];
+    const dt = new Date(cursor.getFullYear(), cursor.getMonth(), dn);
+    const hotEv = x.events.filter(isHot).sort((a, b) => LV_RANK[a.level] - LV_RANK[b.level])[0];
+    const cls = ['mc2-d', dt.getDay() === 0 && 'sun', dn === todayD && 'today', todayD && dn < todayD && 'past', dn === pick && 'on', hotEv && 'hot',
+      (x.inn || x.out || x.events.length) && 'has'].filter(Boolean).join(' ');
+    return (
+      <button key={dn} type="button" className={cls} style={{ '--i': i }} onClick={() => setPick(p => (p === dn ? null : dn))}
+        aria-label={`${dt.toDateString()}${x.inn ? ', in ' + inrShort(x.inn) : ''}${x.out ? ', out ' + inrShort(x.out) : ''}${x.events.length ? ', ' + x.events.length + ' expected' : ''}`}>
+        <span className="mc2-n">{dn}</span>
+        {(x.inn > 0 || x.out > 0) && <span className="mc2-amts">
+          {x.inn > 0 && <span className="in">+{small(x.inn)}</span>}
+          {x.out > 0 && <span className="out">−{small(x.out)}</span>}
+        </span>}
+        {x.events.length > 0 && <span className="mc2-dots">
+          {x.events.slice(0, 3).map((e, j) => <i key={j} className={isHot(e) ? 'hot' : e.status} style={{ '--c': kindOf(e.kind).c }} title={e.title} />)}
+          {x.events.length > 3 && <em>+{x.events.length - 3}</em>}
+        </span>}
+      </button>
+    );
+  };
+
   return (
-    <section className="mc" aria-label="Money calendar">
-      <header className="mc-head">
-        <div className="mc-title">
-          <button type="button" className="mc-nav" aria-label="Previous month" onClick={() => setCursor(d => new Date(d.getFullYear(), d.getMonth() - 1, 1))}>‹</button>
-          <h3>{cursor.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })}</h3>
-          <button type="button" className="mc-nav" aria-label="Next month" onClick={() => setCursor(d => new Date(d.getFullYear(), d.getMonth() + 1, 1))}>›</button>
-          {!isNow && <button type="button" className="mc-today" onClick={() => { const d = new Date(); d.setDate(1); setCursor(d); }}>Today</button>}
+    <section className="mc mc2" aria-label="Money calendar">
+      <header className="mc2-head">
+        <div className="mc2-title">
+          <h3><span>{monthName}</span> <em>{cursor.getFullYear()}</em></h3>
+          <div className="mc2-navs">
+            <button type="button" className="mc-nav" aria-label="Previous month" onClick={() => setCursor(d => new Date(d.getFullYear(), d.getMonth() - 1, 1))}>‹</button>
+            {!isNow && <button type="button" className="mc-today" onClick={() => { const d = new Date(); d.setDate(1); setCursor(d); }}>Today</button>}
+            <button type="button" className="mc-nav" aria-label="Next month" onClick={() => setCursor(d => new Date(d.getFullYear(), d.getMonth() + 1, 1))}>›</button>
+          </div>
         </div>
-        {data && <div className="mc-totals">
-          <span className="mc-tot in"><small>In</small><b>{money(data.totals.income)}</b></span>
-          <span className="mc-tot out"><small>Out</small><b>{money(data.totals.expense)}</b></span>
-          <span className={`mc-tot net ${net >= 0 ? 'in' : 'out'}`}><small>Net</small><b>{net < 0 ? '−' : '+'}{money(net)}</b></span>
-          {urgent.length > 0 && <span className="mc-alert"><i />{urgent.length} due now</span>}
+        {data && <div className="mc2-totals">
+          <div className="mc2-tot"><small>Came in</small><b className="in">{money(data.totals.income)}</b></div>
+          <div className="mc2-tot"><small>Went out</small><b className="out">{money(data.totals.expense)}</b></div>
+          <div className="mc2-tot"><small>Net</small><b className={net >= 0 ? 'in' : 'out'}>{net < 0 ? '−' : '+'}{money(net)}</b></div>
+          {urgent.length > 0 && <button type="button" className="mc2-due" onClick={() => setPick(+urgent[0].date.slice(8, 10))}><i className="k-pulse" />{urgent.length} due now</button>}
         </div>}
       </header>
 
       {err && <div className="mc-empty">{err}</div>}
-      {!data && !err && <div className="mc-skel" />}
+      {!data && !err && <div className="mc2-skel"><div className="k-skel" /><div className="k-skel" /></div>}
       {data && (
-        <div className="mc-scroll" ref={scroller}>
-          <div className="mc-strip" style={{ '--n': data.days }}>
-            {Object.entries(byDay).map(([d, x]) => {
-              const dn = +d;
-              const dt = new Date(cursor.getFullYear(), cursor.getMonth(), dn);
-              const sun = dt.getDay() === 0;
-              const past = todayD && dn < todayD;
-              const hotEv = x.events.filter(isHot).sort((a, b) => LV_RANK[a.level] - LV_RANK[b.level])[0];
-              const hot = !!hotEv;
-              const cls = ['mc-d', sun && 'sun', dn === todayD && 'today', past && 'past', dn === pick && 'on', hot && `hot lv-${hotEv.level || 'very_high'}`].filter(Boolean).join(' ');
-              return (
-                <button key={d} type="button" className={cls} onClick={() => setPick(p => (p === dn ? null : dn))}
-                  aria-label={`${dt.toDateString()}${x.inn ? ', in ' + inrShort(x.inn) : ''}${x.out ? ', out ' + inrShort(x.out) : ''}${x.events.length ? ', ' + x.events.length + ' expected' : ''}`}>
-                  <small>{WD[dt.getDay()]}</small>
-                  <b>{dn}</b>
-                  <span className="mc-amt-in">{x.inn ? '+' + small(x.inn) : ''}</span>
-                  <span className="mc-amt-out">{x.out ? '−' + small(x.out) : ''}</span>
-                  <span className="mc-kbar">
-                    {x.flow.length > 0 && split(x.flow).map(([k, w]) => <i key={k} style={{ width: w + '%', background: kindOf(k).c }} />)}
-                  </span>
-                  <span className="mc-chips">
-                    {x.events.slice(0, 2).map((e, i) => (
-                      <span key={i} className={`mc-chip ${e.status}${isHot(e) ? ` blink lv-${e.level || 'very_high'}` : ''}${e.declared ? ' declared' : ''}`} style={{ '--c': kindOf(e.kind).c }} title={`${e.title} · ${e.declared ? 'Declared, not credited yet' : STATUS[e.status] || ''}`}>
-                        <KindIcon kind={e.kind} size={12} color={isHot(e) ? '#fff' : undefined} />
-                      </span>
-                    ))}
-                    {x.events.length > 2 && <span className="mc-more">+{x.events.length - 2}</span>}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {sel && (
-        <div className="mc-detail">
-          <div className="mc-detail-h">
-            {new Date(cursor.getFullYear(), cursor.getMonth(), pick).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })}
-            <button type="button" className="mc-x" aria-label="Close" onClick={() => setPick(null)}>×</button>
-          </div>
-          {!sel.flow.length && !sel.events.length && <div className="mc-none">Nothing moved and nothing is due.</div>}
-          {sel.events.map((e, i) => (
-            <div key={'de' + i} className={`mc-row ${e.status}${isHot(e) ? ` urgent lv-${e.level || 'very_high'}` : ''}`} style={{ '--c': kindOf(e.kind).c }}>
-              <span className="mc-ic"><KindIcon kind={e.kind} size={16} /></span>
-              <span className="mc-t">{e.title}<small>{kindOf(e.kind).label}{e.sub ? ' · ' + e.sub : ''}</small></span>
-              <span className={`mc-st ${e.declared ? 'declared' : e.status}`}>{e.declared ? 'Declared' : STATUS[e.status] || ''}</span>
-              <span className="mc-amt">{e.amount ? money(e.amount) : ''}</span>
+        <div className="mc2-body" key={month}>
+          <div className="mc2-grid-wrap">
+            <div className="mc2-wd">{WD.map(w => <span key={w}>{w}</span>)}</div>
+            <div className="mc2-grid">{cells.map(dayCell)}</div>
+            <div className="mc2-legend">
+              <span><i className="lg in" />Came in</span><span><i className="lg out" />Went out</span>
+              <span><i className="lg ev" />Expected</span><span><i className="lg hot" />Due now</span>
             </div>
-          ))}
-          {sel.flow.slice().sort((a, b) => (b.amount || 0) - (a.amount || 0)).map(f => (
-            <div key={f.id} className={`mc-row ${f.dir}`} style={{ '--c': kindOf(f.kind).c }}>
-              <span className="mc-ic"><KindIcon kind={f.kind} size={16} /></span>
-              <span className="mc-t">{f.master_title || f.title}<small>{kindOf(f.kind).label}{f.master_title ? ' · ' + f.title : ''}</small></span>
-              <span className="mc-st done">{f.master_title ? 'Matched' : ''}</span>
-              <span className={`mc-amt ${f.dir}`}>{f.dir === 'in' ? '+' : '−'}{money(f.amount)}</span>
-            </div>
-          ))}
-        </div>
-      )}
+          </div>
 
-      {data && (
-        <div className="mc-foot">
-          <div className="mc-foot-h">
-            <span>{isNow ? 'Coming up' : 'Expected this month'}</span>
-            <span className="mc-foot-links">
-              <a className="mc-link" href="/money-flow">Money flow ›</a>
-              {onOpenEvents && <button type="button" className="mc-link" onClick={onOpenEvents}>Events & alerts ›</button>}
+          <aside className="mc2-side">
+            {sel ? (
+              <div className="mc2-detail">
+                <div className="mc2-side-h">
+                  <span>{new Date(cursor.getFullYear(), cursor.getMonth(), pick).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })}</span>
+                  <button type="button" className="mc-x" aria-label="Back to coming up" onClick={() => setPick(null)}>×</button>
+                </div>
+                {!sel.flow.length && !sel.events.length && <div className="mc-none">Nothing moved and nothing is due.</div>}
+                {sel.events.map((e, i) => (
+                  <div key={'de' + i} className={`mc2-row ${isHot(e) ? 'hot' : e.status}`} style={{ '--c': kindOf(e.kind).c, '--i': i }}>
+                    <span className="mc2-ic"><KindIcon kind={e.kind} size={15} color={isHot(e) ? '#fff' : undefined} /></span>
+                    <span className="mc2-t">{e.title}<small>{kindOf(e.kind).label}{e.sub ? ' · ' + e.sub : ''} · {e.declared ? 'Declared' : STATUS[e.status] || ''}</small></span>
+                    <span className="mc2-amt">{e.amount ? money(e.amount) : ''}</span>
+                  </div>
+                ))}
+                {sel.flow.slice().sort((a, b) => (b.amount || 0) - (a.amount || 0)).map((f, i) => (
+                  <div key={f.id} className={`mc2-row done ${f.dir}`} style={{ '--c': kindOf(f.kind).c, '--i': i }}>
+                    <span className="mc2-ic"><KindIcon kind={f.kind} size={15} /></span>
+                    <span className="mc2-t">{f.master_title || f.title}<small>{kindOf(f.kind).label}{f.master_title ? ' · ' + f.title : ''}</small></span>
+                    <span className={`mc2-amt ${f.dir}`}>{f.dir === 'in' ? '+' : '−'}{money(f.amount)}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <>
+                <div className="mc2-side-h"><span>{isNow ? 'Coming up' : 'Expected this month'}</span></div>
+                {upcoming.length === 0
+                  ? <div className="mc-none">Nothing else expected. Add loans, cards, SIPs or rent in Masters to see them here.</div>
+                  : <div className="mc2-up">
+                      {upcoming.map((e, i) => {
+                        const k = kindOf(e.kind); const hot = isHot(e);
+                        return (
+                          <button key={i} type="button" className={`mc2-up-i${hot ? ' hot' : ''}`} style={{ '--c': k.c, '--i': i }} onClick={() => setPick(+e.date.slice(8, 10))}>
+                            <span className="mc2-date"><b>{+e.date.slice(8, 10)}</b><small>{new Date(e.date + 'T00:00:00').toLocaleDateString('en-IN', { month: 'short' })}</small></span>
+                            <span className="mc2-t">{e.title}<small>{k.label}{dueText(e) ? ' · ' + dueText(e) : ''}</small></span>
+                            {e.amount ? <span className={`mc2-amt${e.dir === 'in' ? ' in' : ''}`}>{money(e.amount)}</span> : <span />}
+                          </button>
+                        );
+                      })}
+                    </div>}
+              </>
+            )}
+            <div className="mc2-links">
+              <a className="mc-link" href="/dashboard?tab=cashflow">Income & expense ›</a>
+              {onOpenEvents && <button type="button" className="mc-link" onClick={onOpenEvents}>Events ›</button>}
               {onOpenMasters && <button type="button" className="mc-link" onClick={onOpenMasters}>Masters ›</button>}
-            </span>
-          </div>
-          {upcoming.length === 0
-            ? <div className="mc-none">Nothing else expected this month. Add loans, cards, SIPs or rent in Masters to see them here.</div>
-            : <div className="mc-up-list">
-                {upcoming.map((e, i) => {
-                  const k = kindOf(e.kind);
-                  const hot = isHot(e);
-                  return (
-                    <button key={i} type="button" className={`mc-card${hot ? ` hot lv-${e.level || 'very_high'}` : ''}`} style={{ '--c': k.c }}
-                      onClick={() => setPick(+e.date.slice(8, 10))}>
-                      <span className="mc-ic"><KindIcon kind={e.kind} size={16} color={hot ? '#fff' : undefined} /></span>
-                      <span className="mc-card-t">
-                        <b>{e.title}</b>
-                        <small>{new Date(e.date + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} · {k.label}</small>
-                      </span>
-                      <span className="mc-card-r">
-                        {e.amount ? <b className={e.dir === 'in' ? 'in' : ''}>{money(e.amount)}</b> : null}
-                        {dueText(e) && <small>{dueText(e)}</small>}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>}
+            </div>
+          </aside>
         </div>
       )}
     </section>

@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { blueprintAPI, retirementAPI } from '../lib/api';
+import LogoLoader from '../components/LogoLoader';
 import {
   LINK_TYPES, ASSET_TYPES, assetTypeLabel, GOAL_COLORS, WEEKDAYS, MONTHS,
   fmtINR, fmtDate, num, progressTone, colorHex, nextDue, dueDate, daysUntil, relTime, scheduleText,
@@ -755,7 +756,7 @@ function NotesTab({ bucket, onReload, notify }) {
         </div>
       </div>
 
-      {!notes && <div className="bp-empty-small">Loading…</div>}
+      {!notes && <LogoLoader size={32} />}
       {notes?.attachments?.length > 0 && (
         <ul className="bp-files">
           {notes.attachments.map(a => (

@@ -87,6 +87,7 @@ const TABLES = {
   buckets:   { table: 'bp_buckets', text: ['name'], owner: 'user_id', signals: true },
   comments:  { table: 'bp_comments', text: ['body'], owner: 'user_id' },
   profile:   { table: 'users', text: ['name', 'mobile', 'client_code'], ref: ['pan'], date: ['dob'], owner: 'id' },
+  epf:       { table: 'epf_accounts', text: [], ref: ['uan', 'member_id'], owner: 'user_id' },
 };
 const MIGRATION_ORDER = Object.keys(TABLES);
 const colsOf = (t) => [t.id || 'id', ...t.text, ...(t.ref || []).flatMap(f => [f, f + '_enc']), ...(t.date || []).flatMap(f => [f, f + '_enc'])];

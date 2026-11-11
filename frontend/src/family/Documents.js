@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { householdAPI } from '../lib/api';
+import LogoLoader from '../components/LogoLoader';
 import {
   Modal, Field, Empty, Avatar, MemberPicker, Seg, DOC_KINDS, docKind, REPEATS, inr, fmtDate, daysUntil, whenLabel,
   urgency, shortName, errMsg, parseDate, ymd,
@@ -96,7 +97,7 @@ export default function Documents({ members, notify }) {
     } catch (e) { notify(errMsg(e), 'error'); }
   };
 
-  if (items === null) return <div className="fo-loading"><span className="fo-spin" /> Loading documents…</div>;
+  if (items === null) return <LogoLoader label="Loading documents…" />;
   const list = items.filter(x => who === 'all' || x.member_id === who);
   const groups = [
     ['over', 'Overdue or expired', list.filter(x => !x.done && x.due_date && daysUntil(x.due_date) < 0)],

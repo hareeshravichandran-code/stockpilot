@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { householdAPI } from '../lib/api';
 import { Modal, Field, Avatar, Faces, MemberPicker, Seg, MODULE, inr, fmtDate, todayStr, ymd, parseDate, shortName, errMsg } from './shared';
 
+import LogoLoader from '../components/LogoLoader';
 const WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 function EventForm({ ev, date, members, onClose, onSaved, notify }) {
@@ -130,7 +131,7 @@ export default function CalendarView({ members, notify }) {
             <h3>{sel === t ? 'Today' : fmtDate(sel, { weekday: 'long', day: 'numeric', month: 'long' })}</h3>
             <button type="button" className="fo-btn sm ghost" onClick={() => setForm({ date: sel })}>Add</button>
           </div>
-          {items === null ? <p className="fo-hint">Loading…</p> : selItems.length === 0 ? <p className="fo-hint">Nothing on this day.</p> : (
+          {items === null ? <LogoLoader size={32} inline /> : selItems.length === 0 ? <p className="fo-hint">Nothing on this day.</p> : (
             <ul className="fo-agenda">
               {selItems.map(i => (
                 <li key={i.id} style={{ '--c': MODULE[i.module]?.color }}>

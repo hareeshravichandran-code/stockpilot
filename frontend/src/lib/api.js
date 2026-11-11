@@ -294,6 +294,14 @@ export const retirementAPI = {
 
 export default api;
 
+export const epfAPI = {
+  get:      ()          => api.get('/api/epf'),
+  passbook: (file)      => { const f = new FormData(); f.append('file', file); return api.post('/api/epf/passbook', f); },
+  add:      (body)      => api.post('/api/epf/accounts', body),
+  update:   (id, body)  => api.put(`/api/epf/accounts/${id}`, body),
+  remove:   (id)        => api.delete(`/api/epf/accounts/${id}`),
+};
+
 export const privacyAPI = {
   keys:      ()             => api.get('/api/privacy/keys'),
   create:    (body)         => api.post('/api/privacy/keys', body),

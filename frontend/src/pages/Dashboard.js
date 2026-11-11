@@ -10,17 +10,62 @@ import RetirementPlanner from './RetirementPlanner';
 import HistoricalSyncPanel from './HistoricalSyncPanel';
 import { NetWorthHero, MoneyTiles, GoalsSnapshot, FamilyStrip, inr } from './DashboardOverview';
 import MoneyCalendar from '../money/MoneyCalendar';
+import FamilyPanel from '../components/FamilyPanel';
+import MoneyFlow from './MoneyFlow';
+import Epfo from './Epfo';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import './Dashboard.css';
 
+import LogoLoader from '../components/LogoLoader';
 const SECTOR_COLORS = {
-  'IT': '#2d6b6b', 'Auto': '#a8741a', 'Bank': '#1f6b4a',
-  'Infra': '#6b8e23', 'Pharma': '#5d3b78', 'FMCG': '#a82c2c', 'Other': '#8a7d6a'
+  'IT': '#5A564F', 'Auto': '#A39B8B', 'Bank': '#2F6B45',
+  'Infra': '#2F6B45', 'Pharma': '#111111', 'FMCG': '#9E2B25', 'Other': '#85817A'
 };
 
 function fmt(n) { return '₹' + (Math.abs(n) >= 100000 ? (n/100000).toFixed(2)+'L' : Math.abs(n) >= 1000 ? (n/1000).toFixed(1)+'K' : n?.toFixed(0)); }
 function fmtFull(n) { return '₹' + Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 }); }
 function pct(n) { return (n >= 0 ? '+' : '') + Number(n).toFixed(2) + '%'; }
+
+// The side menu: what you own, what it adds up to, the things that repeat, reports, and help
+const NAV_SECTIONS = [
+  ['Assets', [
+    { id: 'mutualfunds', icon: '◎', label: 'Mutual funds' },
+    { id: 'holdings', icon: '◉', label: 'Stocks', hint: 'Holdings and dividends' },
+    { id: 'nps', icon: '⬡', label: 'NPS' },
+    { id: 'fd', icon: '▣', label: 'Fixed deposits' },
+    { id: 'rd', icon: '▤', label: 'Recurring deposits' },
+    { id: 'epfo', icon: '◍', label: 'EPFO', hint: 'Provident fund: passbook and SMS' },
+  ]],
+  ['Dashboards', [
+    { id: 'dashboard', icon: '◈', label: 'Overview' },
+    { id: 'calendar', icon: '▦', label: 'Family calendar', hint: 'Dues, income, dividends, birthdays and renewals' },
+    { id: 'cashflow', icon: '⇅', label: 'Income & expense', hint: 'Money in, money out and investments' },
+    { to: '/blueprint', icon: '◇', label: 'Blueprint', hint: 'Goals on a visual plan' },
+    { id: 'retirement', icon: '◐', label: 'Retirement' },
+  ]],
+  ['Masters', [
+    { id: 'm-bank_account', icon: '⌂', label: 'Bank accounts' },
+    { id: 'm-card', icon: '▭', label: 'Credit cards' },
+    { id: 'm-loan', icon: '⊟', label: 'Loans' },
+    { id: 'm-insurance', icon: '☂', label: 'Insurance' },
+    { id: 'm-subscription', icon: '↻', label: 'Subscriptions' },
+    { id: 'm-events', icon: '◷', label: 'Events' },
+    { id: 'm-people', icon: '☺', label: 'People' },
+    { id: 'm-documents', icon: '▤', label: 'Documents' },
+    { id: 'm-all', icon: '≡', label: 'All masters', hint: 'Salary, SIPs, rent and every other master' },
+  ]],
+  ['Reports', [
+    { id: 'tax', icon: '⊞', label: 'Tax summary' },
+    { id: 'reports', icon: '▥', label: 'More reports', soon: true },
+  ]],
+  ['Administration', [
+    { to: '/support', icon: '✉', label: 'Help & support' },
+    { to: '/admin', icon: '⚙', label: 'Administration', admin: true },
+    { id: 'admin', icon: '⟳', label: 'Sync logs' },
+  ]],
+];
+const MASTER_PANEL = { 'm-insurance': 'insurance', 'm-events': 'events', 'm-people': 'people', 'm-documents': 'documents' };
+const OLD_TAB = { dividends: 'holdings', transactions: 'holdings', goals: 'dashboard', income: 'cashflow', expenses: 'cashflow', bankdeposits: 'fd' };
 
 export default function Dashboard() {
   const { user, logout } = useAuth();
@@ -28,6 +73,10 @@ export default function Dashboard() {
   const [searchParams] = useSearchParams();
 
   const [tab, setTab] = useState('dashboard');
+  const [navTab, setNavTab] = useState('dashboard');      // the menu item that is open (FD and RD share one screen)
+  const [depView, setDepView] = useState('fd');
+  const [cfView, setCfView] = useState('flow');            // Income & expense: flow | income | expenses
+  const [stockView, setStockView] = useState('holdings');  // Stocks: holdings | dividends
   const [portfolio, setPortfolio] = useState(null);
   const [transactions, setTransactions] = useState([]);
   const [dividends, setDividends] = useState({ dividends: [], totalIncome: 0 });
@@ -766,8 +815,15 @@ export default function Dashboard() {
     finally { setNpsSaving(false); }
   };
 
-  const loadTab = async (t) => {
+  const loadTab = async (t0) => {
+    let t = OLD_TAB[t0] && !['income', 'expenses'].includes(t0) ? OLD_TAB[t0] : t0;
+    if (t0 === 'dividends') setStockView('dividends');
+    if (t0 === 'income' || t0 === 'expenses') { setCfView(t0); t = 'cashflow'; }
+    setNavTab(t === 'bankdeposits' ? 'fd' : t);
+    if (t === 'fd' || t === 'rd') { setDepView(t); t = 'bankdeposits'; }
+    if (t.startsWith('m-') && !MASTER_PANEL[t]) { setTab(t); return; }
     setTab(t);
+    if (t === 'cashflow') { const v = t0 === 'income' || t0 === 'expenses' ? t0 : cfView; if (v === 'income') await loadIncome(); if (v === 'expenses') await loadExpenses(); return; }
     if (t === 'transactions' && transactions.length === 0) {
       const r = await portfolioAPI.transactions().catch(() => ({ data: [] }));
       setTransactions(r.data);
@@ -1049,8 +1105,8 @@ export default function Dashboard() {
     return (
       <span style={{
         fontSize:9, padding:'1px 6px', borderRadius:10, fontWeight:700,
-        background: entry._isMe ? 'rgba(93,59,120,0.10)' : 'rgba(168,116,26,0.10)',
-        color:      entry._isMe ? '#5d3b78' : '#a8741a',
+        background: entry._isMe ? 'rgba(17,17,17,0.10)' : 'rgba(163,155,139,0.10)',
+        color:      entry._isMe ? '#111111' : '#A39B8B',
         marginLeft: 5, whiteSpace:'nowrap',
       }}>
         {entry._isMe ? 'You' : entry._member}
@@ -1083,7 +1139,7 @@ export default function Dashboard() {
 
   if (loading) return (
     <div className="db-loading">
-      <div className="db-spinner"></div>
+      <LogoLoader size={56} label="Opening your dashboard…" />
       <p>Loading your portfolio…</p>
     </div>
   );
@@ -1101,71 +1157,17 @@ export default function Dashboard() {
         </div>
 
         <nav className="db-nav">
-          <div className="db-nav-label">Overview</div>
-          {[
-            {id:'dashboard',   icon:'◈', label:'Dashboard'},
-            {id:'holdings',    icon:'◉', label:'Stock Holdings'},
-            {id:'mutualfunds', icon:'◎', label:'Mutual Funds'},
-            {id:'dividends',   icon:'◇', label:'Dividends'},
-            {id:'transactions',icon:'⇄', label:'Transactions'},
-            {id:'bankdeposits',icon:'⬜', label:'Bank Deposits'},
-            {id:'nps',         icon:'⬡', label:'NPS'},
-          ].map(item => (
-            <div key={item.id} className={`db-nav-item ${tab===item.id?'active':''}`} onClick={()=>loadTab(item.id)}>
-              <span className="nav-icon">{item.icon}</span>
-              <span className="nav-label">{item.label}</span>
-            </div>
-          ))}
-          <div className="db-nav-label" style={{marginTop:12}}>Family</div>
-          {[
-            {to:'/family',                 icon:'⌂', label:'Family home'},
-            {to:'/family?tab=insurance',   icon:'☂', label:'Insurance'},
-            {to:'/family?tab=documents',   icon:'▤', label:'Documents'},
-            {to:'/family?tab=calendar',    icon:'▦', label:'Calendar'},
-          ].map(item => (
-            <div key={item.to} className="db-nav-item" onClick={()=>nav(item.to)}>
-              <span className="nav-icon">{item.icon}</span>
-              <span className="nav-label">{item.label}</span>
-            </div>
-          ))}
-          <div className="db-nav-label" style={{marginTop:12}}>Finance</div>
-          {[
-            {id:'income',  icon:'₹', label:'Income'},
-            {id:'expenses',icon:'↕', label:'Expenses'},
-            {id:'goals',   icon:'◎', label:'Goals'},
-            {id:'retirement', icon:'◐', label:'Retirement'},
-          ].map(item => (
-            <div key={item.id} className={`db-nav-item ${tab===item.id?'active':''}`} onClick={()=>loadTab(item.id)}>
-              <span className="nav-icon">{item.icon}</span>
-              <span className="nav-label">{item.label}</span>
-            </div>
-          ))}
-          <div className="db-nav-item" onClick={()=>nav('/blueprint')} title="Open Blueprint — visual goal planner">
-            <span className="nav-icon">▦</span>
-            <span className="nav-label">Blueprint ↗</span>
-          </div>
-          <div className="db-nav-item" onClick={()=>nav('/money-flow')} title="Money flow: income, spending and investments vs your usual month">
-            <span className="nav-icon">⇅</span>
-            <span className="nav-label">Money flow ↗</span>
-          </div>
-          <div className="db-nav-item" onClick={()=>nav('/support')} title="Message us, with screenshots">
-            <span className="nav-icon">✉</span>
-            <span className="nav-label">Help & support ↗</span>
-          </div>
-          {user?.is_admin && (
-            <div className="db-nav-item" onClick={()=>nav('/admin')} title="Administration: support inbox and SMS reading issues">
-              <span className="nav-icon">⚙</span>
-              <span className="nav-label">Administration ↗</span>
-            </div>
-          )}
-          <div className="db-nav-label" style={{marginTop:12}}>Analytics</div>
-          {[
-            {id:'tax',   icon:'⊞', label:'Tax Summary'},
-            {id:'admin', icon:'⚙', label:'Sync Logs'},
-          ].map(item => (
-            <div key={item.id} className={`db-nav-item ${tab===item.id?'active':''}`} onClick={()=>loadTab(item.id)}>
-              <span className="nav-icon">{item.icon}</span>
-              <span className="nav-label">{item.label}</span>
+          {NAV_SECTIONS.map(([section, items], si) => (
+            <div key={section} className="db-nav-sec">
+              <div className="db-nav-label" style={si ? { marginTop: 14 } : undefined}>{section}</div>
+              {items.filter(it => !it.admin || user?.is_admin).map((it, ii) => (
+                <div key={it.id || it.to} className={`db-nav-item ${it.id && navTab === it.id ? 'active' : ''}`} style={{ animationDelay: `${(si * 4 + ii) * 22}ms` }}
+                  onClick={() => (it.to ? nav(it.to) : loadTab(it.id))} title={it.hint || it.label}>
+                  <span className="nav-icon">{it.icon}</span>
+                  <span className="nav-label">{it.label}{it.to && it.to !== '/support' ? ' ↗' : ''}</span>
+                  {it.soon && <span className="nav-soon">soon</span>}
+                </div>
+              ))}
             </div>
           ))}
         </nav>
@@ -1204,8 +1206,11 @@ export default function Dashboard() {
         <div className="db-topbar">
           <div>
             <h1 className="db-page-title">
-              {{ dashboard:'Dashboard', holdings:'Stock Holdings', dividends:'Dividend Tracker',
-                 transactions:'Transaction History', tax:'Tax Summary', mutualfunds:'Mutual Funds' }[tab]}
+              {{ dashboard:'Overview', holdings:'Stocks', dividends:'Stocks', tax:'Tax summary', mutualfunds:'Mutual funds',
+                 bankdeposits: depView === 'rd' ? 'Recurring deposits' : 'Fixed deposits', nps:'NPS', epfo:'EPFO', calendar:'Family calendar',
+                 cashflow:'Income & expense', retirement:'Retirement', admin:'Sync logs', reports:'Reports',
+                 'm-bank_account':'Bank accounts', 'm-card':'Credit cards', 'm-loan':'Loans', 'm-subscription':'Subscriptions', 'm-all':'All masters',
+                 'm-insurance':'Insurance', 'm-events':'Events', 'm-people':'People', 'm-documents':'Documents' }[tab]}
             </h1>
             <p className="db-page-sub">
               {emailStatus.length > 0
@@ -1218,7 +1223,7 @@ export default function Dashboard() {
             {/* Refresh indicator */}
             {refreshing && (
               <div style={{display:'flex',alignItems:'center',gap:5,fontSize:11,color:'var(--text-3)'}}>
-                <div style={{width:12,height:12,borderRadius:'50%',border:'2px solid var(--border-2)',borderTopColor:'#5d3b78',animation:'kanalyst-pulse 0.6s linear infinite'}}/>
+                <div style={{width:12,height:12,borderRadius:'50%',border:'2px solid var(--border-2)',borderTopColor:'#111111',animation:'kanalyst-pulse 0.6s linear infinite'}}/>
                 <span>Refreshing…</span>
               </div>
             )}
@@ -1229,10 +1234,10 @@ export default function Dashboard() {
                 title={familyMode ? 'Switch to personal view' : 'Switch to family view'}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 6,
-                  background: familyMode ? 'rgba(93,59,120,0.12)' : 'var(--surface)',
-                  border: `1px solid ${familyMode ? 'rgba(93,59,120,0.35)' : 'var(--border)'}`,
+                  background: familyMode ? 'rgba(17,17,17,0.12)' : 'var(--surface)',
+                  border: `1px solid ${familyMode ? 'rgba(17,17,17,0.35)' : 'var(--border)'}`,
                   borderRadius: 8, padding: '6px 12px', cursor: 'pointer',
-                  transition: 'all 0.2s', color: familyMode ? '#5d3b78' : 'var(--text-3)',
+                  transition: 'all 0.2s', color: familyMode ? '#111111' : 'var(--text-3)',
                   fontSize: 12, fontWeight: 600,
                 }}>
                 <span style={{ fontSize: 14 }}>👨‍👩‍👧‍👦</span>
@@ -1247,7 +1252,7 @@ export default function Dashboard() {
                 title={`${familyStatus.pendingInvites.length} pending family invite`}
                 style={{ position:'relative', background:'none', border:'none', cursor:'pointer', fontSize:20, padding:'4px 6px' }}>
                 🔔
-                <span style={{ position:'absolute', top:0, right:0, background:'#a82c2c', color:'#fff', borderRadius:'50%', fontSize:9, width:14, height:14, display:'flex', alignItems:'center', justifyContent:'center', fontWeight:700 }}>
+                <span style={{ position:'absolute', top:0, right:0, background:'#9E2B25', color:'#fff', borderRadius:'50%', fontSize:9, width:14, height:14, display:'flex', alignItems:'center', justifyContent:'center', fontWeight:700 }}>
                   {familyStatus.pendingInvites.length}
                 </span>
               </button>
@@ -1279,7 +1284,7 @@ export default function Dashboard() {
 
         {/* Family mode banner */}
         {familyMode && familyStatus.inFamily && (
-          <div style={{display:'flex',alignItems:'center',gap:12,padding:'8px 28px',background:'var(--indigo-soft)',borderBottom:'1px solid rgba(52,72,122,0.18)',fontSize:12,color:'var(--indigo)'}}>
+          <div style={{display:'flex',alignItems:'center',gap:12,padding:'8px 28px',background:'var(--indigo-soft)',borderBottom:'1px solid rgba(58,56,51,0.18)',fontSize:12,color:'var(--indigo)'}}>
             <span style={{fontSize:16}}>👨‍👩‍👧‍👦</span>
             <span style={{fontWeight:600}}>Family View</span>
             <span style={{color:'var(--text-3)'}}>•</span>
@@ -1287,7 +1292,7 @@ export default function Dashboard() {
               Combined data from {familyStatus.members.length} member{familyStatus.members.length!==1?'s':''}:{' '}
               {familyStatus.members.map(m=>m.isMe?'You':m.name).join(', ')}
             </span>
-            <button onClick={toggleFamilyMode} style={{marginLeft:'auto',background:'none',border:'1px solid rgba(52,72,122,0.25)',color:'var(--indigo)',borderRadius:6,padding:'3px 10px',cursor:'pointer',fontSize:11}}>
+            <button onClick={toggleFamilyMode} style={{marginLeft:'auto',background:'none',border:'1px solid rgba(58,56,51,0.25)',color:'var(--indigo)',borderRadius:6,padding:'3px 10px',cursor:'pointer',fontSize:11}}>
               Switch to personal
             </button>
           </div>
@@ -1319,7 +1324,7 @@ export default function Dashboard() {
                 const fdRdVal   = (fdSummary.totalCurrentValue || 0) + (rdSummary.totalCurrentValue || 0);
                 // Each asset class gets its own hue (MF and NPS used to share one)
                 const parts = [
-                  { name: 'Stocks',        value: stocksVal,              color: 'var(--lime)' },
+                  { name: 'Stocks',        value: stocksVal,              color: 'var(--sand)' },
                   { name: 'Mutual funds',  value: mfVal,                  color: 'var(--violet)' },
                   { name: 'NPS',           value: npsVal,                 color: 'var(--indigo)' },
                   { name: 'Bank deposits', value: fdRdVal,                color: 'var(--peach)' },
@@ -1337,16 +1342,16 @@ export default function Dashboard() {
                       const fInvested = holdings.reduce((s,h)=>s+((h.quantity||0)*(h.avg_cost||0)),0);
                       const fPnl      = fTotal - fInvested;
                       return (
-                        <div style={{background:'var(--indigo-soft)',border:'1px solid rgba(52,72,122,0.20)',borderRadius:12,padding:'14px 20px',marginBottom:16,display:'flex',gap:28,alignItems:'center',flexWrap:'wrap'}}>
+                        <div style={{background:'var(--indigo-soft)',border:'1px solid rgba(58,56,51,0.20)',borderRadius:12,padding:'14px 20px',marginBottom:16,display:'flex',gap:28,alignItems:'center',flexWrap:'wrap'}}>
                           <div style={{display:'flex',alignItems:'center',gap:8}}>
                             <span style={{fontSize:18}}>👨‍👩‍👧‍👦</span>
-                            <span style={{color:'#5d3b78',fontWeight:700,fontSize:13}}>Family Portfolio</span>
+                            <span style={{color:'#111111',fontWeight:700,fontSize:13}}>Family Portfolio</span>
                           </div>
                           {[
-                            {label:'Combined Value',  val:fmtFull(fTotal),    color:'#6b8e23', cls:'kv-refresh'},
+                            {label:'Combined Value',  val:fmtFull(fTotal),    color:'#2F6B45', cls:'kv-refresh'},
                             {label:'Total Invested',  val:fmtFull(fInvested), color:'var(--text-3)'},
-                            {label:'Total P&L',       val:fmtFull(fPnl),      color:fPnl>=0?'#6b8e23':'#a82c2c'},
-                            {label:'Holdings',        val:holdings.length+' stocks', color:'#5d3b78'},
+                            {label:'Total P&L',       val:fmtFull(fPnl),      color:fPnl>=0?'#2F6B45':'#9E2B25'},
+                            {label:'Holdings',        val:holdings.length+' stocks', color:'#111111'},
                           ].map(stat=>(
                             <div key={stat.label}>
                               <div style={{color:'var(--text-3)',fontSize:10,fontWeight:600,letterSpacing:0.5,marginBottom:2}}>{stat.label}</div>
@@ -1359,7 +1364,7 @@ export default function Dashboard() {
 
                     <NetWorthHero parts={parts} liabilities={owed} hideValues={hideValues} asOf={asOf}
                       onUpdateBalances={() => setShowAssetModal(true)} />
-                    <MoneyCalendar hideValues={hideValues} hideDividends onOpenMasters={() => nav('/family?tab=masters')} onOpenEvents={() => nav('/family?tab=events')} />
+                    <MoneyCalendar hideValues={hideValues} onOpenMasters={() => loadTab('m-all')} onOpenEvents={() => loadTab('m-events')} />
                     <FamilyStrip onOpen={(t) => nav(t === 'home' ? '/family' : `/family?tab=${t}`)} />
                     <MoneyTiles income={monthlyIncome} spent={monthlyExpenses} dividends={dividendTotal}
                       yieldPct={s.yieldOnMarket} hideValues={hideValues} />
@@ -1434,30 +1439,30 @@ export default function Dashboard() {
                         onClick={e=>{if(e?.activePayload?.[0]?.payload?.fullDate) loadHistoryDetail(e.activePayload[0].payload.fullDate);}}>
                         <defs>
                           <linearGradient id="mktGrad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#6b8e23" stopOpacity={0.25}/>
-                            <stop offset="95%" stopColor="#6b8e23" stopOpacity={0}/>
+                            <stop offset="5%" stopColor="#2F6B45" stopOpacity={0.25}/>
+                            <stop offset="95%" stopColor="#2F6B45" stopOpacity={0}/>
                           </linearGradient>
                           <linearGradient id="costGrad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#5d3b78" stopOpacity={0.25}/>
-                            <stop offset="95%" stopColor="#5d3b78" stopOpacity={0}/>
+                            <stop offset="5%" stopColor="#111111" stopOpacity={0.25}/>
+                            <stop offset="95%" stopColor="#111111" stopOpacity={0}/>
                           </linearGradient>
                         </defs>
                         <XAxis dataKey="month" stroke="var(--border-2)" tick={{ fontSize:10, fill:'var(--text-3)' }} interval="preserveStartEnd"/>
                         <YAxis stroke="var(--border-2)" tick={{ fontSize:10, fill:'var(--text-3)' }} tickFormatter={v=>v>=10000000?`₹${(v/10000000).toFixed(1)}Cr`:v>=100000?`₹${(v/100000).toFixed(1)}L`:`₹${(v/1000).toFixed(0)}K`} width={60}/>
-                        <Tooltip contentStyle={{ background:'var(--surface)', border:'1px solid var(--border-2)', borderRadius:8, fontSize:11 }} formatter={(v,name)=>[fmtFull(v),name==='market'?'Portfolio Value':name==='cost'?'Invested':name]} labelStyle={{color:'var(--text-3)',marginBottom:4}} cursor={{stroke:'#5d3b78',strokeWidth:1,strokeDasharray:'4 4'}}/>
-                        <Area type="monotone" dataKey="cost"   stroke="#5d3b78" strokeWidth={1.5} strokeDasharray="4 3" fill="url(#costGrad)" dot={false} name="Invested"/>
-                        <Area type="monotone" dataKey="market" stroke="#6b8e23" strokeWidth={2.5} fill="url(#mktGrad)" dot={{r:3,fill:'#6b8e23',strokeWidth:0}} activeDot={{r:5}} name="Portfolio Value"/>
+                        <Tooltip contentStyle={{ background:'var(--surface)', border:'1px solid var(--border-2)', borderRadius:8, fontSize:11 }} formatter={(v,name)=>[fmtFull(v),name==='market'?'Portfolio Value':name==='cost'?'Invested':name]} labelStyle={{color:'var(--text-3)',marginBottom:4}} cursor={{stroke:'#111111',strokeWidth:1,strokeDasharray:'4 4'}}/>
+                        <Area type="monotone" dataKey="cost"   stroke="#111111" strokeWidth={1.5} strokeDasharray="4 3" fill="url(#costGrad)" dot={false} name="Invested"/>
+                        <Area type="monotone" dataKey="market" stroke="#2F6B45" strokeWidth={2.5} fill="url(#mktGrad)" dot={{r:3,fill:'#2F6B45',strokeWidth:0}} activeDot={{r:5}} name="Portfolio Value"/>
                       </AreaChart>
                     </ResponsiveContainer>
                   )}
                   {historyDetail && historyDetailDate && (
                     <div style={{borderTop:'1px solid var(--border-2)',padding:'12px 0 4px',marginTop:8}}>
                       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-                        <div style={{fontSize:12,color:'#5d3b78',fontWeight:600}}>📅 Snapshot: {new Date(historyDetailDate+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})} <span style={{color:'var(--text-3)',fontWeight:400,marginLeft:8}}>{historyDetail.holding_count} stocks · {historyDetail.mf_count} funds</span></div>
+                        <div style={{fontSize:12,color:'#111111',fontWeight:600}}>📅 Snapshot: {new Date(historyDetailDate+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})} <span style={{color:'var(--text-3)',fontWeight:400,marginLeft:8}}>{historyDetail.holding_count} stocks · {historyDetail.mf_count} funds</span></div>
                         <button onClick={()=>{setHistoryDetail(null);setHistoryDetailDate(null);}} style={{background:'none',border:'none',color:'var(--text-3)',cursor:'pointer',fontSize:13}}>✕</button>
                       </div>
                       <div style={{display:'flex',gap:20,flexWrap:'wrap'}}>
-                        {[{label:'Total',val:fmtFull(historyDetail.total_value||0),color:'#6b8e23'},{label:'Equities',val:fmtFull(historyDetail.total_equity_value||0),color:'#6b8e23'},{label:'MF',val:fmtFull(historyDetail.total_mf_value||0),color:'#5d3b78'},{label:'Invested',val:fmtFull(historyDetail.total_invested||0),color:'var(--text-3)'},{label:'Gain/Loss',val:fmtFull(historyDetail.total_gain_loss||0),color:parseFloat(historyDetail.total_gain_loss||0)>=0?'#6b8e23':'#a82c2c'}].map(s=>(
+                        {[{label:'Total',val:fmtFull(historyDetail.total_value||0),color:'#2F6B45'},{label:'Equities',val:fmtFull(historyDetail.total_equity_value||0),color:'#2F6B45'},{label:'MF',val:fmtFull(historyDetail.total_mf_value||0),color:'#111111'},{label:'Invested',val:fmtFull(historyDetail.total_invested||0),color:'var(--text-3)'},{label:'Gain/Loss',val:fmtFull(historyDetail.total_gain_loss||0),color:parseFloat(historyDetail.total_gain_loss||0)>=0?'#2F6B45':'#9E2B25'}].map(s=>(
                           <div key={s.label}><div style={{fontSize:10,color:'var(--text-3)'}}>{s.label}</div><div style={{fontSize:14,fontWeight:700,color:s.color}}>{s.val}</div></div>
                         ))}
                       </div>
@@ -1517,14 +1522,14 @@ export default function Dashboard() {
                           {(() => {
                             const linkedGoal = goals.find(g => g.assets?.some(a => a.asset_ref === (h.isin||h.symbol)));
                             return linkedGoal ? (
-                              <span title={linkedGoal.name} style={{fontSize:11,padding:'2px 7px',borderRadius:10,background:'rgba(93,59,120,0.12)',color:'#5d3b78',cursor:'pointer',whiteSpace:'nowrap'}}
+                              <span title={linkedGoal.name} style={{fontSize:11,padding:'2px 7px',borderRadius:10,background:'rgba(17,17,17,0.12)',color:'#111111',cursor:'pointer',whiteSpace:'nowrap'}}
                                 onClick={()=>setLinkingAsset({type:'stock',ref:h.isin||h.symbol,name:h.company||h.symbol,value:(h.quantity||0)*(h.last_price||0)})}>
                                 🎯 {linkedGoal.name.slice(0,12)}{linkedGoal.name.length>12?'…':''}
                               </span>
                             ) : (
                               <button title="Link to Goal" onClick={()=>setLinkingAsset({type:'stock',ref:h.isin||h.symbol,name:h.company||h.symbol,value:(h.quantity||0)*(h.last_price||0)})}
                                 style={{background:'none',border:'1px dashed var(--text-4)',borderRadius:6,fontSize:11,cursor:'pointer',color:'var(--text-3)',padding:'2px 8px',transition:'all 0.15s'}}
-                                onMouseOver={e=>{e.target.style.borderColor='#5d3b78';e.target.style.color='#5d3b78';}}
+                                onMouseOver={e=>{e.target.style.borderColor='#111111';e.target.style.color='#111111';}}
                                 onMouseOut={e=>{e.target.style.borderColor='var(--text-4)';e.target.style.color='var(--text-3)';}}>
                                 🎯 Link
                               </button>
@@ -1541,7 +1546,14 @@ export default function Dashboard() {
           )}
 
           {/* STOCK HOLDINGS */}
-          {tab === 'holdings' && (() => {
+          {tab === 'holdings' && (
+            <div className="k-seg" role="tablist" aria-label="Stocks">
+              {[['holdings', 'Holdings'], ['dividends', 'Dividends']].map(([v, l]) => (
+                <button key={v} type="button" role="tab" aria-selected={stockView === v} className={stockView === v ? 'on' : ''} onClick={() => setStockView(v)}>{l}</button>
+              ))}
+            </div>
+          )}
+          {tab === 'holdings' && stockView === 'holdings' && (() => {
             const totalValue = holdings.reduce((s, h) => s + h.marketValue, 0);
 
             // Sector allocation pie data
@@ -1560,7 +1572,7 @@ export default function Dashboard() {
               .slice(0, 10)
               .map(h => ({ name: h.symbol, value: Math.round(h.marketValue) }));
 
-            const COLORS = ['#6b8e23','#1f6b4a','#2d6b6b','#34487a','#5d3b78','#964062','#a82c2c','#a8741a','#b8551f','#8a7d6a'];
+            const COLORS = ['#2F6B45','#2F6B45','#5A564F','#3A3833','#111111','#6F6A61','#9E2B25','#A39B8B','#8C8270','#85817A'];
 
             return (
               <div className="fade-in">
@@ -1568,7 +1580,7 @@ export default function Dashboard() {
                 <div style={{display:'flex',alignItems:'center',gap:24,padding:'12px 18px',background:'var(--surface)',borderRadius:10,border:'1px solid var(--border)',marginBottom:16,flexWrap:'wrap'}}>
                   <div>
                     <div style={{color:'var(--text-3)',fontSize:10,fontWeight:700,letterSpacing:1,marginBottom:2}}>TOTAL VALUE</div>
-                    <div className="kv-refresh" style={{color:'#6b8e23',fontWeight:700,fontSize:22}}>{fmtFull(totalValue)}</div>
+                    <div className="kv-refresh" style={{color:'#2F6B45',fontWeight:700,fontSize:22}}>{fmtFull(totalValue)}</div>
                   </div>
                   {(() => {
                     const invested = holdings.reduce((s,h)=>s+((h.quantity||0)*(h.avg_cost||0)),0);
@@ -1581,13 +1593,13 @@ export default function Dashboard() {
                       </div>
                       <div>
                         <div style={{color:'var(--text-3)',fontSize:10,fontWeight:700,letterSpacing:1,marginBottom:2}}>OVERALL P&L</div>
-                        <div style={{color:pnl>=0?'#6b8e23':'#a82c2c',fontWeight:700,fontSize:22}}>{fmtFull(pnl)} <span style={{fontSize:13}}>({pnlPct}%)</span></div>
+                        <div style={{color:pnl>=0?'#2F6B45':'#9E2B25',fontWeight:700,fontSize:22}}>{fmtFull(pnl)} <span style={{fontSize:13}}>({pnlPct}%)</span></div>
                       </div>
                     </>);
                   })()}
                   <div>
                     <div style={{color:'var(--text-3)',fontSize:10,fontWeight:700,letterSpacing:1,marginBottom:2}}>HOLDINGS</div>
-                    <div style={{color:'#5d3b78',fontWeight:700,fontSize:22}}>{holdings.length} stocks</div>
+                    <div style={{color:'#111111',fontWeight:700,fontSize:22}}>{holdings.length} stocks</div>
                   </div>
                   {familyMode && holdings.some(h=>h._member) && (
                     <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:6,fontSize:11,color:'var(--text-3)'}}>
@@ -1611,7 +1623,7 @@ export default function Dashboard() {
                               {sectorAlloc.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                             </Pie>
                             <Tooltip formatter={v => fmt(v)}
-                              contentStyle={{ background:'var(--surface)', border:'1px solid rgba(26,22,18,0.12)', borderRadius:8, fontSize:12 }} />
+                              contentStyle={{ background:'var(--surface)', border:'1px solid rgba(17,17,17,0.12)', borderRadius:8, fontSize:12 }} />
                           </PieChart>
                         </div>
                         <div style={{ marginTop:8, display:'flex', flexDirection:'column', gap:6 }}>
@@ -1654,7 +1666,7 @@ export default function Dashboard() {
                                 <span style={{ color:'var(--text-2)', fontWeight:600 }}>{h.name}</span>
                                 <div style={{ display:'flex', gap:12 }}>
                                   <span style={{ color:'var(--text-3)' }}>{pct.toFixed(1)}%</span>
-                                  <span style={{ color:'#6b8e23', fontWeight:700 }}>{fmt(h.value)}</span>
+                                  <span style={{ color:'#2F6B45', fontWeight:700 }}>{fmt(h.value)}</span>
                                 </div>
                               </div>
                               <div style={{ height:6, background:'var(--border)', borderRadius:3, overflow:'hidden' }}>
@@ -1679,7 +1691,7 @@ export default function Dashboard() {
                       <div style={{ marginTop:16, paddingTop:12, borderTop:'1px solid var(--border)',
                         display:'flex', justifyContent:'space-between', fontSize:12 }}>
                         <span style={{ color:'var(--text-3)' }}>{holdings.length} stocks · Portfolio value</span>
-                        <span style={{ color:'#6b8e23', fontWeight:700, fontSize:14 }}>{fmt(totalValue)}</span>
+                        <span style={{ color:'#2F6B45', fontWeight:700, fontSize:14 }}>{fmt(totalValue)}</span>
                       </div>
                     )}
                   </div>
@@ -1707,7 +1719,7 @@ export default function Dashboard() {
                     <table className="db-table">
                       <thead>
                         <tr>
-                          {familyMode && <th style={{fontSize:10,color:'#5d3b78'}}>Member</th>}
+                          {familyMode && <th style={{fontSize:10,color:'#111111'}}>Member</th>}
                           <th>Company</th>
                           <th>Sector</th>
                           <th className="right">Qty</th>
@@ -1739,21 +1751,21 @@ export default function Dashboard() {
                                     const _r=h.isin||h.symbol;
                                     const _g=goals.find(g=>g.assets&&g.assets.some(a=>a.asset_ref===_r));
                                     return _g?(
-                                      <span style={{display:'flex',alignItems:'center',gap:2,flexShrink:0,borderRadius:8,background:'rgba(93,59,120,0.10)',border:'1px solid rgba(93,59,120,0.20)',overflow:'hidden'}}>
+                                      <span style={{display:'flex',alignItems:'center',gap:2,flexShrink:0,borderRadius:8,background:'rgba(17,17,17,0.10)',border:'1px solid rgba(17,17,17,0.20)',overflow:'hidden'}}>
                                         <span onClick={()=>setLinkingAsset({type:'stock',ref:_r,name:h.company||h.symbol,value:(h.quantity||0)*(h.last_price||0)})}
                                           title={'Linked to: '+_g.name+' — click to change'}
-                                          style={{fontSize:10,padding:'3px 6px',color:'#5d3b78',cursor:'pointer',fontWeight:600,whiteSpace:'nowrap'}}>
+                                          style={{fontSize:10,padding:'3px 6px',color:'#111111',cursor:'pointer',fontWeight:600,whiteSpace:'nowrap'}}>
                                           🎯 {_g.name.slice(0,10)}{_g.name.length>10?'…':''}
                                         </span>
                                         <span onClick={e=>{e.stopPropagation();unlinkFromRow(_g,_r);}}
                                           title='Remove goal link'
-                                          style={{fontSize:10,padding:'3px 5px',color:'#5d3b78',cursor:'pointer',borderLeft:'1px solid rgba(93,59,120,0.20)',lineHeight:1}}>
+                                          style={{fontSize:10,padding:'3px 5px',color:'#111111',cursor:'pointer',borderLeft:'1px solid rgba(17,17,17,0.20)',lineHeight:1}}>
                                           ✕
                                         </span>
                                       </span>
                                     ):(
                                       <button onClick={()=>setLinkingAsset({type:'stock',ref:_r,name:h.company||h.symbol,value:(h.quantity||0)*(h.last_price||0)})}
-                                        style={{flexShrink:0,background:'#5d3b78',border:'none',borderRadius:7,fontSize:10,color:'#fff',padding:'3px 9px',cursor:'pointer',whiteSpace:'nowrap',fontWeight:700}}>
+                                        style={{flexShrink:0,background:'#111111',border:'none',borderRadius:7,fontSize:10,color:'#fff',padding:'3px 9px',cursor:'pointer',whiteSpace:'nowrap',fontWeight:700}}>
                                         🎯 Goal
                                       </button>
                                     );
@@ -1763,8 +1775,8 @@ export default function Dashboard() {
                                   <span className="db-stock-sym">{h.symbol}</span>
                                   {h.demat_account && (
                                     <span style={{fontSize:9,padding:'1px 5px',borderRadius:3,fontWeight:600,
-                                      background: h.demat_account==='CDSL_GROWW' ? 'rgba(168,116,26,0.12)' : 'rgba(52,72,122,0.12)',
-                                      color:      h.demat_account==='CDSL_GROWW' ? '#a8741a' : '#34487a',
+                                      background: h.demat_account==='CDSL_GROWW' ? 'rgba(163,155,139,0.12)' : 'rgba(58,56,51,0.12)',
+                                      color:      h.demat_account==='CDSL_GROWW' ? '#A39B8B' : '#3A3833',
                                     }}>{h.demat_account==='CDSL_GROWW'?'Groww':h.demat_account==='NSDL_ICICI'?'ICICI':h.demat_account}</span>
                                   )}
                                 </div>
@@ -1780,13 +1792,13 @@ export default function Dashboard() {
                                 {h.priceSource === 'Yahoo' && <span style={{ fontSize:9, color:'var(--text-4)', marginLeft:4 }}>Y</span>}
                                 {h.priceSource === 'NSE'   && <span style={{ fontSize:9, color:'var(--text-4)', marginLeft:4 }}>N</span>}
                               </td>
-                              <td className="right mono" style={{ color:'#6b8e23', fontWeight:600 }}>
+                              <td className="right mono" style={{ color:'#2F6B45', fontWeight:600 }}>
                                 {h.marketValue > 0 ? fmt(h.marketValue) : '—'}
                               </td>
                               <td className="right">
                                 <div style={{ display:'flex', alignItems:'center', gap:6, justifyContent:'flex-end' }}>
                                   <div style={{ width:40, height:4, background:'var(--border)', borderRadius:2, overflow:'hidden' }}>
-                                    <div style={{ height:'100%', width:`${alloc}%`, background:'#34487a', borderRadius:2 }} />
+                                    <div style={{ height:'100%', width:`${alloc}%`, background:'#3A3833', borderRadius:2 }} />
                                   </div>
                                   <span style={{ fontSize:11, color:'var(--text-3)' }}>{alloc}%</span>
                                 </div>
@@ -1798,8 +1810,8 @@ export default function Dashboard() {
                               </td>
                               <td style={{ fontSize:10, color:'var(--border-2)' }}>
                                 {h.source === 'manual'
-                                  ? <span style={{ background:'rgba(184,85,31,0.12)', color:'#b8551f', borderRadius:4, padding:'2px 6px', fontSize:10, fontWeight:600 }}>Manual</span>
-                                  : <span style={{ background:'rgba(107,142,35,0.08)', color:'var(--text-4)', borderRadius:4, padding:'2px 6px', fontSize:10 }}>CAS</span>
+                                  ? <span style={{ background:'rgba(140,130,112,0.12)', color:'#8C8270', borderRadius:4, padding:'2px 6px', fontSize:10, fontWeight:600 }}>Manual</span>
+                                  : <span style={{ background:'rgba(47,107,69,0.08)', color:'var(--text-4)', borderRadius:4, padding:'2px 6px', fontSize:10 }}>CAS</span>
                                 }
                               </td>
                             </tr>
@@ -1826,7 +1838,7 @@ export default function Dashboard() {
             const summary  = mf?.summary  || {};
             const debug    = mf?.syncDebug || {};
             const fmt      = (v) => v >= 10000000 ? `₹${(v/10000000).toFixed(2)}Cr` : v >= 100000 ? `₹${(v/100000).toFixed(2)}L` : `₹${Number(v||0).toLocaleString('en-IN',{maximumFractionDigits:0})}`;
-            const COLORS   = ['#6b8e23','#1f6b4a','#2d6b6b','#34487a','#5d3b78','#964062','#a82c2c','#a8741a','#b8551f','#8a7d6a'];
+            const COLORS   = ['#2F6B45','#2F6B45','#5A564F','#3A3833','#111111','#6F6A61','#9E2B25','#A39B8B','#8C8270','#85817A'];
             const pieData  = summary.byFundHouse || [];
             const gainPct  = summary.gainLossPct || 0;
 
@@ -1836,7 +1848,7 @@ export default function Dashboard() {
 
                 {/* ── Statement date info bar ── */}
                 {holdings.length > 0 && holdings[0]?.statement_date && (
-                  <div style={{ background:'rgba(52,72,122,0.08)', border:'1px solid rgba(52,72,122,0.12)',
+                  <div style={{ background:'rgba(58,56,51,0.08)', border:'1px solid rgba(58,56,51,0.12)',
                     borderRadius:8, padding:'8px 14px', marginBottom:12, fontSize:12, color:'var(--text-3)', display:'flex', gap:16 }}>
                     <span>📅 Statement: <b style={{color:'var(--text)'}}>{new Date(holdings[0].statement_date+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}</b></span>
                     <span style={{color:'var(--text-4)'}}>|</span>
@@ -1844,9 +1856,9 @@ export default function Dashboard() {
                   </div>
                 )}
                 {debug.lastStatus && debug.lastStatus !== 'MF_BULK_OK' && debug.lastStatus !== 'NO_SYNC_YET' && (
-                  <div style={{ background:'rgba(168,44,44,0.06)', border:'1px solid rgba(168,44,44,0.20)',
+                  <div style={{ background:'rgba(158,43,37,0.06)', border:'1px solid rgba(158,43,37,0.20)',
                     borderRadius:8, padding:'8px 14px', marginBottom:12, fontSize:12 }}>
-                    <span style={{ color:'#a82c2c', fontWeight:700 }}>❌ {debug.lastStatus}</span>
+                    <span style={{ color:'#9E2B25', fontWeight:700 }}>❌ {debug.lastStatus}</span>
                     <span style={{ color:'var(--text-3)', marginLeft:8 }}>{debug.lastMessage?.slice(0,120)}</span>
                   </div>
                 )}
@@ -1878,9 +1890,9 @@ export default function Dashboard() {
                 {navSyncResult && (
                   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',
                     padding:'8px 14px',borderRadius:8,marginBottom:10,fontSize:12,
-                    background:navSyncResult.success?'rgba(168,116,26,0.06)':'rgba(168,44,44,0.06)',
-                    border:`1px solid ${navSyncResult.success?'rgba(168,116,26,0.20)':'rgba(168,44,44,0.20)'}`}}>
-                    <span style={{color:navSyncResult.success?'#a8741a':'#a82c2c'}}>
+                    background:navSyncResult.success?'rgba(163,155,139,0.06)':'rgba(158,43,37,0.06)',
+                    border:`1px solid ${navSyncResult.success?'rgba(163,155,139,0.20)':'rgba(158,43,37,0.20)'}`}}>
+                    <span style={{color:navSyncResult.success?'#A39B8B':'#9E2B25'}}>
                       {navSyncResult.success ? '✅' : '⚠'} {navSyncResult.message}
                     </span>
                     <button onClick={()=>setNavSyncResult(null)} style={{background:'none',border:'none',color:'var(--text-3)',cursor:'pointer',fontSize:14}}>✕</button>
@@ -1892,7 +1904,7 @@ export default function Dashboard() {
                   <div style={{display:'flex',alignItems:'center',gap:24,padding:'12px 18px',background:'var(--surface)',borderRadius:10,border:'1px solid var(--border)',marginBottom:16,flexWrap:'wrap'}}>
                     <div>
                       <div style={{color:'var(--text-3)',fontSize:10,fontWeight:700,letterSpacing:1,marginBottom:2}}>TOTAL MF VALUE</div>
-                      <div className="kv-refresh" style={{color:'#34487a',fontWeight:700,fontSize:22}}>{fmt(summary.totalValue||0)}</div>
+                      <div className="kv-refresh" style={{color:'#3A3833',fontWeight:700,fontSize:22}}>{fmt(summary.totalValue||0)}</div>
                     </div>
                     {(() => {
                       const totalCost = holdings.reduce((s,h)=>s+parseFloat(h.total_cost||0),0);
@@ -1906,13 +1918,13 @@ export default function Dashboard() {
                         </div>
                         <div>
                           <div style={{color:'var(--text-3)',fontSize:10,fontWeight:700,letterSpacing:1,marginBottom:2}}>OVERALL GAIN</div>
-                          <div style={{color:gain>=0?'#6b8e23':'#a82c2c',fontWeight:700,fontSize:22}}>{fmt(gain)} <span style={{fontSize:13}}>({gainPct}%)</span></div>
+                          <div style={{color:gain>=0?'#2F6B45':'#9E2B25',fontWeight:700,fontSize:22}}>{fmt(gain)} <span style={{fontSize:13}}>({gainPct}%)</span></div>
                         </div>
                       </>) : null;
                     })()}
                     <div>
                       <div style={{color:'var(--text-3)',fontSize:10,fontWeight:700,letterSpacing:1,marginBottom:2}}>FUNDS</div>
-                      <div style={{color:'#5d3b78',fontWeight:700,fontSize:22}}>{holdings.length}</div>
+                      <div style={{color:'#111111',fontWeight:700,fontSize:22}}>{holdings.length}</div>
                     </div>
                     {familyMode && holdings.some(h=>h._member) && (
                       <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:6,fontSize:11,color:'var(--text-3)'}}>
@@ -1930,7 +1942,7 @@ export default function Dashboard() {
                     <div style={{ fontSize:40, marginBottom:12 }}>📊</div>
                     <div style={{ color:'var(--text-3)', fontSize:14, fontWeight:600, marginBottom:8 }}>No mutual fund holdings yet</div>
                     <div style={{ color:'var(--text-4)', fontSize:12, maxWidth:420, margin:'0 auto' }}>
-                      Mutual funds sync automatically from your CDSL and NSDL CAS emails. Click <b style={{color:'#6b8e23'}}>Sync Gmail (CDSL/NSDL)</b> above.
+                      Mutual funds sync automatically from your CDSL and NSDL CAS emails. Click <b style={{color:'#2F6B45'}}>Sync Gmail (CDSL/NSDL)</b> above.
                     </div>
                   </div>
                 ) : (
@@ -1938,14 +1950,14 @@ export default function Dashboard() {
                     {/* ── Summary tiles ── */}
                     <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12, marginBottom:20 }}>
                       {[
-                        { label:'Current Value',   val: fmt(summary.totalValue),    color:'#6b8e23' },
-                        { label:'Amount Invested',  val: fmt(summary.totalInvested || 0), color:'#34487a' },
+                        { label:'Current Value',   val: fmt(summary.totalValue),    color:'#2F6B45' },
+                        { label:'Amount Invested',  val: fmt(summary.totalInvested || 0), color:'#3A3833' },
                         { label:'Gain / Loss',
                           val: `${(summary.totalGainLoss||0) >= 0 ? '+' : '-'}${fmt(Math.abs(summary.totalGainLoss||0))}`,
-                          color: (summary.totalGainLoss||0) >= 0 ? '#6b8e23' : '#a82c2c' },
+                          color: (summary.totalGainLoss||0) >= 0 ? '#2F6B45' : '#9E2B25' },
                         { label:'Overall Returns',
                           val: `${gainPct >= 0 ? '+' : ''}${gainPct.toFixed(2)}%`,
-                          color: gainPct >= 0 ? '#6b8e23' : '#a82c2c' },
+                          color: gainPct >= 0 ? '#2F6B45' : '#9E2B25' },
                       ].map(t => (
                         <div key={t.label} style={{ background:'var(--surface)', borderRadius:10,
                           padding:'14px 16px', border:'1px solid var(--border)' }}>
@@ -1968,7 +1980,7 @@ export default function Dashboard() {
                               {pieData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                             </Pie>
                             <Tooltip formatter={v => fmt(v)}
-                              contentStyle={{ background:'var(--surface)', border:'1px solid rgba(26,22,18,0.12)', borderRadius:8, fontSize:11 }} />
+                              contentStyle={{ background:'var(--surface)', border:'1px solid rgba(17,17,17,0.12)', borderRadius:8, fontSize:11 }} />
                           </PieChart>
                         </div>
                         <div style={{ display:'flex', flexDirection:'column', gap:5, marginTop:6 }}>
@@ -2000,7 +2012,7 @@ export default function Dashboard() {
                                   </span>
                                   <div style={{ display:'flex', gap:8, flexShrink:0 }}>
                                     <span style={{ color:'var(--text-3)' }}>{pct.toFixed(1)}%</span>
-                                    <span style={{ color:'#6b8e23', fontWeight:700 }}>{fmt(h.current_value||0)}</span>
+                                    <span style={{ color:'#2F6B45', fontWeight:700 }}>{fmt(h.current_value||0)}</span>
                                   </div>
                                 </div>
                                 <div style={{ height:5, background:'var(--border)', borderRadius:3, overflow:'hidden' }}>
@@ -2023,7 +2035,7 @@ export default function Dashboard() {
                           All Mutual Fund Holdings ({holdings.length} folios)
                         </div>
                         <div style={{ color:'var(--text-3)', fontSize:12 }}>
-                          Total: <span style={{ color:'#6b8e23', fontWeight:700 }}>{fmt(summary.totalValue)}</span>
+                          Total: <span style={{ color:'#2F6B45', fontWeight:700 }}>{fmt(summary.totalValue)}</span>
                         </div>
                       </div>
                       <div style={{ overflowX:'auto' }}>
@@ -2038,7 +2050,7 @@ export default function Dashboard() {
                             <table className="db-table" style={{ width:'100%' }}>
                               <thead>
                                 <tr>
-                                  {familyMode && <th style={{fontSize:10,color:'#5d3b78'}}>Member</th>}
+                                  {familyMode && <th style={{fontSize:10,color:'#111111'}}>Member</th>}
                                   <th>Fund</th><th>Category</th>
                                   <th className="right">Units</th><th className="right">NAV (₹)</th>
                                   <th className="right">Current Value</th><th className="right">Invested</th>
@@ -2072,24 +2084,24 @@ export default function Dashboard() {
                                                 {fi===0 && <div style={{color:'var(--text-3)',fontSize:10,marginTop:1}}>{h.fund_house}</div>}
                                               </div>
                                               {fi===0 && (_g
-                                                ? <span style={{display:'flex',alignItems:'center',gap:2,flexShrink:0,borderRadius:8,background:'rgba(93,59,120,0.10)',border:'1px solid rgba(93,59,120,0.20)',overflow:'hidden',marginTop:2}}>
-                                                    <span onClick={()=>setLinkingAsset({type:'mf',ref:_r,name:h.fund_name,value:h.current_value||0})} style={{fontSize:10,padding:'3px 6px',color:'#5d3b78',cursor:'pointer',fontWeight:600,whiteSpace:'nowrap'}}>🎯 {_g.name.slice(0,10)}{_g.name.length>10?'…':''}</span>
-                                                    <span onClick={e=>{e.stopPropagation();unlinkFromRow(_g,_r);}} style={{fontSize:10,padding:'3px 5px',color:'#5d3b78',cursor:'pointer',borderLeft:'1px solid rgba(93,59,120,0.20)',lineHeight:1}}>✕</span>
+                                                ? <span style={{display:'flex',alignItems:'center',gap:2,flexShrink:0,borderRadius:8,background:'rgba(17,17,17,0.10)',border:'1px solid rgba(17,17,17,0.20)',overflow:'hidden',marginTop:2}}>
+                                                    <span onClick={()=>setLinkingAsset({type:'mf',ref:_r,name:h.fund_name,value:h.current_value||0})} style={{fontSize:10,padding:'3px 6px',color:'#111111',cursor:'pointer',fontWeight:600,whiteSpace:'nowrap'}}>🎯 {_g.name.slice(0,10)}{_g.name.length>10?'…':''}</span>
+                                                    <span onClick={e=>{e.stopPropagation();unlinkFromRow(_g,_r);}} style={{fontSize:10,padding:'3px 5px',color:'#111111',cursor:'pointer',borderLeft:'1px solid rgba(17,17,17,0.20)',lineHeight:1}}>✕</span>
                                                   </span>
-                                                : <button onClick={()=>setLinkingAsset({type:'mf',ref:_r,name:h.fund_name,value:h.current_value||0})} style={{flexShrink:0,background:'#5d3b78',border:'none',borderRadius:7,fontSize:10,color:'#fff',padding:'3px 9px',cursor:'pointer',whiteSpace:'nowrap',fontWeight:700,marginTop:2}}>🎯 Goal</button>
+                                                : <button onClick={()=>setLinkingAsset({type:'mf',ref:_r,name:h.fund_name,value:h.current_value||0})} style={{flexShrink:0,background:'#111111',border:'none',borderRadius:7,fontSize:10,color:'#fff',padding:'3px 9px',cursor:'pointer',whiteSpace:'nowrap',fontWeight:700,marginTop:2}}>🎯 Goal</button>
                                               )}
                                             </div>
                                           </td>
-                                          <td><span style={{fontSize:10,background:'rgba(52,72,122,0.10)',color:'#34487a',borderRadius:4,padding:'2px 7px',fontWeight:600,whiteSpace:'nowrap'}}>{h.fund_category||'Equity'}</span></td>
+                                          <td><span style={{fontSize:10,background:'rgba(58,56,51,0.10)',color:'#3A3833',borderRadius:4,padding:'2px 7px',fontWeight:600,whiteSpace:'nowrap'}}>{h.fund_category||'Equity'}</span></td>
                                           <td className="right mono" style={{color:'var(--text)'}}>{Number(h.units||0).toLocaleString('en-IN',{maximumFractionDigits:3,minimumFractionDigits:3})}</td>
                                           <td className="right mono" style={{color:'var(--text-3)'}}>{h.nav ? Number(h.nav).toFixed(3) : '—'}</td>
-                                          <td className="right mono" style={{color:'#6b8e23',fontWeight:700}}>{h.current_value ? fmt(h.current_value) : '—'}</td>
+                                          <td className="right mono" style={{color:'#2F6B45',fontWeight:700}}>{h.current_value ? fmt(h.current_value) : '—'}</td>
                                           <td className="right mono" style={{color:'var(--text-3)'}}>{h.invested_value ? fmt(h.invested_value) : '—'}</td>
                                           <td className="right mono">
                                             {h.invested_value ? (
                                               <>
-                                                <span style={{color:gl>=0?'#6b8e23':'#a82c2c',fontWeight:600,display:'block'}}>{gl>=0?'+':''}{fmt(Math.abs(gl))}</span>
-                                                {glPct!==null && <span style={{color:glPct>=0?'#6b8e23':'#a82c2c',fontSize:10}}>{glPct>=0?'+':''}{glPct.toFixed(2)}%</span>}
+                                                <span style={{color:gl>=0?'#2F6B45':'#9E2B25',fontWeight:600,display:'block'}}>{gl>=0?'+':''}{fmt(Math.abs(gl))}</span>
+                                                {glPct!==null && <span style={{color:glPct>=0?'#2F6B45':'#9E2B25',fontSize:10}}>{glPct>=0?'+':''}{glPct.toFixed(2)}%</span>}
                                               </>
                                             ) : '—'}
                                           </td>
@@ -2097,23 +2109,23 @@ export default function Dashboard() {
                                           <td style={{fontSize:11,color:'var(--text-3)',whiteSpace:'nowrap'}}>
                                             {(h.cas_mail_date||h.statement_date) ? new Date((h.cas_mail_date||h.statement_date)+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) : '—'}
                                           </td>
-                                          <td><span style={{fontSize:10,borderRadius:4,padding:'2px 6px',fontWeight:600,background:h.source==='CDSL'?'rgba(107,142,35,0.08)':h.source==='MFCENTRAL'?'rgba(52,72,122,0.10)':h.source==='CAMS'?'rgba(184,85,31,0.10)':'rgba(93,59,120,0.10)',color:h.source==='CDSL'?'var(--text-4)':h.source==='MFCENTRAL'?'#34487a':h.source==='CAMS'?'#b8551f':'#5d3b78'}}>{h.source||'NSDL'}</span></td>
+                                          <td><span style={{fontSize:10,borderRadius:4,padding:'2px 6px',fontWeight:600,background:h.source==='CDSL'?'rgba(47,107,69,0.08)':h.source==='MFCENTRAL'?'rgba(58,56,51,0.10)':h.source==='CAMS'?'rgba(140,130,112,0.10)':'rgba(17,17,17,0.10)',color:h.source==='CDSL'?'var(--text-4)':h.source==='MFCENTRAL'?'#3A3833':h.source==='CAMS'?'#8C8270':'#111111'}}>{h.source||'NSDL'}</span></td>
                                         </tr>
                                         {isMulti && isLast && (
-                                          <tr style={{background:'rgba(14,165,233,0.04)',borderLeft:'3px solid rgba(14,165,233,0.5)',borderTop:'1px solid rgba(52,72,122,0.12)'}}>
+                                          <tr style={{background:'rgba(14,165,233,0.04)',borderLeft:'3px solid rgba(14,165,233,0.5)',borderTop:'1px solid rgba(58,56,51,0.12)'}}>
                                             {familyMode && <td/>}
-                                            <td colSpan={2} style={{padding:'6px 14px',fontSize:11,color:'#34487a',fontWeight:700}}>
+                                            <td colSpan={2} style={{padding:'6px 14px',fontSize:11,color:'#3A3833',fontWeight:700}}>
                                               Σ {fundName.length>35?fundName.slice(0,35)+'…':fundName}
                                               <span style={{color:'var(--text-3)',fontWeight:400,marginLeft:6}}>({folios.length} folios)</span>
                                             </td>
                                             <td colSpan={2}/>
-                                            <td className="right mono" style={{fontSize:12,color:'#6b8e23',fontWeight:700,padding:'6px 14px'}}>{fmt(groupVal)}</td>
+                                            <td className="right mono" style={{fontSize:12,color:'#2F6B45',fontWeight:700,padding:'6px 14px'}}>{fmt(groupVal)}</td>
                                             <td className="right mono" style={{fontSize:12,color:'var(--text-3)',padding:'6px 14px'}}>{groupCost>0?fmt(groupCost):'—'}</td>
                                             <td className="right mono" style={{padding:'6px 14px'}}>
                                               {groupCost>0 ? (
                                                 <>
-                                                  <span style={{color:groupGL>=0?'#6b8e23':'#a82c2c',fontWeight:700,display:'block',fontSize:12}}>{groupGL>=0?'+':''}{fmt(Math.abs(groupGL))}</span>
-                                                  {groupGLPct && <span style={{color:parseFloat(groupGLPct)>=0?'#6b8e23':'#a82c2c',fontSize:10}}>{parseFloat(groupGLPct)>=0?'+':''}{groupGLPct}%</span>}
+                                                  <span style={{color:groupGL>=0?'#2F6B45':'#9E2B25',fontWeight:700,display:'block',fontSize:12}}>{groupGL>=0?'+':''}{fmt(Math.abs(groupGL))}</span>
+                                                  {groupGLPct && <span style={{color:parseFloat(groupGLPct)>=0?'#2F6B45':'#9E2B25',fontSize:10}}>{parseFloat(groupGLPct)>=0?'+':''}{groupGLPct}%</span>}
                                                 </>
                                               ) : '—'}
                                             </td>
@@ -2136,8 +2148,28 @@ export default function Dashboard() {
             );
           })()}
 
+          {/* FAMILY CALENDAR: money (with dividends) and family dates */}
+          {tab === 'calendar' && (
+            <div className="fade-in k-stack">
+              <MoneyCalendar hideValues={hideValues} onOpenMasters={() => loadTab('m-all')} onOpenEvents={() => loadTab('m-events')} />
+              <FamilyPanel panel="calendar" />
+            </div>
+          )}
+          {/* MASTERS */}
+          {tab.startsWith('m-') && <div className="fade-in"><FamilyPanel panel={MASTER_PANEL[tab] || 'masters'} kind={MASTER_PANEL[tab] ? undefined : tab.slice(2)} /></div>}
+          {/* EPFO */}
+          {tab === 'epfo' && <div className="fade-in"><Epfo hideValues={hideValues} /></div>}
+          {/* REPORTS (more coming) */}
+          {tab === 'reports' && (
+            <div className="fade-in db-card k-soon">
+              <h3>More reports are on the way</h3>
+              <p>Capital gains, yearly money summary and a family net-worth statement will live here. The tax summary is ready now.</p>
+              <button type="button" className="k-btn-primary" onClick={() => loadTab('tax')}>Open tax summary</button>
+            </div>
+          )}
+
           {/* DIVIDENDS */}
-          {tab === 'dividends' && (
+          {(tab === 'dividends' || (tab === 'holdings' && stockView === 'dividends')) && (
             <div className="fade-in">
               <Dividends />
             </div>
@@ -2151,40 +2183,8 @@ export default function Dashboard() {
           )}
 
           {/* TRANSACTIONS */}
-          {tab === 'transactions' && (
-            <div className="fade-in db-card">
-              <div className="db-card-header">
-                <div className="db-card-title">Transaction History</div>
-                <div className="db-card-sub">Parsed from broker contract note emails</div>
-              </div>
-              <table className="db-table">
-                <thead>
-                  <tr><th>Type</th><th>Symbol</th><th className="right">Qty</th><th className="right">Price</th><th className="right">Value</th><th>Broker</th><th>Date</th></tr>
-                </thead>
-                <tbody>
-                  {transactions.map((t, i) => (
-                    <tr key={i}>
-                      <td><span className={`db-tx-badge ${t.type === 'BUY' ? 'buy' : 'sell'}`}>{t.type}</span></td>
-                      <td><div className="db-stock-name">{t.symbol}</div></td>
-                      <td className="right">{t.quantity}</td>
-                      <td className="right mono">₹{Number(t.price).toFixed(2)}</td>
-                      <td className={`right mono ${t.type === 'BUY' ? 'neg' : 'pos'}`}>
-                        {t.type === 'SELL' ? '+' : '-'}{fmtFull(t.quantity * t.price)}
-                      </td>
-                      <td style={{color:'var(--text3)', fontSize:12}}>{t.broker}</td>
-                      <td style={{color:'var(--text3)', fontSize:12}}>{t.trade_date ? new Date(t.trade_date).toLocaleDateString('en-IN') : '—'}</td>
-                    </tr>
-                  ))}
-                  {transactions.length === 0 && (
-                    <tr><td colSpan="7" className="db-empty">No transactions yet. Connect your email to auto-import.</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-
-          {/* GOALS TAB */}
+          {/* Broker transactions screen removed (Assets keep their own history) */}
+{/* GOALS TAB */}
           {tab === 'goals' && (
             <div style={{padding:'24px 28px'}} className="fade-in">
 
@@ -2227,7 +2227,7 @@ export default function Dashboard() {
                 <div style={{marginLeft:'auto',display:'flex',gap:8}}>
                   {['all','ultra_short','short','mid','long'].map(d=>(
                     <button key={d} onClick={()=>setGoalsDurationFilter(d)}
-                      style={{padding:'6px 12px',borderRadius:20,border:`1px solid ${goalsDurationFilter===d?'#5d3b78':'var(--border-2)'}`,background:goalsDurationFilter===d?'rgba(93,59,120,0.12)':'transparent',color:goalsDurationFilter===d?'#5d3b78':'var(--text-3)',fontSize:11,cursor:'pointer'}}>
+                      style={{padding:'6px 12px',borderRadius:20,border:`1px solid ${goalsDurationFilter===d?'#111111':'var(--border-2)'}`,background:goalsDurationFilter===d?'rgba(17,17,17,0.12)':'transparent',color:goalsDurationFilter===d?'#111111':'var(--text-3)',fontSize:11,cursor:'pointer'}}>
                       {d==='all'?'All Duration':d==='ultra_short'?'Ultra Short':d==='short'?'Short':d==='mid'?'Mid Term':'Long Term'}
                     </button>
                   ))}
@@ -2251,7 +2251,7 @@ export default function Dashboard() {
                   <div style={{display:'flex',flexDirection:'column',gap:14}}>
                     {filtered.map(goal => {
                       const prog   = Math.min(100, goal.progress || 0);
-                      const statusColor = goal.status==='completed'?'#6b8e23':goal.status==='inprogress'?'#a8741a':'var(--text-3)';
+                      const statusColor = goal.status==='completed'?'#2F6B45':goal.status==='inprogress'?'#A39B8B':'var(--text-3)';
                       const durLabel = {ultra_short:'Ultra Short',short:'Short',mid:'Mid Term',long:'Long Term'}[goal.duration_type] || goal.duration_type;
                       return (
                         <div key={goal.id} style={{background:'var(--surface)',border:'1px solid var(--border-2)',borderRadius:12,padding:0,overflow:'hidden',transition:'border-color 0.2s',cursor:'pointer'}}
@@ -2272,19 +2272,19 @@ export default function Dashboard() {
                                   <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,fontWeight:700,background:`${statusColor}22`,color:statusColor}}>
                                     {goal.status==='inprogress'?'In Progress':goal.status.charAt(0).toUpperCase()+goal.status.slice(1)}
                                   </span>
-                                  <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:'rgba(93,59,120,0.10)',color:'#5d3b78'}}>{durLabel}</span>
-                                  {goal.is_recurring && <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:'rgba(93,59,120,0.10)',color:'#5d3b78'}}>🔄 {goal.recurrence}</span>}
+                                  <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:'rgba(17,17,17,0.10)',color:'#111111'}}>{durLabel}</span>
+                                  {goal.is_recurring && <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:'rgba(17,17,17,0.10)',color:'#111111'}}>🔄 {goal.recurrence}</span>}
                                 </div>
                                 {goal.description && <div style={{color:'var(--text-3)',fontSize:12,marginBottom:4}}>{goal.description}</div>}
                                 <div style={{display:'flex',gap:14,fontSize:11,color:'var(--text-3)',flexWrap:'wrap'}}>
                                   {goal.target_date && <span>📅 Target: {new Date(goal.target_date+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}</span>}
                                   <span>🔗 {goal.asset_count} asset{goal.asset_count!==1?'s':''} linked</span>
-                                  {goal.current_value > 0 && <span style={{color:'#5d3b78'}}>· {fmtFull(goal.current_value)} tracked</span>}
+                                  {goal.current_value > 0 && <span style={{color:'#111111'}}>· {fmtFull(goal.current_value)} tracked</span>}
                                   <span>📅 Started {new Date(goal.started_on+'T00:00:00').toLocaleDateString('en-IN',{month:'short',year:'numeric'})}</span>
                                 </div>
                               </div>
                               <div style={{textAlign:'right',flexShrink:0,marginLeft:20}}>
-                                <div style={{color:'#5d3b78',fontWeight:700,fontSize:18}}>{prog.toFixed(1)}%</div>
+                                <div style={{color:'#111111',fontWeight:700,fontSize:18}}>{prog.toFixed(1)}%</div>
                                 <div style={{color:'var(--text)',fontSize:12,marginTop:2}}>{fmtFull(goal.current_value)} <span style={{color:'var(--text-3)'}}>of</span> {fmtFull(goal.target_value)}</div>
                               </div>
                             </div>
@@ -2292,8 +2292,8 @@ export default function Dashboard() {
                             {/* Progress bar */}
                             <div style={{height:6,background:'var(--surface-3)',borderRadius:3,overflow:'hidden'}}>
                               <div style={{height:'100%',width:`${prog}%`,borderRadius:3,
-                                background:prog>=100?'#6b8e23':prog>50?'#5d3b78':'#a8741a',
-                                transition:'width 0.6s ease',boxShadow:prog>0?`0 0 8px ${prog>=100?'#6b8e23':prog>50?'#5d3b78':'#a8741a'}50`:undefined
+                                background:prog>=100?'#2F6B45':prog>50?'#111111':'#A39B8B',
+                                transition:'width 0.6s ease',boxShadow:prog>0?`0 0 8px ${prog>=100?'#2F6B45':prog>50?'#111111':'#A39B8B'}50`:undefined
                               }}/>
                             </div>
                           </div>
@@ -2307,7 +2307,16 @@ export default function Dashboard() {
           )}
 
           {/* EXPENSES TAB */}
-          {tab === 'expenses' && (() => {
+          {tab === 'cashflow' && (
+            <div className="k-seg" role="tablist" aria-label="Income and expense">
+              {[['flow', 'Money flow'], ['income', 'Income'], ['expenses', 'Expenses']].map(([v, l]) => (
+                <button key={v} type="button" role="tab" aria-selected={cfView === v} className={cfView === v ? 'on' : ''}
+                  onClick={() => { setCfView(v); if (v === 'income') loadIncome(); if (v === 'expenses') loadExpenses(); }}>{l}</button>
+              ))}
+            </div>
+          )}
+          {tab === 'cashflow' && cfView === 'flow' && <div className="fade-in"><MoneyFlow embedded /></div>}
+          {(tab === 'expenses' || (tab === 'cashflow' && cfView === 'expenses')) && (() => {
             const INV_CATS = new Set(['investment','inv_return','bills']);
 
             // Filter entries for current type tab
@@ -2441,7 +2450,7 @@ export default function Dashboard() {
                         style={{background:'var(--surface)',border:'1px solid var(--border-2)',color:'var(--text-3)',borderRadius:8,padding:'6px 14px',fontSize:16,
                           cursor:(calMonth.y===new Date().getFullYear()&&calMonth.m===new Date().getMonth())?'default':'pointer',
                           opacity:(calMonth.y===new Date().getFullYear()&&calMonth.m===new Date().getMonth())?0.3:1}}>›</button>
-                      <div style={{marginLeft:'auto',color:'#b8551f',fontWeight:700,fontSize:14}}>
+                      <div style={{marginLeft:'auto',color:'#8C8270',fontWeight:700,fontSize:14}}>
                         Month total: {fmtFull(monthTotal)}
                       </div>
                     </div>
@@ -2465,13 +2474,13 @@ export default function Dashboard() {
                           const pct   = maxDay > 0 ? amt / maxDay : 0;
                           const today = (() => { const n=new Date(); return n.getFullYear()===calMonth.y&&n.getMonth()===calMonth.m&&n.getDate()===d; })();
                           const sel   = calDay === dk;
-                          const color = expTypeTab==='investment' ? '#5d3b78' : expTypeTab==='expense' ? '#a82c2c' : '#b8551f';
+                          const color = expTypeTab==='investment' ? '#111111' : expTypeTab==='expense' ? '#9E2B25' : '#8C8270';
                           cells.push(
                             <div key={d} onClick={()=>setCalDay(sel ? null : dk)}
                               style={{padding:'8px 6px',minHeight:64,borderTop:'1px solid var(--surface-2)',cursor:amt>0?'pointer':'default',
                                 background:sel?`${color}18`:amt>0?`${color}${Math.round(pct*10).toString(16)}0`:'transparent',
                                 transition:'background 0.15s',position:'relative'}}>
-                              <div style={{fontSize:11,fontWeight:today?700:400,color:today?'#b8551f':amt>0?'var(--text-3)':'var(--border-2)',marginBottom:4}}>
+                              <div style={{fontSize:11,fontWeight:today?700:400,color:today?'#8C8270':amt>0?'var(--text-3)':'var(--border-2)',marginBottom:4}}>
                                 {today?<span style={{background:'var(--lime)',color:'#fff',borderRadius:'50%',width:18,height:18,display:'inline-flex',alignItems:'center',justifyContent:'center',fontSize:10,fontWeight:700}}>{d}</span>:d}
                               </div>
                               {amt > 0 && (
@@ -2492,13 +2501,13 @@ export default function Dashboard() {
 
                     {/* Day drill-down panel */}
                     {calDay && (
-                      <div style={{background:'var(--surface)',borderRadius:12,border:'1px solid rgba(184,85,31,0.20)',overflow:'hidden',marginBottom:16}}>
+                      <div style={{background:'var(--surface)',borderRadius:12,border:'1px solid rgba(140,130,112,0.20)',overflow:'hidden',marginBottom:16}}>
                         <div style={{padding:'12px 18px',borderBottom:'1px solid var(--border-2)',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                           <div>
                             <span style={{color:'var(--text)',fontWeight:700,fontSize:15}}>
                               {new Date(calDay+'T00:00:00').toLocaleDateString('en-IN',{weekday:'long',day:'2-digit',month:'long',year:'numeric'})}
                             </span>
-                            <span style={{color:'#b8551f',fontWeight:700,fontSize:14,marginLeft:12}}>{fmtFull(dayTotals[calDay]||0)}</span>
+                            <span style={{color:'#8C8270',fontWeight:700,fontSize:14,marginLeft:12}}>{fmtFull(dayTotals[calDay]||0)}</span>
                           </div>
                           <button onClick={()=>setCalDay(null)} style={{background:'none',border:'none',color:'var(--text-3)',cursor:'pointer',fontSize:18}}>✕</button>
                         </div>
@@ -2513,10 +2522,10 @@ export default function Dashboard() {
                               {dayEntries.map(e=>(
                                 <tr key={e.id}>
                                   <td style={{color:'var(--text)',fontWeight:500}}>{e.merchant_name||'—'}</td>
-                                  <td><span style={{fontSize:11,padding:'2px 7px',borderRadius:4,fontWeight:600,background:'rgba(184,85,31,0.10)',color:'#b8551f'}}>{e.category||'—'}</span></td>
+                                  <td><span style={{fontSize:11,padding:'2px 7px',borderRadius:4,fontWeight:600,background:'rgba(140,130,112,0.10)',color:'#8C8270'}}>{e.category||'—'}</span></td>
                                   <td style={{color:'var(--text-3)',fontSize:12}}>{e.bank_sender||'—'}</td>
                                   <td style={{color:'var(--text-3)',fontSize:12}}>{e.comments||'—'}</td>
-                                  <td className="right mono" style={{color:'#b8551f',fontWeight:700}}>{fmtFull(e.amount)}</td>
+                                  <td className="right mono" style={{color:'#8C8270',fontWeight:700}}>{fmtFull(e.amount)}</td>
                                 </tr>
                               ))}
                             </tbody>
@@ -2531,7 +2540,7 @@ export default function Dashboard() {
                       filteredByType.filter(e => e.expense_date?.startsWith(`${calMonth.y}-${String(calMonth.m+1).padStart(2,'0')}`))
                         .forEach(e => { const c=e.category||'Others'; catTotals[c]=(catTotals[c]||0)+parseFloat(e.amount||0); });
                       const sorted = Object.entries(catTotals).sort((a,b)=>b[1]-a[1]);
-                      const CAL_COLORS=['#b8551f','#a82c2c','#5d3b78','#34487a','#6b8e23','#a8741a','#1f6b4a','#964062'];
+                      const CAL_COLORS=['#8C8270','#9E2B25','#111111','#3A3833','#2F6B45','#A39B8B','#2F6B45','#6F6A61'];
                       return (
                         <div style={{background:'var(--surface)',borderRadius:12,border:'1px solid var(--border-2)',padding:'16px 20px'}}>
                           <div style={{color:'var(--text)',fontWeight:700,fontSize:14,marginBottom:14}}>Category Breakdown — {MONTHS_FULL[calMonth.m]}</div>
@@ -2608,13 +2617,13 @@ export default function Dashboard() {
                                     </select>
                                   ):(
                                     e.category
-                                      ?<span style={{fontSize:11,padding:'2px 8px',borderRadius:4,fontWeight:600,background:'rgba(184,85,31,0.10)',color:'#b8551f'}}>{e.category}</span>
-                                      :<span style={{fontSize:11,color:'#a8741a'}}>⚠ tap to set</span>
+                                      ?<span style={{fontSize:11,padding:'2px 8px',borderRadius:4,fontWeight:600,background:'rgba(140,130,112,0.10)',color:'#8C8270'}}>{e.category}</span>
+                                      :<span style={{fontSize:11,color:'#A39B8B'}}>⚠ tap to set</span>
                                   )}
                                 </td>
                                 <td style={{color:'var(--text-3)',fontSize:11}}>{e.bank_sender||'—'}</td>
                                 <td style={{color:'var(--text-3)',fontSize:11,maxWidth:140,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{e.comments||'—'}</td>
-                                <td className="right mono" style={{color:'#b8551f',fontWeight:700}}>{fmtFull(e.amount)}</td>
+                                <td className="right mono" style={{color:'#8C8270',fontWeight:700}}>{fmtFull(e.amount)}</td>
                                 <td>
                                   <button onClick={ev=>{ev.stopPropagation();deleteExpenseEntry(e.id);}}
                                     style={{background:'none',border:'none',color:'var(--text-4)',cursor:'pointer',fontSize:14,padding:'2px 6px'}}>✕</button>
@@ -2632,7 +2641,7 @@ export default function Dashboard() {
           })()}
 
           {/* INCOME TAB */}
-          {tab === 'income' && (
+          {(tab === 'income' || (tab === 'cashflow' && cfView === 'income')) && (
             <div style={{ padding: '24px 28px' }} className="fade-in">
               <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:24 }}>
                 <div>
@@ -2647,15 +2656,15 @@ export default function Dashboard() {
               </div>
 
               {incomeScanResult&&(
-                <div style={{background:incomeScanResult.success?'rgba(107,142,35,0.06)':'rgba(168,44,44,0.06)',border:`1px solid ${incomeScanResult.success?'rgba(107,142,35,0.25)':'rgba(168,44,44,0.20)'}`,borderRadius:10,padding:'14px 18px',marginBottom:18}}>
-                  <div style={{fontSize:13,fontWeight:600,color:incomeScanResult.success?'#6b8e23':'#a82c2c',marginBottom:incomeScanResult.emailsRead>0?8:0}}>
+                <div style={{background:incomeScanResult.success?'rgba(47,107,69,0.06)':'rgba(158,43,37,0.06)',border:`1px solid ${incomeScanResult.success?'rgba(47,107,69,0.25)':'rgba(158,43,37,0.20)'}`,borderRadius:10,padding:'14px 18px',marginBottom:18}}>
+                  <div style={{fontSize:13,fontWeight:600,color:incomeScanResult.success?'#2F6B45':'#9E2B25',marginBottom:incomeScanResult.emailsRead>0?8:0}}>
                     {incomeScanResult.success?'✅':'⚠'} {incomeScanResult.message}
                   </div>
                   {incomeScanResult.success&&incomeScanResult.emailsRead>0&&(
                     <div style={{display:'flex',gap:20,flexWrap:'wrap',marginBottom:incomeScanResult.ruleResults?.length?10:0}}>
                       {[{label:'Emails Found',val:incomeScanResult.emailsFound||0},{label:'Emails Read',val:incomeScanResult.emailsRead||0},{label:'Captured',val:incomeScanResult.found||0,hi:true},{label:'Rules',val:incomeScanResult.rulesApplied||0}].map(s=>(
                         <div key={s.label} style={{textAlign:'center',minWidth:55}}>
-                          <div style={{fontWeight:700,fontSize:20,color:s.hi?'#6b8e23':'var(--text)'}}>{s.val}</div>
+                          <div style={{fontWeight:700,fontSize:20,color:s.hi?'#2F6B45':'var(--text)'}}>{s.val}</div>
                           <div style={{fontSize:10,color:'var(--text-3)',marginTop:1}}>{s.label}</div>
                         </div>
                       ))}
@@ -2670,7 +2679,7 @@ export default function Dashboard() {
                           <div style={{display:'flex',gap:12,fontSize:11}}>
                             <span style={{color:'var(--text-3)'}}>{r.emailsFound||0} found</span>
                             <span style={{color:'var(--text-3)'}}>{r.emailsRead||0} read</span>
-                            <span style={{color:r.captured>0?'#6b8e23':'var(--text-3)',fontWeight:r.captured>0?700:400}}>{r.captured||0} captured</span>
+                            <span style={{color:r.captured>0?'#2F6B45':'var(--text-3)',fontWeight:r.captured>0?700:400}}>{r.captured||0} captured</span>
                             {(r.skipped||0)>0&&<span style={{color:'var(--text-4)'}}>{r.skipped} skipped</span>}
                           </div>
                         </div>
@@ -2683,9 +2692,9 @@ export default function Dashboard() {
               {/* Summary cards */}
               <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:14, marginBottom:24 }}>
                 {[
-                  { label:`${incomeSummary.fyLabel || 'FY26'} Total`, val: fmtFull(incomeSummary.currentFYTotal || 0), color:'#6b8e23', icon:'📈' },
-                  { label:'This Month',  val: fmtFull(incomeSummary.thisMonthTotal || 0), color:'#5d3b78', icon:'📅' },
-                  { label:'Total Entries', val: incomeEntries.length, color:'#34487a', icon:'📋' },
+                  { label:`${incomeSummary.fyLabel || 'FY26'} Total`, val: fmtFull(incomeSummary.currentFYTotal || 0), color:'#2F6B45', icon:'📈' },
+                  { label:'This Month',  val: fmtFull(incomeSummary.thisMonthTotal || 0), color:'#111111', icon:'📅' },
+                  { label:'Total Entries', val: incomeEntries.length, color:'#3A3833', icon:'📋' },
                 ].map(s => (
                   <div key={s.label} style={{ background:'var(--surface)', borderRadius:10, padding:'16px 20px', border:'1px solid var(--border-2)' }}>
                     <div style={{ fontSize:20, marginBottom:8 }}>{s.icon}</div>
@@ -2697,7 +2706,7 @@ export default function Dashboard() {
 
               {/* Charts */}
               {incomeEntries.length > 0 && (() => {
-                const PIE_COLORS = ['#6b8e23','#5d3b78','#34487a','#a8741a','#a82c2c','#1f6b4a','#b8551f'];
+                const PIE_COLORS = ['#2F6B45','#111111','#3A3833','#A39B8B','#9E2B25','#2F6B45','#8C8270'];
                 const catData = Object.entries(incomeSummary.byCategory || {}).map(([name,value]) => ({ name, value })).filter(d=>d.value>0);
                 const mthData = Object.keys(incomeSummary.byMonth || {}).sort().map(m => ({
                   month: new Date(m+'-01').toLocaleDateString('en-IN',{month:'short'}),
@@ -2713,7 +2722,7 @@ export default function Dashboard() {
                             <Pie data={catData} cx={70} cy={70} innerRadius={40} outerRadius={68} dataKey="value" paddingAngle={2}>
                               {catData.map((_,i) => <Cell key={i} fill={PIE_COLORS[i%PIE_COLORS.length]} />)}
                             </Pie>
-                            <Tooltip formatter={v=>fmtFull(v)} contentStyle={{ background:'var(--surface)', border:'1px solid rgba(26,22,18,0.12)', borderRadius:8, fontSize:12, color:'var(--text)' }} />
+                            <Tooltip formatter={v=>fmtFull(v)} contentStyle={{ background:'var(--surface)', border:'1px solid rgba(17,17,17,0.12)', borderRadius:8, fontSize:12, color:'var(--text)' }} />
                           </PieChart>
                         </ResponsiveContainer>
                         <div style={{flex:1}}>
@@ -2735,14 +2744,14 @@ export default function Dashboard() {
                         <AreaChart data={mthData} margin={{top:5,right:10,left:0,bottom:0}}>
                           <defs>
                             <linearGradient id="incGrad" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#6b8e23" stopOpacity={0.25}/>
-                              <stop offset="95%" stopColor="#6b8e23" stopOpacity={0}/>
+                              <stop offset="5%" stopColor="#2F6B45" stopOpacity={0.25}/>
+                              <stop offset="95%" stopColor="#2F6B45" stopOpacity={0}/>
                             </linearGradient>
                           </defs>
                           <XAxis dataKey="month" stroke="var(--text-4)" tick={{fill:'var(--text-3)',fontSize:11}}/>
                           <YAxis stroke="var(--text-4)" tick={{fill:'var(--text-3)',fontSize:10}} tickFormatter={v=>'₹'+(v/1000).toFixed(0)+'K'}/>
-                          <Tooltip formatter={v=>[fmtFull(v),'Income']} contentStyle={{ background:'var(--surface)', border:'1px solid rgba(26,22,18,0.12)', borderRadius:8, fontSize:12, color:'var(--text)' }}/>
-                          <Area type="monotone" dataKey="amount" stroke="#6b8e23" strokeWidth={2} fill="url(#incGrad)"/>
+                          <Tooltip formatter={v=>[fmtFull(v),'Income']} contentStyle={{ background:'var(--surface)', border:'1px solid rgba(17,17,17,0.12)', borderRadius:8, fontSize:12, color:'var(--text)' }}/>
+                          <Area type="monotone" dataKey="amount" stroke="#2F6B45" strokeWidth={2} fill="url(#incGrad)"/>
                         </AreaChart>
                       </ResponsiveContainer>
                     </div>
@@ -2779,16 +2788,16 @@ export default function Dashboard() {
                             <div style={{color:'var(--text)',fontSize:13}}>{e.description||e.category}</div>
                             {e.email_subject && <div style={{color:'var(--text-4)',fontSize:11,marginTop:1}}>{e.email_subject.slice(0,55)}</div>}
                           </td>
-                          <td><span style={{fontSize:11,padding:'2px 8px',borderRadius:4,fontWeight:600,background:'rgba(107,142,35,0.08)',color:'#6b8e23'}}>{e.category}</span></td>
+                          <td><span style={{fontSize:11,padding:'2px 8px',borderRadius:4,fontWeight:600,background:'rgba(47,107,69,0.08)',color:'#2F6B45'}}>{e.category}</span></td>
                           <td style={{color:'var(--text-3)',fontSize:12}}>{e.receive_bank||'—'}</td>
                           <td>
                             <span style={{fontSize:11,padding:'2px 7px',borderRadius:4,
-                              background:e.source==='auto'?'rgba(52,72,122,0.10)':'rgba(93,59,120,0.10)',
-                              color:e.source==='auto'?'#34487a':'#5d3b78'}}>
+                              background:e.source==='auto'?'rgba(58,56,51,0.10)':'rgba(17,17,17,0.10)',
+                              color:e.source==='auto'?'#3A3833':'#111111'}}>
                               {e.source==='auto'?'⚡ auto':'✎ manual'}
                             </span>
                           </td>
-                          <td className="right" style={{color:'#6b8e23',fontWeight:700}}>{fmtFull(e.amount)}</td>
+                          <td className="right" style={{color:'#2F6B45',fontWeight:700}}>{fmtFull(e.amount)}</td>
                           <td>
                             <button onClick={()=>deleteIncomeEntry(e.id)}
                               style={{background:'none',border:'none',color:'var(--text-4)',cursor:'pointer',fontSize:14,padding:'2px 6px'}}>✕</button>
@@ -2814,7 +2823,7 @@ export default function Dashboard() {
             const InputField = ({label,val,onChange,type='text',placeholder='',note,required}) => (
               <div>
                 <label style={{display:'block',color:'var(--text-3)',fontSize:11,fontWeight:700,marginBottom:4,letterSpacing:0.5}}>
-                  {label}{required&&<span style={{color:'#a82c2c',marginLeft:2}}>*</span>}
+                  {label}{required&&<span style={{color:'#9E2B25',marginLeft:2}}>*</span>}
                 </label>
                 <input value={val} onChange={onChange} type={type} placeholder={placeholder}
                   style={{width:'100%',background:'var(--surface-2)',border:'1px solid var(--border-2)',borderRadius:8,padding:'9px 12px',color:'var(--text)',fontSize:13,outline:'none',boxSizing:'border-box'}}/>
@@ -2824,7 +2833,7 @@ export default function Dashboard() {
             const SelectField = ({label,val,onChange,options,required}) => (
               <div>
                 <label style={{display:'block',color:'var(--text-3)',fontSize:11,fontWeight:700,marginBottom:4,letterSpacing:0.5}}>
-                  {label}{required&&<span style={{color:'#a82c2c',marginLeft:2}}>*</span>}
+                  {label}{required&&<span style={{color:'#9E2B25',marginLeft:2}}>*</span>}
                 </label>
                 <select value={val} onChange={onChange}
                   style={{width:'100%',background:'var(--surface-2)',border:'1px solid var(--border-2)',borderRadius:8,padding:'9px 12px',color:'var(--text)',fontSize:13,outline:'none',boxSizing:'border-box',cursor:'pointer'}}>
@@ -2838,13 +2847,13 @@ export default function Dashboard() {
                 {/* ── Summary bar ── */}
                 <div style={{display:'flex',gap:16,flexWrap:'wrap',marginBottom:20}}>
                   {[
-                    {label:'FD Count',       val: fdSummary.active||0,                        unit:'active',  color:'#6b8e23', icon:'🏦'},
-                    {label:'FD Corpus',       val: fmt2(fdSummary.totalCurrentValue||0),       unit:'current', color:'#6b8e23', icon:''},
-                    {label:'FD at Maturity',  val: fmt2(fdSummary.totalMaturityValue||0),      unit:'if held', color:'#a8741a', icon:''},
-                    {label:'RD Count',        val: rdSummary.active||0,                        unit:'active',  color:'#5d3b78', icon:'📅'},
-                    {label:'RD Monthly',      val: fmt2(rdSummary.totalMonthlyCommit||0),      unit:'/month',  color:'#5d3b78', icon:''},
-                    {label:'RD Corpus',       val: fmt2(rdSummary.totalCurrentValue||0),       unit:'invested',color:'#5d3b78', icon:''},
-                  ].map(s=>(
+                    {label:'FD Count',       val: fdSummary.active||0,                        unit:'active',  color:'#2F6B45', icon:'🏦'},
+                    {label:'FD Corpus',       val: fmt2(fdSummary.totalCurrentValue||0),       unit:'current', color:'#2F6B45', icon:''},
+                    {label:'FD at Maturity',  val: fmt2(fdSummary.totalMaturityValue||0),      unit:'if held', color:'#A39B8B', icon:''},
+                    {label:'RD Count',        val: rdSummary.active||0,                        unit:'active',  color:'#111111', icon:'📅'},
+                    {label:'RD Monthly',      val: fmt2(rdSummary.totalMonthlyCommit||0),      unit:'/month',  color:'#111111', icon:''},
+                    {label:'RD Corpus',       val: fmt2(rdSummary.totalCurrentValue||0),       unit:'invested',color:'#111111', icon:''},
+                  ].filter(s => depView === 'rd' ? s.label.startsWith('RD') : s.label.startsWith('FD')).map(s=>(
                     <div key={s.label} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,padding:'12px 16px',minWidth:130}}>
                       <div style={{fontSize:10,color:'var(--text-3)',fontWeight:700,letterSpacing:0.5,marginBottom:2}}>{s.label.toUpperCase()}</div>
                       <div style={{fontSize:20,fontWeight:700,color:s.color}}>{s.icon} {s.val}</div>
@@ -2853,16 +2862,17 @@ export default function Dashboard() {
                   ))}
                 </div>
 
+                {depView !== 'rd' && <>
                 {/* ── FD Section ── */}
                 <div className="db-card" style={{marginBottom:20}}>
                   <div className="db-card-header">
                     <div className="db-card-title">🏦 Fixed Deposits ({fdList.length})</div>
                     <button onClick={()=>openFdForm()} className="k-btn-primary">+ Add FD</button>
                   </div>
-                  {fdLoading ? <div style={{padding:40,textAlign:'center',color:'var(--text-3)'}}>Loading…</div> : fdList.length === 0 ? (
+                  {fdLoading ? <LogoLoader label="Loading deposits…" /> : fdList.length === 0 ? (
                     <div style={{padding:'40px 20px',textAlign:'center',color:'var(--text-3)'}}>
                       <div style={{fontSize:36,marginBottom:8}}>🏦</div>
-                      <div style={{fontSize:13}}>No Fixed Deposits added yet. Click <b style={{color:'#5d3b78'}}>+ Add FD</b> to get started.</div>
+                      <div style={{fontSize:13}}>No Fixed Deposits added yet. Click <b style={{color:'#111111'}}>+ Add FD</b> to get started.</div>
                     </div>
                   ) : (
                     <div style={{overflowX:'auto'}}>
@@ -2889,21 +2899,21 @@ export default function Dashboard() {
                               <td>
                                 <div style={{fontWeight:600,color:'var(--text)',fontSize:13}}>{fd.nickname||fd.institution_name}</div>
                                 <div style={{fontSize:10,color:'var(--text-3)'}}>{fd.institution_name} · {fd.payout_type}</div>
-                                {fd.is_tax_saving_fd && <span style={{fontSize:9,padding:'1px 5px',borderRadius:4,background:'rgba(107,142,35,0.10)',color:'#6b8e23'}}>80C</span>}
+                                {fd.is_tax_saving_fd && <span style={{fontSize:9,padding:'1px 5px',borderRadius:4,background:'rgba(47,107,69,0.10)',color:'#2F6B45'}}>80C</span>}
                               </td>
                               <td className="right mono">{fmt2(fd.principal_amount)}</td>
-                              <td className="right" style={{color:'#a8741a',fontWeight:600}}>{fd.interest_rate_pa}%</td>
+                              <td className="right" style={{color:'#A39B8B',fontWeight:600}}>{fd.interest_rate_pa}%</td>
                               <td style={{fontSize:12,color:'var(--text-3)'}}>{Math.round(fd.tenor_days/30)}m</td>
                               <td style={{fontSize:12,whiteSpace:'nowrap'}}>
                                 {new Date(fd.maturity_date).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}
-                                {urgency==='warn' && <div style={{fontSize:10,color:'#a8741a'}}>⚠ {daysLeft}d left</div>}
-                                {urgency==='done' && <div style={{fontSize:10,color:'#a82c2c'}}>Matured</div>}
+                                {urgency==='warn' && <div style={{fontSize:10,color:'#A39B8B'}}>⚠ {daysLeft}d left</div>}
+                                {urgency==='done' && <div style={{fontSize:10,color:'#9E2B25'}}>Matured</div>}
                               </td>
-                              <td className="right mono" style={{color:'#6b8e23',fontWeight:600}}>{fmt2(fd.current_value)}</td>
-                              <td className="right mono" style={{color:'#6b8e23',fontWeight:700}}>{fmt2(fd.maturity_amount)}</td>
+                              <td className="right mono" style={{color:'#2F6B45',fontWeight:600}}>{fmt2(fd.current_value)}</td>
+                              <td className="right mono" style={{color:'#2F6B45',fontWeight:700}}>{fmt2(fd.maturity_amount)}</td>
                               <td>
                                 {linked ? (
-                                  <span style={{fontSize:10,padding:'2px 7px',borderRadius:8,background:'rgba(93,59,120,0.12)',color:'#5d3b78',whiteSpace:'nowrap'}}>
+                                  <span style={{fontSize:10,padding:'2px 7px',borderRadius:8,background:'rgba(17,17,17,0.12)',color:'#111111',whiteSpace:'nowrap'}}>
                                     🎯 {linked.name?.slice(0,12)}{linked.name?.length>12?'…':''}
                                   </span>
                                 ) : (
@@ -2912,15 +2922,15 @@ export default function Dashboard() {
                               </td>
                               <td>
                                 <span style={{fontSize:10,padding:'2px 7px',borderRadius:8,fontWeight:600,
-                                  background:fd.is_active?'rgba(107,142,35,0.08)':'rgba(100,116,139,0.1)',
-                                  color:fd.is_active?'#6b8e23':'var(--text-3)'}}>
+                                  background:fd.is_active?'rgba(47,107,69,0.08)':'rgba(100,116,139,0.1)',
+                                  color:fd.is_active?'#2F6B45':'var(--text-3)'}}>
                                   {fd.is_active?'Active':'Closed'}
                                 </span>
                               </td>
                               <td>
                                 <div style={{display:'flex',gap:4}}>
                                   <button onClick={()=>openFdForm(fd)} style={{background:'var(--surface-3)',border:'1px solid var(--text-4)',color:'var(--text-3)',borderRadius:6,padding:'3px 8px',cursor:'pointer',fontSize:11}}>Edit</button>
-                                  <button onClick={()=>deleteFd(fd.fd_id)} style={{background:'rgba(168,44,44,0.08)',border:'1px solid rgba(168,44,44,0.20)',color:'#a82c2c',borderRadius:6,padding:'3px 8px',cursor:'pointer',fontSize:11}}>✕</button>
+                                  <button onClick={()=>deleteFd(fd.fd_id)} style={{background:'rgba(158,43,37,0.08)',border:'1px solid rgba(158,43,37,0.20)',color:'#9E2B25',borderRadius:6,padding:'3px 8px',cursor:'pointer',fontSize:11}}>✕</button>
                                 </div>
                               </td>
                             </tr>
@@ -2932,16 +2942,18 @@ export default function Dashboard() {
                   )}
                 </div>
 
+                </>}
+                {depView === 'rd' && <>
                 {/* ── RD Section ── */}
                 <div className="db-card">
                   <div className="db-card-header">
                     <div className="db-card-title">📅 Recurring Deposits ({rdList.length})</div>
                     <button onClick={()=>openRdForm()} className="k-btn-primary">+ Add RD</button>
                   </div>
-                  {rdLoading ? <div style={{padding:40,textAlign:'center',color:'var(--text-3)'}}>Loading…</div> : rdList.length === 0 ? (
+                  {rdLoading ? <LogoLoader label="Loading deposits…" /> : rdList.length === 0 ? (
                     <div style={{padding:'40px 20px',textAlign:'center',color:'var(--text-3)'}}>
                       <div style={{fontSize:36,marginBottom:8}}>📅</div>
-                      <div style={{fontSize:13}}>No Recurring Deposits added yet. Click <b style={{color:'#5d3b78'}}>+ Add RD</b> to get started.</div>
+                      <div style={{fontSize:13}}>No Recurring Deposits added yet. Click <b style={{color:'#111111'}}>+ Add RD</b> to get started.</div>
                     </div>
                   ) : (
                     <div style={{overflowX:'auto'}}>
@@ -2967,21 +2979,21 @@ export default function Dashboard() {
                               <td>
                                 <div style={{fontWeight:600,color:'var(--text)',fontSize:13}}>{rd.nickname||rd.institution_name}</div>
                                 <div style={{fontSize:10,color:'var(--text-3)'}}>{rd.institution_name}</div>
-                                {rd.missed_installments > 0 && <span style={{fontSize:9,padding:'1px 5px',borderRadius:4,background:'rgba(168,44,44,0.10)',color:'#a82c2c'}}>⚠ {rd.missed_installments} missed</span>}
+                                {rd.missed_installments > 0 && <span style={{fontSize:9,padding:'1px 5px',borderRadius:4,background:'rgba(158,43,37,0.10)',color:'#9E2B25'}}>⚠ {rd.missed_installments} missed</span>}
                               </td>
-                              <td className="right mono" style={{color:'#5d3b78',fontWeight:600}}>{fmt2(rd.monthly_installment)}/mo</td>
-                              <td className="right" style={{color:'#a8741a',fontWeight:600}}>{rd.interest_rate_pa}%</td>
+                              <td className="right mono" style={{color:'#111111',fontWeight:600}}>{fmt2(rd.monthly_installment)}/mo</td>
+                              <td className="right" style={{color:'#A39B8B',fontWeight:600}}>{rd.interest_rate_pa}%</td>
                               <td style={{fontSize:12,color:'var(--text-3)'}}>{rd.tenure_months}m</td>
                               <td style={{fontSize:12,whiteSpace:'nowrap'}}>
                                 {new Date(rd.maturity_date).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}
-                                {rd.days_to_maturity <= 0 && <div style={{fontSize:10,color:'#a82c2c'}}>Matured</div>}
+                                {rd.days_to_maturity <= 0 && <div style={{fontSize:10,color:'#9E2B25'}}>Matured</div>}
                               </td>
                               <td className="right mono">{fmt2(rd.total_invested)}</td>
-                              <td className="right mono" style={{color:'#6b8e23',fontWeight:700}}>{fmt2(rd.maturity_amount)}</td>
+                              <td className="right mono" style={{color:'#2F6B45',fontWeight:700}}>{fmt2(rd.maturity_amount)}</td>
                               <td>
                                 <div style={{display:'flex',alignItems:'center',gap:6}}>
                                   <div style={{flex:1,height:4,background:'var(--surface-3)',borderRadius:2,minWidth:50,overflow:'hidden'}}>
-                                    <div style={{height:'100%',width:`${progress}%`,borderRadius:2,background:progress>=100?'#6b8e23':'#5d3b78',transition:'width 0.6s'}}/>
+                                    <div style={{height:'100%',width:`${progress}%`,borderRadius:2,background:progress>=100?'#2F6B45':'#111111',transition:'width 0.6s'}}/>
                                   </div>
                                   <span style={{fontSize:10,color:'var(--text-3)',flexShrink:0}}>{progress}%</span>
                                 </div>
@@ -2989,7 +3001,7 @@ export default function Dashboard() {
                               </td>
                               <td>
                                 {linked ? (
-                                  <span style={{fontSize:10,padding:'2px 7px',borderRadius:8,background:'rgba(93,59,120,0.12)',color:'#5d3b78',whiteSpace:'nowrap'}}>
+                                  <span style={{fontSize:10,padding:'2px 7px',borderRadius:8,background:'rgba(17,17,17,0.12)',color:'#111111',whiteSpace:'nowrap'}}>
                                     🎯 {linked.name?.slice(0,12)}{linked.name?.length>12?'…':''}
                                   </span>
                                 ) : <span style={{fontSize:10,color:'var(--text-4)'}}>—</span>}
@@ -2997,7 +3009,7 @@ export default function Dashboard() {
                               <td>
                                 <div style={{display:'flex',gap:4}}>
                                   <button onClick={()=>openRdForm(rd)} style={{background:'var(--surface-3)',border:'1px solid var(--text-4)',color:'var(--text-3)',borderRadius:6,padding:'3px 8px',cursor:'pointer',fontSize:11}}>Edit</button>
-                                  <button onClick={()=>deleteRd(rd.rd_id)} style={{background:'rgba(168,44,44,0.08)',border:'1px solid rgba(168,44,44,0.20)',color:'#a82c2c',borderRadius:6,padding:'3px 8px',cursor:'pointer',fontSize:11}}>✕</button>
+                                  <button onClick={()=>deleteRd(rd.rd_id)} style={{background:'rgba(158,43,37,0.08)',border:'1px solid rgba(158,43,37,0.20)',color:'#9E2B25',borderRadius:6,padding:'3px 8px',cursor:'pointer',fontSize:11}}>✕</button>
                                 </div>
                               </td>
                             </tr>
@@ -3011,15 +3023,16 @@ export default function Dashboard() {
 
                 {/* ── Maturity alerts ── */}
                 {fdList.filter(f=>f.is_active && f.days_to_maturity>=0 && f.days_to_maturity<=30).length > 0 && (
-                  <div style={{marginTop:16,padding:'12px 16px',borderRadius:10,background:'rgba(168,116,26,0.06)',border:'1px solid rgba(168,116,26,0.20)'}}>
-                    <div style={{color:'#a8741a',fontWeight:700,fontSize:13,marginBottom:8}}>⏰ FDs Maturing Soon</div>
+                  <div style={{marginTop:16,padding:'12px 16px',borderRadius:10,background:'rgba(163,155,139,0.06)',border:'1px solid rgba(163,155,139,0.20)'}}>
+                    <div style={{color:'#A39B8B',fontWeight:700,fontSize:13,marginBottom:8}}>⏰ FDs Maturing Soon</div>
                     {fdList.filter(f=>f.is_active && f.days_to_maturity>=0 && f.days_to_maturity<=30).map(fd=>(
                       <div key={fd.fd_id} style={{fontSize:12,color:'var(--text-3)',marginBottom:4}}>
-                        <b style={{color:'var(--text)'}}>{fd.nickname||fd.institution_name}</b> matures in <b style={{color:'#a8741a'}}>{fd.days_to_maturity} days</b> — {fmt2(fd.maturity_amount)} · {fd.on_maturity_action.replace('_',' ')}
+                        <b style={{color:'var(--text)'}}>{fd.nickname||fd.institution_name}</b> matures in <b style={{color:'#A39B8B'}}>{fd.days_to_maturity} days</b> — {fmt2(fd.maturity_amount)} · {fd.on_maturity_action.replace('_',' ')}
                       </div>
                     ))}
                   </div>
                 )}
+                </>}
               </div>
             );
           })()}
@@ -3054,9 +3067,9 @@ export default function Dashboard() {
                 {/* Sync result banner */}
                 {npsSyncResult && (
                   <div style={{marginBottom:16,padding:'10px 14px',borderRadius:8,fontSize:12,display:'flex',justifyContent:'space-between',alignItems:'center',
-                    background:npsSyncResult.success?'rgba(93,59,120,0.06)':'rgba(168,44,44,0.06)',
-                    border:`1px solid ${npsSyncResult.success?'rgba(93,59,120,0.20)':'rgba(168,44,44,0.20)'}`,
-                    color:npsSyncResult.success?'#5d3b78':'#a82c2c'}}>
+                    background:npsSyncResult.success?'rgba(17,17,17,0.06)':'rgba(158,43,37,0.06)',
+                    border:`1px solid ${npsSyncResult.success?'rgba(17,17,17,0.20)':'rgba(158,43,37,0.20)'}`,
+                    color:npsSyncResult.success?'#111111':'#9E2B25'}}>
                     <span>{npsSyncResult.success?'✅':'⚠'} {npsSyncResult.message}</span>
                     <button onClick={()=>setNpsSyncResult(null)} style={{background:'none',border:'none',color:'inherit',cursor:'pointer',fontSize:14}}>✕</button>
                   </div>
@@ -3067,10 +3080,10 @@ export default function Dashboard() {
                     {/* ── Summary tiles ── */}
                     <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:20}}>
                       {[
-                        {label:'Total Corpus',   val:fmt2(nl.total_value||0),         color:'#5d3b78', sub:'Current value'},
+                        {label:'Total Corpus',   val:fmt2(nl.total_value||0),         color:'#111111', sub:'Current value'},
                         {label:'Total Invested', val:fmt2(nl.total_contributions||0),  color:'var(--text-3)', sub:`${nl.num_contributions||0} contributions`},
-                        {label:'Notional Gain',  val:fmt2(nl.notional_gain||0),        color:parseFloat(nl.notional_gain||0)>=0?'#6b8e23':'#a82c2c', sub:'Total gain/loss'},
-                        {label:'XIRR',           val:nl.xirr!=null?nl.xirr+'%':'—',   color:'#a8741a', sub:'Annualised return'},
+                        {label:'Notional Gain',  val:fmt2(nl.notional_gain||0),        color:parseFloat(nl.notional_gain||0)>=0?'#2F6B45':'#9E2B25', sub:'Total gain/loss'},
+                        {label:'XIRR',           val:nl.xirr!=null?nl.xirr+'%':'—',   color:'#A39B8B', sub:'Annualised return'},
                       ].map(s=>(
                         <div key={s.label} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:12,padding:'16px 14px'}}>
                           <div style={{fontSize:10,color:'var(--text-3)',fontWeight:700,letterSpacing:0.5,marginBottom:4}}>{s.label}</div>
@@ -3089,9 +3102,9 @@ export default function Dashboard() {
                         </div>
                         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
                           {[
-                            {label:'Scheme E — Equity',           val:nl.scheme_e_value, pct:nl.scheme_e_pct, nav:nl.scheme_e_nav, units:nl.scheme_e_units, color:'#6b8e23'},
-                            {label:'Scheme C — Corporate Bonds',  val:nl.scheme_c_value, pct:nl.scheme_c_pct, nav:nl.scheme_c_nav, units:nl.scheme_c_units, color:'#34487a'},
-                            {label:'Scheme G — Govt Securities',  val:nl.scheme_g_value, pct:nl.scheme_g_pct, nav:nl.scheme_g_nav, units:nl.scheme_g_units, color:'#a8741a'},
+                            {label:'Scheme E — Equity',           val:nl.scheme_e_value, pct:nl.scheme_e_pct, nav:nl.scheme_e_nav, units:nl.scheme_e_units, color:'#2F6B45'},
+                            {label:'Scheme C — Corporate Bonds',  val:nl.scheme_c_value, pct:nl.scheme_c_pct, nav:nl.scheme_c_nav, units:nl.scheme_c_units, color:'#3A3833'},
+                            {label:'Scheme G — Govt Securities',  val:nl.scheme_g_value, pct:nl.scheme_g_pct, nav:nl.scheme_g_nav, units:nl.scheme_g_units, color:'#A39B8B'},
                           ].map(s=>(
                             <div key={s.label} style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:10,padding:'14px 16px'}}>
                               <div style={{fontSize:10,color:'var(--text-3)',marginBottom:8,fontWeight:600}}>{s.label}</div>
@@ -3119,7 +3132,7 @@ export default function Dashboard() {
                             <div className="db-card-sub">{npsData.history.length} data points · Since {npsData.history[0]?.date||''}</div>
                           </div>
                           {npsData.growthPct && (
-                            <div style={{fontSize:16,fontWeight:700,color:parseFloat(npsData.growthPct)>=0?'#6b8e23':'#a82c2c'}}>
+                            <div style={{fontSize:16,fontWeight:700,color:parseFloat(npsData.growthPct)>=0?'#2F6B45':'#9E2B25'}}>
                               {parseFloat(npsData.growthPct)>=0?'+':''}{npsData.growthPct}%
                             </div>
                           )}
@@ -3134,14 +3147,14 @@ export default function Dashboard() {
                           }))}>
                             <defs>
                               <linearGradient id="npsGradTab" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%"  stopColor="#5d3b78" stopOpacity={0.25}/>
-                                <stop offset="95%" stopColor="#5d3b78" stopOpacity={0}/>
+                                <stop offset="5%"  stopColor="#111111" stopOpacity={0.25}/>
+                                <stop offset="95%" stopColor="#111111" stopOpacity={0}/>
                               </linearGradient>
                             </defs>
                             <XAxis dataKey="month" stroke="var(--border-2)" tick={{fontSize:10,fill:'var(--text-3)'}} interval="preserveStartEnd"/>
                             <YAxis stroke="var(--border-2)" tick={{fontSize:10,fill:'var(--text-3)'}} tickFormatter={v=>v>=100000?`₹${(v/100000).toFixed(1)}L`:`₹${(v/1000).toFixed(0)}K`} width={60}/>
                             <Tooltip contentStyle={{background:'var(--surface)',border:'1px solid var(--border-2)',borderRadius:8,fontSize:11}} formatter={(v,name)=>[fmt2(v),name==='total'?'Corpus':name==='equity'?'Scheme E':name==='corp'?'Scheme C':'Scheme G']} labelStyle={{color:'var(--text-3)'}}/>
-                            <Area type="monotone" dataKey="total"  stroke="#5d3b78" strokeWidth={2.5} fill="url(#npsGradTab)" dot={{r:3,fill:'#5d3b78',strokeWidth:0}} activeDot={{r:5}} name="Corpus"/>
+                            <Area type="monotone" dataKey="total"  stroke="#111111" strokeWidth={2.5} fill="url(#npsGradTab)" dot={{r:3,fill:'#111111',strokeWidth:0}} activeDot={{r:5}} name="Corpus"/>
                           </AreaChart>
                         </ResponsiveContainer>
                       </div>
@@ -3154,7 +3167,7 @@ export default function Dashboard() {
                       </div>
                       <div style={{display:'flex',alignItems:'center',gap:12}}>
                         {nl.goals ? (
-                          <span style={{fontSize:13,padding:'4px 12px',borderRadius:8,background:'rgba(93,59,120,0.12)',color:'#5d3b78',fontWeight:600}}>
+                          <span style={{fontSize:13,padding:'4px 12px',borderRadius:8,background:'rgba(17,17,17,0.12)',color:'#111111',fontWeight:600}}>
                             🎯 {nl.goals.name}
                           </span>
                         ) : <span style={{fontSize:13,color:'var(--text-3)'}}>Not linked to any goal</span>}
@@ -3201,15 +3214,15 @@ export default function Dashboard() {
                                   <td style={{color:'var(--text-3)',fontSize:11}}>
                                     {h.email_date ? new Date(h.email_date+'T00:00:00').toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) : '—'}
                                   </td>
-                                  <td className="right mono" style={{color:'#5d3b78',fontWeight:700}}>{fmt2(h.total_value)}</td>
+                                  <td className="right mono" style={{color:'#111111',fontWeight:700}}>{fmt2(h.total_value)}</td>
                                   <td className="right mono" style={{color:'var(--text-3)'}}>{h.total_contributions > 0 ? fmt2(h.total_contributions) : '—'}</td>
-                                  <td className="right mono" style={{color:gain>=0?'#6b8e23':'#a82c2c',fontWeight:600}}>
+                                  <td className="right mono" style={{color:gain>=0?'#2F6B45':'#9E2B25',fontWeight:600}}>
                                     {h.total_contributions > 0 ? (gain>=0?'+':'')+fmt2(Math.abs(gain)) : '—'}
                                   </td>
-                                  <td className="right" style={{color:'#a8741a'}}>{h.xirr!=null?h.xirr+'%':'—'}</td>
-                                  <td className="right mono" style={{color:'#6b8e23'}}>{h.scheme_e>0?fmt2(h.scheme_e):'—'}</td>
-                                  <td className="right mono" style={{color:'#34487a'}}>{h.scheme_c>0?fmt2(h.scheme_c):'—'}</td>
-                                  <td className="right mono" style={{color:'#a8741a'}}>{h.scheme_g>0?fmt2(h.scheme_g):'—'}</td>
+                                  <td className="right" style={{color:'#A39B8B'}}>{h.xirr!=null?h.xirr+'%':'—'}</td>
+                                  <td className="right mono" style={{color:'#2F6B45'}}>{h.scheme_e>0?fmt2(h.scheme_e):'—'}</td>
+                                  <td className="right mono" style={{color:'#3A3833'}}>{h.scheme_c>0?fmt2(h.scheme_c):'—'}</td>
+                                  <td className="right mono" style={{color:'#A39B8B'}}>{h.scheme_g>0?fmt2(h.scheme_g):'—'}</td>
                                 </tr>
                                 );
                               })}
@@ -3224,8 +3237,8 @@ export default function Dashboard() {
                     <div style={{fontSize:48,marginBottom:12}}>🏛</div>
                     <div style={{fontSize:16,fontWeight:600,color:'var(--text)',marginBottom:8}}>No NPS Data Loaded</div>
                     <div style={{fontSize:13,color:'var(--text-3)',marginBottom:12,lineHeight:1.6}}>
-                      Click <b style={{color:'#5d3b78'}}>⟳ Sync from Gmail</b> to scan your Protean NPS emails,<br/>
-                      or use <b style={{color:'#5d3b78'}}>+ Manual Entry</b> to add data directly.
+                      Click <b style={{color:'#111111'}}>⟳ Sync from Gmail</b> to scan your Protean NPS emails,<br/>
+                      or use <b style={{color:'#111111'}}>+ Manual Entry</b> to add data directly.
                     </div>
                     <button onClick={async()=>{
                       try {
@@ -3233,7 +3246,7 @@ export default function Dashboard() {
                         alert('NPS API Response:\ncount: ' + r.data.count + '\nlatest: ' + JSON.stringify(r.data.latest)?.slice(0,200));
                         if (r.data.count > 0) loadNPS();
                       } catch(e) { alert('NPS API Error: ' + e.message); }
-                    }} style={{background:'rgba(93,59,120,0.10)',border:'1px solid rgba(52,72,122,0.25)',color:'var(--indigo)',borderRadius:8,padding:'8px 16px',cursor:'pointer',fontSize:12,marginBottom:16}}>
+                    }} style={{background:'rgba(17,17,17,0.10)',border:'1px solid rgba(58,56,51,0.25)',color:'var(--indigo)',borderRadius:8,padding:'8px 16px',cursor:'pointer',fontSize:12,marginBottom:16}}>
                       🔍 Debug: Check API Response
                     </button>
                     <div style={{display:'flex',gap:12,justifyContent:'center'}}>
@@ -3242,7 +3255,7 @@ export default function Dashboard() {
                         {npsSyncing?'⟳ Scanning…':'⟳ Sync from Gmail'}
                       </button>
                       <button onClick={()=>{setNpsForm({statement_to:'',total_value:'',total_contributions:'',notional_gain:'',xirr:'',scheme_e_value:'',scheme_e_pct:'75',scheme_c_value:'',scheme_c_pct:'15',scheme_g_value:'',scheme_g_pct:'10',goal_id:'',goal_earmark_pct:'100'});setShowNpsForm(true);}}
-                        style={{background:'rgba(179,157,219,0.12)',border:'1px solid rgba(179,157,219,0.3)',color:'#5d3b78',borderRadius:8,padding:'10px 20px',cursor:'pointer',fontSize:13,fontWeight:700}}>
+                        style={{background:'rgba(179,157,219,0.12)',border:'1px solid rgba(179,157,219,0.3)',color:'#111111',borderRadius:8,padding:'10px 20px',cursor:'pointer',fontSize:13,fontWeight:700}}>
                         + Manual Entry
                       </button>
                     </div>
@@ -3384,7 +3397,7 @@ export default function Dashboard() {
 
             {connectStep === 'connecting' && (
               <div style={{textAlign:'center',padding:'30px 0'}}>
-                <div className="db-spinner" style={{margin:'0 auto 16px'}}></div>
+                <LogoLoader size={44} />
                 <div style={{fontSize:16,fontWeight:600}}>Redirecting to Google…</div>
               </div>
             )}
@@ -3433,15 +3446,15 @@ export default function Dashboard() {
                 <span style={{color:'var(--text-3)',fontSize:11,marginTop:3,display:'block'}}>Used for 5paisa and some other brokers</span>
               </div>
 
-              {profileError && <div style={{color:'var(--coral)',fontSize:12,marginBottom:12,padding:'6px 10px',background:'var(--coral-soft)',borderRadius:4,border:'1px solid rgba(168,44,44,0.2)'}}>{profileError}</div>}
-              {profileSaved && <div style={{color:'var(--mint)',fontSize:12,marginBottom:12,padding:'6px 10px',background:'var(--mint-soft)',borderRadius:4,border:'1px solid rgba(31,107,74,0.2)'}}>✓ Profile saved successfully</div>}
+              {profileError && <div style={{color:'var(--coral)',fontSize:12,marginBottom:12,padding:'6px 10px',background:'var(--coral-soft)',borderRadius:4,border:'1px solid rgba(158,43,37,0.2)'}}>{profileError}</div>}
+              {profileSaved && <div style={{color:'var(--mint)',fontSize:12,marginBottom:12,padding:'6px 10px',background:'var(--mint-soft)',borderRadius:4,border:'1px solid rgba(47,107,69,0.2)'}}>✓ Profile saved successfully</div>}
 
               <button className="db-sync-btn" style={{width:'100%'}} onClick={saveProfile} disabled={profileSaving}>
                 {profileSaving ? 'Saving…' : 'Save Profile'}
               </button>
 
               <div style={{marginTop:16,padding:'10px 12px',background:'var(--surface)',borderRadius:6,border:'1px solid var(--border-2)'}}>
-                <div style={{color:'#34487a',fontSize:11,fontWeight:700,marginBottom:4}}>HOW PDF PASSWORDS WORK</div>
+                <div style={{color:'#3A3833',fontSize:11,fontWeight:700,marginBottom:4}}>HOW PDF PASSWORDS WORK</div>
                 <div style={{color:'var(--text-3)',fontSize:11,lineHeight:1.6}}>
                   1. Gemini AI reads the email body for password hints<br/>
                   2. Combines your PAN + DOB + Name to generate candidates<br/>
@@ -3485,7 +3498,7 @@ export default function Dashboard() {
                       const r = await autoCategorizeMerchant(expenseEntryForm.merchant_name);
                       if(r?.category) setExpenseEntryForm(p=>({...p,category:r.category,sub_category:r.sub_category||''}));
                     }}
-                    style={{background:'rgba(93,59,120,0.10)',border:'1px solid rgba(167,139,250,0.3)',color:'#5d3b78',borderRadius:8,padding:'8px 12px',cursor:'pointer',fontSize:12,whiteSpace:'nowrap'}}>
+                    style={{background:'rgba(17,17,17,0.10)',border:'1px solid rgba(167,139,250,0.3)',color:'#111111',borderRadius:8,padding:'8px 12px',cursor:'pointer',fontSize:12,whiteSpace:'nowrap'}}>
                     🤖 Auto
                   </button>
                 </div>
@@ -3515,7 +3528,7 @@ export default function Dashboard() {
                 <input className="db-input" placeholder="Optional notes" value={expenseEntryForm.comments} onChange={e=>setExpenseEntryForm(p=>({...p,comments:e.target.value}))} />
               </div>
               <button onClick={saveExpenseEntry} disabled={!expenseEntryForm.amount||!expenseEntryForm.expense_date||expenseEntrySaving}
-                style={{width:'100%',background:'#b8551f',color:'#fff',border:'none',borderRadius:8,padding:'12px',fontWeight:700,fontSize:14,cursor:'pointer'}}>
+                style={{width:'100%',background:'#8C8270',color:'#fff',border:'none',borderRadius:8,padding:'12px',fontWeight:700,fontSize:14,cursor:'pointer'}}>
                 {expenseEntrySaving?'⟳ Saving…':'+ Save Expense'}
               </button>
             </div>
@@ -3565,10 +3578,10 @@ export default function Dashboard() {
                 <label style={{display:'block',color:'var(--text-3)',fontSize:11,fontWeight:700,marginBottom:8}}>DURATION</label>
                 <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8}}>
                   {[
-                    {id:'ultra_short',label:'Ultra Short',hint:'Days / Weeks',color:'#a8741a'},
-                    {id:'short',      label:'Short',      hint:'Months',       color:'#34487a'},
-                    {id:'mid',        label:'Mid Term',   hint:'1–5 Years',    color:'#5d3b78'},
-                    {id:'long',       label:'Long Term',  hint:'5+ Years',     color:'#6b8e23'},
+                    {id:'ultra_short',label:'Ultra Short',hint:'Days / Weeks',color:'#A39B8B'},
+                    {id:'short',      label:'Short',      hint:'Months',       color:'#3A3833'},
+                    {id:'mid',        label:'Mid Term',   hint:'1–5 Years',    color:'#111111'},
+                    {id:'long',       label:'Long Term',  hint:'5+ Years',     color:'#2F6B45'},
                   ].map(d=>(
                     <div key={d.id} onClick={()=>setGoalForm(p=>({...p,duration_type:d.id}))}
                       style={{padding:'10px 8px',borderRadius:8,border:`1px solid ${goalForm.duration_type===d.id?d.color:'var(--border-2)'}`,background:goalForm.duration_type===d.id?`${d.color}15`:'var(--surface-2)',cursor:'pointer',textAlign:'center'}}>
@@ -3587,7 +3600,7 @@ export default function Dashboard() {
                     <div style={{color:'var(--text-3)',fontSize:11}}>Repeats on a schedule (SIP, yearly savings, etc.)</div>
                   </div>
                   <div onClick={()=>setGoalForm(p=>({...p,is_recurring:!p.is_recurring}))}
-                    style={{width:44,height:24,borderRadius:12,background:goalForm.is_recurring?'#5d3b78':'var(--text-4)',cursor:'pointer',position:'relative',transition:'background 0.2s',flexShrink:0}}>
+                    style={{width:44,height:24,borderRadius:12,background:goalForm.is_recurring?'#111111':'var(--text-4)',cursor:'pointer',position:'relative',transition:'background 0.2s',flexShrink:0}}>
                     <div style={{position:'absolute',top:2,left:goalForm.is_recurring?20:2,width:20,height:20,borderRadius:'50%',background:'#fff',transition:'left 0.2s'}}/>
                   </div>
                 </div>
@@ -3646,7 +3659,7 @@ export default function Dashboard() {
             {/* Picture header */}
             {goalDetail.picture_url ? (
               <div style={{height:140,backgroundImage:`url(${goalDetail.picture_url})`,backgroundSize:'cover',backgroundPosition:'center',borderRadius:'20px 20px 0 0',position:'relative'}}>
-                <div style={{position:'absolute',inset:0,background:'linear-gradient(to bottom,transparent,rgba(239,232,215,0.95))',borderRadius:'20px 20px 0 0'}}/>
+                <div style={{position:'absolute',inset:0,background:'linear-gradient(to bottom,transparent,rgba(243,238,227,0.95))',borderRadius:'20px 20px 0 0'}}/>
                 <div style={{position:'absolute',bottom:16,left:24,right:24,display:'flex',justifyContent:'space-between',alignItems:'flex-end'}}>
                   <div>
                     <div style={{color:'var(--text)',fontSize:20,fontWeight:700}}>{goalDetail.name}</div>
@@ -3671,7 +3684,7 @@ export default function Dashboard() {
                 <div style={{display:'flex',justifyContent:'space-between',marginBottom:10}}>
                   <div>
                     <div style={{color:'var(--text-3)',fontSize:11,fontWeight:700,letterSpacing:1,marginBottom:2}}>CURRENT</div>
-                    <div style={{color:'#5d3b78',fontWeight:700,fontSize:22}}>{fmtFull(goalDetail.current_value||0)}</div>
+                    <div style={{color:'#111111',fontWeight:700,fontSize:22}}>{fmtFull(goalDetail.current_value||0)}</div>
                   </div>
                   <div style={{textAlign:'right'}}>
                     <div style={{color:'var(--text-3)',fontSize:11,fontWeight:700,letterSpacing:1,marginBottom:2}}>TARGET</div>
@@ -3679,7 +3692,7 @@ export default function Dashboard() {
                   </div>
                 </div>
                 <div style={{height:10,background:'var(--border-2)',borderRadius:5,overflow:'hidden',marginBottom:6}}>
-                  <div style={{height:'100%',width:`${Math.min(100,goalDetail.progress||0)}%`,borderRadius:5,background:goalDetail.progress>=100?'#6b8e23':goalDetail.progress>50?'#5d3b78':'#a8741a',transition:'width 0.6s',boxShadow:`0 0 10px ${goalDetail.progress>=100?'#6b8e23':'#5d3b78'}60`}} />
+                  <div style={{height:'100%',width:`${Math.min(100,goalDetail.progress||0)}%`,borderRadius:5,background:goalDetail.progress>=100?'#2F6B45':goalDetail.progress>50?'#111111':'#A39B8B',transition:'width 0.6s',boxShadow:`0 0 10px ${goalDetail.progress>=100?'#2F6B45':'#111111'}60`}} />
                 </div>
                 <div style={{display:'flex',justifyContent:'space-between',fontSize:11,color:'var(--text-3)'}}>
                   <span>{(goalDetail.progress||0).toFixed(1)}% achieved</span>
@@ -3693,11 +3706,11 @@ export default function Dashboard() {
                   <div style={{color:'var(--text)',fontWeight:700,fontSize:13}}>Linked Assets</div>
                   <div style={{display:'flex',gap:6}}>
                     <button onClick={()=>{setGoalDetail(null);loadTab('holdings');}}
-                      style={{background:'rgba(93,59,120,0.10)',border:'1px solid rgba(52,72,122,0.25)',color:'var(--indigo)',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:11}}>
+                      style={{background:'rgba(17,17,17,0.10)',border:'1px solid rgba(58,56,51,0.25)',color:'var(--indigo)',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:11}}>
                       + Stock
                     </button>
                     <button onClick={()=>{setGoalDetail(null);loadTab('mutualfunds');}}
-                      style={{background:'rgba(52,72,122,0.10)',border:'1px solid rgba(14,165,233,0.3)',color:'#34487a',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:11}}>
+                      style={{background:'rgba(58,56,51,0.10)',border:'1px solid rgba(14,165,233,0.3)',color:'#3A3833',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:11}}>
                       + Mutual Fund
                     </button>
                   </div>
@@ -3710,7 +3723,7 @@ export default function Dashboard() {
                   <div key={a.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 12px',background:'var(--surface-2)',borderRadius:8,marginBottom:6,border:'1px solid var(--border-2)'}}>
                     <div>
                       <span style={{color:'var(--text)',fontSize:13,fontWeight:600}}>{a.asset_name}</span>
-                      <span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'rgba(93,59,120,0.10)',color:'#5d3b78',marginLeft:8}}>{a.asset_type.toUpperCase()}</span>
+                      <span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'rgba(17,17,17,0.10)',color:'#111111',marginLeft:8}}>{a.asset_type.toUpperCase()}</span>
                     </div>
                     <button onClick={()=>unlinkAsset(goalDetail.id, a.id)} style={{background:'none',border:'none',color:'var(--text-4)',cursor:'pointer',fontSize:14}}>✕</button>
                   </div>
@@ -3730,7 +3743,7 @@ export default function Dashboard() {
                         if(val===null) return;
                         await goalsAPI.closeCycle(goalDetail.id, {action:'close', achieved_value: parseFloat(val)||0});
                         await openGoalDetail(goalDetail);
-                      }} style={{background:'rgba(107,142,35,0.10)',border:'1px solid rgba(107,142,35,0.25)',color:'#6b8e23',borderRadius:6,padding:'4px 12px',cursor:'pointer',fontSize:11,fontWeight:600}}>
+                      }} style={{background:'rgba(47,107,69,0.10)',border:'1px solid rgba(47,107,69,0.25)',color:'#2F6B45',borderRadius:6,padding:'4px 12px',cursor:'pointer',fontSize:11,fontWeight:600}}>
                         ✓ Close Current Cycle
                       </button>
                     )}
@@ -3742,7 +3755,7 @@ export default function Dashboard() {
                       <span style={{color:'var(--text-3)'}}>Cycle {cy.cycle_number} · {cy.cycle_start}</span>
                       <div style={{display:'flex',gap:10,alignItems:'center'}}>
                         {cy.achieved_value>0 && <span style={{color:'var(--text)'}}>{fmtFull(cy.achieved_value)}</span>}
-                        <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:cy.status==='completed'?'rgba(107,142,35,0.10)':cy.status==='missed'?'rgba(168,44,44,0.10)':'rgba(168,116,26,0.10)',color:cy.status==='completed'?'#6b8e23':cy.status==='missed'?'#a82c2c':'#a8741a'}}>{cy.status}</span>
+                        <span style={{fontSize:10,padding:'2px 8px',borderRadius:10,background:cy.status==='completed'?'rgba(47,107,69,0.10)':cy.status==='missed'?'rgba(158,43,37,0.10)':'rgba(163,155,139,0.10)',color:cy.status==='completed'?'#2F6B45':cy.status==='missed'?'#9E2B25':'#A39B8B'}}>{cy.status}</span>
                       </div>
                     </div>
                   ))}
@@ -3752,12 +3765,12 @@ export default function Dashboard() {
               {/* Actions */}
               <div style={{display:'flex',gap:10}}>
                 <button onClick={()=>{setEditingGoal(goalDetail);setGoalForm({name:goalDetail.name,description:goalDetail.description||'',target_value:String(goalDetail.target_value),duration_type:goalDetail.duration_type,target_date:goalDetail.target_date||'',is_recurring:goalDetail.is_recurring,recurrence:goalDetail.recurrence||'monthly',recurrence_day:String(goalDetail.recurrence_day||1),recurrence_month:String(goalDetail.recurrence_month||'')});setGoalDetail(null);setShowGoalForm(true);}}
-                  style={{flex:1,background:'rgba(93,59,120,0.10)',border:'1px solid rgba(52,72,122,0.25)',color:'var(--indigo)',borderRadius:8,padding:'10px',cursor:'pointer',fontSize:13,fontWeight:600}}>✎ Edit</button>
-                <button onClick={()=>{const f=new FormData();document.getElementById(`goal-pic-${goalDetail.id}`)?.click();}} style={{flex:1,background:'rgba(52,72,122,0.10)',border:'1px solid rgba(14,165,233,0.3)',color:'#34487a',borderRadius:8,padding:'10px',cursor:'pointer',fontSize:13,fontWeight:600}}>
+                  style={{flex:1,background:'rgba(17,17,17,0.10)',border:'1px solid rgba(58,56,51,0.25)',color:'var(--indigo)',borderRadius:8,padding:'10px',cursor:'pointer',fontSize:13,fontWeight:600}}>✎ Edit</button>
+                <button onClick={()=>{const f=new FormData();document.getElementById(`goal-pic-${goalDetail.id}`)?.click();}} style={{flex:1,background:'rgba(58,56,51,0.10)',border:'1px solid rgba(14,165,233,0.3)',color:'#3A3833',borderRadius:8,padding:'10px',cursor:'pointer',fontSize:13,fontWeight:600}}>
                   📷 Upload Picture
                   <input id={`goal-pic-${goalDetail.id}`} type="file" accept="image/*" style={{display:'none'}} onChange={e=>{uploadGoalPic(goalDetail.id,e.target.files[0]);}} />
                 </button>
-                <button onClick={()=>deleteGoal(goalDetail.id)} style={{background:'rgba(168,44,44,0.08)',border:'1px solid rgba(168,44,44,0.20)',color:'#a82c2c',borderRadius:8,padding:'10px 14px',cursor:'pointer',fontSize:13}}>🗑</button>
+                <button onClick={()=>deleteGoal(goalDetail.id)} style={{background:'rgba(158,43,37,0.08)',border:'1px solid rgba(158,43,37,0.20)',color:'#9E2B25',borderRadius:8,padding:'10px 14px',cursor:'pointer',fontSize:13}}>🗑</button>
               </div>
             </div>
           </div>
@@ -3798,21 +3811,21 @@ export default function Dashboard() {
                           padding:'12px 16px',borderRadius:10,cursor:'pointer',
                           border:'1px solid var(--border-2)',background:'var(--surface-2)',transition:'all 0.15s',
                         }}
-                        onMouseOver={e=>{e.currentTarget.style.borderColor='#5d3b78';e.currentTarget.style.background='rgba(93,59,120,0.06)';}}
+                        onMouseOver={e=>{e.currentTarget.style.borderColor='#111111';e.currentTarget.style.background='rgba(17,17,17,0.06)';}}
                         onMouseOut={e=>{e.currentTarget.style.borderColor='var(--border-2)';e.currentTarget.style.background='var(--surface-2)';}}>
                         <div style={{flex:1}}>
                           <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
                             <span style={{color:'var(--text)',fontWeight:700,fontSize:14}}>{goal.name}</span>
                             <span style={{fontSize:10,padding:'1px 7px',borderRadius:8,
                               background:goal.status==='completed'?'var(--mint-soft)':goal.status==='inprogress'?'var(--gold-soft)':'var(--surface-3)',
-                              color:goal.status==='completed'?'#6b8e23':goal.status==='inprogress'?'#a8741a':'var(--text-3)'}}>
+                              color:goal.status==='completed'?'#2F6B45':goal.status==='inprogress'?'#A39B8B':'var(--text-3)'}}>
                               {goal.status==='inprogress'?'In Progress':goal.status==='completed'?'Completed':'New'}
                             </span>
                           </div>
                           <div style={{display:'flex',alignItems:'center',gap:10}}>
                             <div style={{flex:1,height:5,background:'var(--surface-3)',borderRadius:3,overflow:'hidden'}}>
                               <div style={{height:'100%',width:`${prog}%`,borderRadius:3,
-                                background:prog>=100?'#6b8e23':prog>50?'#5d3b78':'#a8741a'}}/>
+                                background:prog>=100?'#2F6B45':prog>50?'#111111':'#A39B8B'}}/>
                             </div>
                             <span style={{color:'var(--text-3)',fontSize:11,flexShrink:0}}>{prog.toFixed(0)}% of {fmtFull(goal.target_value)}</span>
                           </div>
@@ -3820,17 +3833,17 @@ export default function Dashboard() {
                         <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:4,marginLeft:16,flexShrink:0}}>
                           {bulkLinking && bulkProgress.total > 0 ? (
                             <>
-                              <span style={{fontSize:12,color:'#a8741a',fontWeight:700,whiteSpace:'nowrap'}}>
+                              <span style={{fontSize:12,color:'#A39B8B',fontWeight:700,whiteSpace:'nowrap'}}>
                                 {bulkProgress.current} / {bulkProgress.total}
                               </span>
-                              <div style={{width:60,height:3,background:'rgba(168,116,26,0.12)',borderRadius:2}}>
-                                <div style={{height:'100%',borderRadius:2,background:'#a8741a',
+                              <div style={{width:60,height:3,background:'rgba(163,155,139,0.12)',borderRadius:2}}>
+                                <div style={{height:'100%',borderRadius:2,background:'#A39B8B',
                                   width:`${Math.round((bulkProgress.current/bulkProgress.total)*100)}%`,
                                   transition:'width 0.15s ease'}}/>
                               </div>
                             </>
                           ) : (
-                            <span style={{fontSize:13,color:'#5d3b78',fontWeight:700,whiteSpace:'nowrap'}}>
+                            <span style={{fontSize:13,color:'#111111',fontWeight:700,whiteSpace:'nowrap'}}>
                               {bulkLinking ? 'Starting…' : 'Link All →'}
                             </span>
                           )}
@@ -3841,8 +3854,8 @@ export default function Dashboard() {
                 </div>
               )}
               {bulkLinkResult && (
-                <div style={{margin:'14px 0 0',padding:'12px 16px',borderRadius:10,background:'rgba(107,142,35,0.06)',border:'1px solid rgba(107,142,35,0.20)'}}>
-                  <div style={{color:'#6b8e23',fontWeight:700,fontSize:13,marginBottom:4}}>
+                <div style={{margin:'14px 0 0',padding:'12px 16px',borderRadius:10,background:'rgba(47,107,69,0.06)',border:'1px solid rgba(47,107,69,0.20)'}}>
+                  <div style={{color:'#2F6B45',fontWeight:700,fontSize:13,marginBottom:4}}>
                     ✅ {bulkLinkResult.linked} holding{bulkLinkResult.linked!==1?'s':''} linked to goal!
                   </div>
                   {bulkLinkResult.skipped > 0 && <div style={{color:'var(--text-3)',fontSize:11}}>{bulkLinkResult.skipped} already linked — skipped.</div>}
@@ -3885,29 +3898,29 @@ export default function Dashboard() {
                         style={{
                           display:'flex',justifyContent:'space-between',alignItems:'center',
                           padding:'12px 16px',borderRadius:10,cursor:alreadyLinked?'default':'pointer',
-                          border:`1px solid ${alreadyLinked?'rgba(107,142,35,0.25)':'var(--border-2)'}`,
-                          background:alreadyLinked?'rgba(107,142,35,0.06)':'var(--surface-2)',
+                          border:`1px solid ${alreadyLinked?'rgba(47,107,69,0.25)':'var(--border-2)'}`,
+                          background:alreadyLinked?'rgba(47,107,69,0.06)':'var(--surface-2)',
                           transition:'border-color 0.15s',
                         }}
-                        onMouseOver={e=>{ if(!alreadyLinked) e.currentTarget.style.borderColor='#5d3b78'; }}
+                        onMouseOver={e=>{ if(!alreadyLinked) e.currentTarget.style.borderColor='#111111'; }}
                         onMouseOut={e=>{ if(!alreadyLinked) e.currentTarget.style.borderColor='var(--border-2)'; }}>
                         <div style={{flex:1}}>
                           <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
                             <span style={{color:'var(--text)',fontWeight:600,fontSize:13}}>{goal.name}</span>
                             <span style={{fontSize:10,padding:'1px 6px',borderRadius:8,
                               background:goal.status==='completed'?'var(--mint-soft)':goal.status==='inprogress'?'var(--gold-soft)':'var(--surface-3)',
-                              color:goal.status==='completed'?'#6b8e23':goal.status==='inprogress'?'#a8741a':'var(--text-3)'}}>
+                              color:goal.status==='completed'?'#2F6B45':goal.status==='inprogress'?'#A39B8B':'var(--text-3)'}}>
                               {goal.status==='inprogress'?'In Progress':goal.status}
                             </span>
-                            {alreadyLinked && <span style={{fontSize:10,padding:'1px 6px',borderRadius:8,background:'rgba(107,142,35,0.10)',color:'#6b8e23'}}>Already linked</span>}
+                            {alreadyLinked && <span style={{fontSize:10,padding:'1px 6px',borderRadius:8,background:'rgba(47,107,69,0.10)',color:'#2F6B45'}}>Already linked</span>}
                           </div>
                           <div style={{height:4,background:'var(--surface-3)',borderRadius:2,overflow:'hidden',maxWidth:200}}>
-                            <div style={{height:'100%',width:`${prog}%`,borderRadius:2,background:prog>=100?'#6b8e23':prog>50?'#5d3b78':'#a8741a'}}/>
+                            <div style={{height:'100%',width:`${prog}%`,borderRadius:2,background:prog>=100?'#2F6B45':prog>50?'#111111':'#A39B8B'}}/>
                           </div>
                           <div style={{color:'var(--text-3)',fontSize:10,marginTop:3}}>{prog.toFixed(0)}% of {fmtFull(goal.target_value)}</div>
                         </div>
                         {!alreadyLinked && (
-                          <span style={{fontSize:12,color:'#5d3b78',fontWeight:600,marginLeft:12}}>Link →</span>
+                          <span style={{fontSize:12,color:'#111111',fontWeight:600,marginLeft:12}}>Link →</span>
                         )}
                       </div>
                     );
@@ -3957,9 +3970,9 @@ export default function Dashboard() {
               </div>
 
               <div style={{marginBottom:12}}>
-                <div style={{fontSize:12,color:'#6b8e23',fontWeight:700,marginBottom:8}}>Scheme-wise Breakdown (optional)</div>
+                <div style={{fontSize:12,color:'#2F6B45',fontWeight:700,marginBottom:8}}>Scheme-wise Breakdown (optional)</div>
                 <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8}}>
-                  {[['e','Scheme E (Equity)','#6b8e23'],['c','Scheme C (Corp)','#34487a'],['g','Scheme G (Govt)','#a8741a']].map(([key,label,color])=>(
+                  {[['e','Scheme E (Equity)','#2F6B45'],['c','Scheme C (Corp)','#3A3833'],['g','Scheme G (Govt)','#A39B8B']].map(([key,label,color])=>(
                     <div key={key}>
                       <div style={{fontSize:10,color:color,fontWeight:700,marginBottom:4}}>{label}</div>
                       <input type="number" value={npsForm[`scheme_${key}_value`]||''} onChange={e=>setNpsForm(p=>({...p,[`scheme_${key}_value`]:e.target.value}))} placeholder="₹ Value"
@@ -3987,7 +4000,7 @@ export default function Dashboard() {
                 )}
               </div>
 
-              {npsError && <div style={{color:'#a82c2c',fontSize:12,marginBottom:10,padding:'7px 10px',background:'rgba(168,44,44,0.08)',borderRadius:6}}>⚠ {npsError}</div>}
+              {npsError && <div style={{color:'#9E2B25',fontSize:12,marginBottom:10,padding:'7px 10px',background:'rgba(158,43,37,0.08)',borderRadius:6}}>⚠ {npsError}</div>}
               <button onClick={saveNpsManual} disabled={npsSaving||!npsForm.statement_to||!npsForm.total_value}
                 className='k-btn-primary' style={{width:'100%',padding:'13px',fontSize:14,borderRadius:8}}>
                 {npsSaving?'⟳ Saving…':'Save NPS Entry'}
@@ -4101,7 +4114,7 @@ export default function Dashboard() {
 
               {/* TDS */}
               <div style={{background:'var(--surface-2)',border:'1px solid var(--border-2)',borderRadius:10,padding:14,marginBottom:12}}>
-                <div style={{fontSize:12,color:'#6b8e23',fontWeight:700,marginBottom:10}}>Tax (TDS)</div>
+                <div style={{fontSize:12,color:'#2F6B45',fontWeight:700,marginBottom:10}}>Tax (TDS)</div>
                 <div style={{display:'flex',gap:20,flexWrap:'wrap'}}>
                   <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',fontSize:12,color:'var(--text-3)'}}>
                     <input type="checkbox" checked={!!fdForm.tds_applicable} onChange={e=>setFdForm(p=>({...p,tds_applicable:e.target.checked}))} style={{accentColor:'var(--lime)'}}/>
@@ -4149,13 +4162,13 @@ export default function Dashboard() {
 
               {/* Live preview */}
               {fdPreview && (
-                <div style={{background:'var(--indigo-soft)',border:'1px solid rgba(52,72,122,0.18)',borderRadius:10,padding:14,marginBottom:14}}>
+                <div style={{background:'var(--indigo-soft)',border:'1px solid rgba(58,56,51,0.18)',borderRadius:10,padding:14,marginBottom:14}}>
                   <div style={{fontSize:11,color:'var(--indigo)',fontWeight:700,marginBottom:8,letterSpacing:0.5}}>LIVE PREVIEW</div>
                   <div style={{display:'flex',gap:20,flexWrap:'wrap'}}>
                     {[
-                      {label:'Maturity Amount', val:`₹${Number(fdPreview.maturity).toLocaleString('en-IN')}`, color:'#6b8e23'},
-                      {label:'Interest Earned',  val:`₹${Number(fdPreview.interest).toLocaleString('en-IN')}`, color:'#a8741a'},
-                      {label:'Net After TDS',    val:`₹${Number(fdPreview.net).toLocaleString('en-IN')}`, color:'#6b8e23'},
+                      {label:'Maturity Amount', val:`₹${Number(fdPreview.maturity).toLocaleString('en-IN')}`, color:'#2F6B45'},
+                      {label:'Interest Earned',  val:`₹${Number(fdPreview.interest).toLocaleString('en-IN')}`, color:'#A39B8B'},
+                      {label:'Net After TDS',    val:`₹${Number(fdPreview.net).toLocaleString('en-IN')}`, color:'#2F6B45'},
                       {label:'Maturity Date',    val:fdPreview.matDate, color:'var(--indigo)'},
                     ].map(p=>(
                       <div key={p.label}>
@@ -4167,7 +4180,7 @@ export default function Dashboard() {
                 </div>
               )}
 
-              {fdError && <div style={{color:'#a82c2c',fontSize:12,marginBottom:10,padding:'7px 10px',background:'rgba(168,44,44,0.08)',borderRadius:6}}>⚠ {fdError}</div>}
+              {fdError && <div style={{color:'#9E2B25',fontSize:12,marginBottom:10,padding:'7px 10px',background:'rgba(158,43,37,0.08)',borderRadius:6}}>⚠ {fdError}</div>}
               <button onClick={saveFd} disabled={fdSaving} className='k-btn-primary' style={{width:'100%',padding:'13px',fontSize:14,borderRadius:8}}>
                 {fdSaving?'⟳ Saving…':(editingFd?'Update FD':'Add Fixed Deposit')}
               </button>
@@ -4244,7 +4257,7 @@ export default function Dashboard() {
 
               {/* TDS */}
               <div style={{background:'var(--surface-2)',border:'1px solid var(--border-2)',borderRadius:10,padding:14,marginBottom:12}}>
-                <div style={{fontSize:12,color:'#6b8e23',fontWeight:700,marginBottom:10}}>Tax (TDS)</div>
+                <div style={{fontSize:12,color:'#2F6B45',fontWeight:700,marginBottom:10}}>Tax (TDS)</div>
                 <div style={{display:'flex',gap:20,flexWrap:'wrap'}}>
                   <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',fontSize:12,color:'var(--text-3)'}}>
                     <input type="checkbox" checked={!!rdForm.tds_applicable} onChange={e=>setRdForm(p=>({...p,tds_applicable:e.target.checked}))} style={{accentColor:'var(--lime)'}}/>
@@ -4282,14 +4295,14 @@ export default function Dashboard() {
 
               {/* Live preview */}
               {rdPreview && (
-                <div style={{background:'var(--indigo-soft)',border:'1px solid rgba(52,72,122,0.18)',borderRadius:10,padding:14,marginBottom:14}}>
+                <div style={{background:'var(--indigo-soft)',border:'1px solid rgba(58,56,51,0.18)',borderRadius:10,padding:14,marginBottom:14}}>
                   <div style={{fontSize:11,color:'var(--indigo)',fontWeight:700,marginBottom:8,letterSpacing:0.5}}>LIVE PREVIEW</div>
                   <div style={{display:'flex',gap:20,flexWrap:'wrap'}}>
                     {[
                       {label:'Total Investment',  val:`₹${Number(rdPreview.totalInvest).toLocaleString('en-IN')}`, color:'var(--text-3)'},
-                      {label:'Maturity Amount',   val:`₹${Number(rdPreview.maturity).toLocaleString('en-IN')}`,    color:'#6b8e23'},
-                      {label:'Interest Earned',   val:`₹${Number(rdPreview.interest).toLocaleString('en-IN')}`,    color:'#a8741a'},
-                      {label:'Net After TDS',     val:`₹${Number(rdPreview.net).toLocaleString('en-IN')}`,         color:'#6b8e23'},
+                      {label:'Maturity Amount',   val:`₹${Number(rdPreview.maturity).toLocaleString('en-IN')}`,    color:'#2F6B45'},
+                      {label:'Interest Earned',   val:`₹${Number(rdPreview.interest).toLocaleString('en-IN')}`,    color:'#A39B8B'},
+                      {label:'Net After TDS',     val:`₹${Number(rdPreview.net).toLocaleString('en-IN')}`,         color:'#2F6B45'},
                       {label:'Maturity Date',     val:rdPreview.matDate,                                           color:'var(--indigo)'},
                     ].map(p=>(
                       <div key={p.label}>
@@ -4301,7 +4314,7 @@ export default function Dashboard() {
                 </div>
               )}
 
-              {rdError && <div style={{color:'#a82c2c',fontSize:12,marginBottom:10,padding:'7px 10px',background:'rgba(168,44,44,0.08)',borderRadius:6}}>⚠ {rdError}</div>}
+              {rdError && <div style={{color:'#9E2B25',fontSize:12,marginBottom:10,padding:'7px 10px',background:'rgba(158,43,37,0.08)',borderRadius:6}}>⚠ {rdError}</div>}
               <button onClick={saveRd} disabled={rdSaving} className='k-btn-primary' style={{width:'100%',padding:'13px',fontSize:14,borderRadius:8}}>
                 {rdSaving?'⟳ Saving…':(editingRd?'Update RD':'Add Recurring Deposit')}
               </button>
@@ -4339,11 +4352,11 @@ export default function Dashboard() {
                 </div>
 
                 {(settingsSection==='expense' || settingsSection==='expensesettings') && (
-                  <div style={{background:'rgba(184,85,31,0.06)',border:'1px solid rgba(184,85,31,0.20)',borderRadius:10,padding:'18px 20px',fontSize:13,color:'var(--text-3)',lineHeight:1.7}}>
-                    <div style={{fontSize:15,fontWeight:700,color:'#b8551f',marginBottom:10}}>📱 Android App Sync</div>
+                  <div style={{background:'rgba(140,130,112,0.06)',border:'1px solid rgba(140,130,112,0.20)',borderRadius:10,padding:'18px 20px',fontSize:13,color:'var(--text-3)',lineHeight:1.7}}>
+                    <div style={{fontSize:15,fontWeight:700,color:'#8C8270',marginBottom:10}}>📱 Android App Sync</div>
                     <p style={{margin:'0 0 8px 0'}}>Expenses are synced automatically from your <b style={{color:'var(--text)'}}>Kanalyst Android app</b> via SMS detection.</p>
                     <p style={{margin:'0 0 8px 0'}}>Open the Android app → ensure SMS permission is granted → transactions will appear here automatically.</p>
-                    <p style={{margin:0,color:'var(--text-3)',fontSize:12}}>There is no email scan for expenses. To add a transaction manually, use the <b style={{color:'#b8551f'}}>+ Add Manual</b> button on the Expenses tab.</p>
+                    <p style={{margin:0,color:'var(--text-3)',fontSize:12}}>There is no email scan for expenses. To add a transaction manually, use the <b style={{color:'#8C8270'}}>+ Add Manual</b> button on the Expenses tab.</p>
                   </div>
                 )}
                 {settingsSection==='family' && (
@@ -4353,14 +4366,14 @@ export default function Dashboard() {
                   {/* Pending invites */}
                   {familyStatus.pendingInvites?.length > 0 && (
                     <div style={{marginBottom:18}}>
-                      <div style={{color:'#a8741a',fontSize:12,fontWeight:700,letterSpacing:1,marginBottom:8}}>PENDING INVITES</div>
+                      <div style={{color:'#A39B8B',fontSize:12,fontWeight:700,letterSpacing:1,marginBottom:8}}>PENDING INVITES</div>
                       {familyStatus.pendingInvites.map(inv => (
-                        <div key={inv.id} style={{background:'rgba(168,116,26,0.06)',border:'1px solid rgba(168,116,26,0.20)',borderRadius:10,padding:'12px 16px',marginBottom:8}}>
+                        <div key={inv.id} style={{background:'rgba(163,155,139,0.06)',border:'1px solid rgba(163,155,139,0.20)',borderRadius:10,padding:'12px 16px',marginBottom:8}}>
                           <div style={{color:'var(--text)',fontSize:13,fontWeight:600,marginBottom:4}}>{inv.inviterName} invited you to join <b>{inv.groupName}</b></div>
                           <div style={{color:'var(--text-3)',fontSize:11,marginBottom:10}}>You will share portfolio data with this family group</div>
                           <div style={{display:'flex',gap:8}}>
                             <button onClick={()=>respondInvite(inv.id,'accept')} className='k-btn-primary' style={{flex:1,padding:'8px'}}>✅ Accept</button>
-                            <button onClick={()=>respondInvite(inv.id,'reject')} style={{flex:1,background:'rgba(168,44,44,0.10)',border:'1px solid rgba(168,44,44,0.25)',color:'#a82c2c',borderRadius:8,padding:'8px',fontWeight:700,fontSize:13,cursor:'pointer'}}>✕ Decline</button>
+                            <button onClick={()=>respondInvite(inv.id,'reject')} style={{flex:1,background:'rgba(158,43,37,0.10)',border:'1px solid rgba(158,43,37,0.25)',color:'#9E2B25',borderRadius:8,padding:'8px',fontWeight:700,fontSize:13,cursor:'pointer'}}>✕ Decline</button>
                           </div>
                         </div>
                       ))}
@@ -4376,13 +4389,13 @@ export default function Dashboard() {
                           <div>
                             <div style={{display:'flex',alignItems:'center',gap:8}}>
                               <span style={{color:'var(--text)',fontSize:13,fontWeight:600}}>{m.name}</span>
-                              {m.isMe && <span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'rgba(93,59,120,0.10)',color:'#5d3b78'}}>You</span>}
-                              {m.role==='admin' && <span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'rgba(107,142,35,0.10)',color:'#6b8e23'}}>Admin</span>}
+                              {m.isMe && <span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'rgba(17,17,17,0.10)',color:'#111111'}}>You</span>}
+                              {m.role==='admin' && <span style={{fontSize:10,padding:'2px 6px',borderRadius:4,background:'rgba(47,107,69,0.10)',color:'#2F6B45'}}>Admin</span>}
                             </div>
                             <div style={{color:'var(--text-3)',fontSize:11,marginTop:2}}>{m.email}</div>
                           </div>
                           {!m.isMe && (
-                            <button onClick={()=>removeFamilyMember(m.user_id)} style={{background:'rgba(168,44,44,0.08)',border:'1px solid rgba(168,44,44,0.20)',color:'#a82c2c',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:11}}>Remove</button>
+                            <button onClick={()=>removeFamilyMember(m.user_id)} style={{background:'rgba(158,43,37,0.08)',border:'1px solid rgba(158,43,37,0.20)',color:'#9E2B25',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:11}}>Remove</button>
                           )}
                           {m.isMe && (
                             <button onClick={()=>removeFamilyMember(m.user_id)} style={{background:'rgba(100,116,139,0.08)',border:'1px solid var(--border-2)',color:'var(--text-3)',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:11}}>Leave</button>
@@ -4399,7 +4412,7 @@ export default function Dashboard() {
                       {familyStatus.sentInvites.filter(i=>i.status==='pending').map(inv => (
                         <div key={inv.id} style={{display:'flex',justifyContent:'space-between',padding:'8px 14px',background:'var(--surface-2)',border:'1px solid var(--border-2)',borderRadius:8,marginBottom:4,fontSize:12}}>
                           <span style={{color:'var(--text-3)'}}>{inv.invited_email}</span>
-                          <span style={{color:'#a8741a'}}>⏳ Pending</span>
+                          <span style={{color:'#A39B8B'}}>⏳ Pending</span>
                         </div>
                       ))}
                     </div>
@@ -4420,8 +4433,8 @@ export default function Dashboard() {
                     </div>
                     {inviteResult && (
                       <div style={{marginTop:10,padding:'8px 12px',borderRadius:8,fontSize:12,
-                        background:inviteResult.success?'rgba(107,142,35,0.08)':'rgba(168,44,44,0.08)',
-                        color:inviteResult.success?'#6b8e23':'#a82c2c'}}>
+                        background:inviteResult.success?'rgba(47,107,69,0.08)':'rgba(158,43,37,0.08)',
+                        color:inviteResult.success?'#2F6B45':'#9E2B25'}}>
                         {inviteResult.success?'✅':'⚠'} {inviteResult.message}
                       </div>
                     )}
@@ -4440,9 +4453,9 @@ export default function Dashboard() {
                   {historyData.length > 0 && (
                     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:16}}>
                       {[
-                        {label:'Snapshots',    val:historyData.length,                                  color:'#6b8e23'},
+                        {label:'Snapshots',    val:historyData.length,                                  color:'#2F6B45'},
                         {label:'Date Range',   val:historySummary.dateRange?`${historySummary.dateRange.from} to ${historySummary.dateRange.to}`:'—', color:'var(--text-3)'},
-                        {label:'Growth',       val:historySummary.growthPct?`${historySummary.growthPct>=0?'+':''}${historySummary.growthPct}%`:'—', color:parseFloat(historySummary.growthPct||0)>=0?'#6b8e23':'#a82c2c'},
+                        {label:'Growth',       val:historySummary.growthPct?`${historySummary.growthPct>=0?'+':''}${historySummary.growthPct}%`:'—', color:parseFloat(historySummary.growthPct||0)>=0?'#2F6B45':'#9E2B25'},
                       ].map(s=>(
                         <div key={s.label} style={{background:'var(--surface-2)',borderRadius:8,padding:'10px 14px',border:'1px solid var(--border-2)',textAlign:'center'}}>
                           <div style={{color:s.color,fontWeight:700,fontSize:16}}>{s.val}</div>
@@ -4473,14 +4486,14 @@ export default function Dashboard() {
                       </div>
                     </div>
                     <button onClick={startBackfill} disabled={backfilling}
-                      style={{width:'100%',background:backfilling?'var(--surface-3)':'#5d3b78',border:'none',color:backfilling?'var(--text-3)':'#fff',borderRadius:8,padding:'11px',fontWeight:700,fontSize:13,cursor:backfilling?'not-allowed':'pointer'}}>
+                      style={{width:'100%',background:backfilling?'var(--surface-3)':'#111111',border:'none',color:backfilling?'var(--text-3)':'#fff',borderRadius:8,padding:'11px',fontWeight:700,fontSize:13,cursor:backfilling?'not-allowed':'pointer'}}>
                       {backfilling ? '⟳ Scanning CAS emails — this may take a few minutes…' : '⟳ Start Historical Sync'}
                     </button>
                     {backfillResult && (
                       <div style={{marginTop:10,padding:'8px 12px',borderRadius:8,fontSize:12,
-                        background:backfillResult.success?'rgba(107,142,35,0.06)':'rgba(168,44,44,0.06)',
-                        border:`1px solid ${backfillResult.success?'rgba(107,142,35,0.20)':'rgba(168,44,44,0.20)'}`,
-                        color:backfillResult.success?'#6b8e23':'#a82c2c'}}>
+                        background:backfillResult.success?'rgba(47,107,69,0.06)':'rgba(158,43,37,0.06)',
+                        border:`1px solid ${backfillResult.success?'rgba(47,107,69,0.20)':'rgba(158,43,37,0.20)'}`,
+                        color:backfillResult.success?'#2F6B45':'#9E2B25'}}>
                         {backfillResult.success ? '✅' : '⚠'} {backfillResult.message}
                       </div>
                     )}
@@ -4498,7 +4511,7 @@ export default function Dashboard() {
                         {npsSyncing?'⟳ Scanning…':'Sync NPS'}
                       </button>
                     </div>
-                    {npsSyncResult && <div style={{fontSize:11,padding:'6px 10px',borderRadius:6,background:npsSyncResult.success?'rgba(179,157,219,0.06)':'rgba(168,44,44,0.06)',color:npsSyncResult.success?'#5d3b78':'#a82c2c'}}>{npsSyncResult.message}</div>}
+                    {npsSyncResult && <div style={{fontSize:11,padding:'6px 10px',borderRadius:6,background:npsSyncResult.success?'rgba(179,157,219,0.06)':'rgba(158,43,37,0.06)',color:npsSyncResult.success?'#111111':'#9E2B25'}}>{npsSyncResult.message}</div>}
                   </div>
 
                   {/* Historical Sync Status Panel - separate component to avoid hook violations */}
@@ -4514,7 +4527,7 @@ export default function Dashboard() {
                         try { await portfolioHistoryAPI.snapshot(); await loadHistory(historyYears); }
                         catch(e) { alert('Snapshot failed: '+e.message); }
                       }}
-                      style={{background:'rgba(107,142,35,0.10)',border:'1px solid rgba(107,142,35,0.25)',color:'#6b8e23',borderRadius:8,padding:'9px 18px',fontWeight:700,fontSize:12,cursor:'pointer'}}>
+                      style={{background:'rgba(47,107,69,0.10)',border:'1px solid rgba(47,107,69,0.25)',color:'#2F6B45',borderRadius:8,padding:'9px 18px',fontWeight:700,fontSize:12,cursor:'pointer'}}>
                       📸 Save Snapshot Now
                     </button>
                   </div>
@@ -4580,7 +4593,7 @@ export default function Dashboard() {
                             We use <code style={{background:'var(--surface-3)',padding:'1px 5px',borderRadius:3,fontSize:10}}>gmail.readonly</code> to read CAS and NPS statements from NSDL / CDSL / Protean emails only. Raw emails are never stored.
                           </div>
                         </div>
-                        <span style={{flexShrink:0,fontSize:11,padding:'3px 8px',borderRadius:4,background:gmailConnected?'var(--mint-soft)':'var(--surface-3)',color:gmailConnected?'var(--mint)':'var(--text-3)',fontWeight:600,border:`1px solid ${gmailConnected?'rgba(31,107,74,0.25)':'var(--border)'}`}}>
+                        <span style={{flexShrink:0,fontSize:11,padding:'3px 8px',borderRadius:4,background:gmailConnected?'var(--mint-soft)':'var(--surface-3)',color:gmailConnected?'var(--mint)':'var(--text-3)',fontWeight:600,border:`1px solid ${gmailConnected?'rgba(47,107,69,0.25)':'var(--border)'}`}}>
                           {gmailConnected?'Connected':'Not connected'}
                         </span>
                       </div>
@@ -4592,12 +4605,12 @@ export default function Dashboard() {
                       <div style={{display:'flex',gap:8}}>
                         {gmailConnected ? (
                           <button onClick={disconnectGmail} disabled={disconnecting}
-                            style={{padding:'8px 14px',background:'var(--coral-soft)',border:'1px solid rgba(168,44,44,0.30)',color:'var(--coral)',borderRadius:7,fontSize:12,fontWeight:600,cursor:'pointer',opacity:disconnecting?0.6:1}}>
+                            style={{padding:'8px 14px',background:'var(--coral-soft)',border:'1px solid rgba(158,43,37,0.30)',color:'var(--coral)',borderRadius:7,fontSize:12,fontWeight:600,cursor:'pointer',opacity:disconnecting?0.6:1}}>
                             {disconnecting?'Disconnecting…':'Disconnect Gmail'}
                           </button>
                         ) : (
                           <button onClick={()=>{setShowSettings(false);setShowConnectModal(true);setConnectStep('choose');}}
-                            style={{padding:'8px 14px',background:'var(--lime-soft)',border:'1px solid rgba(107,142,35,0.30)',color:'var(--lime)',borderRadius:7,fontSize:12,fontWeight:600,cursor:'pointer'}}>
+                            style={{padding:'8px 14px',background:'var(--lime-soft)',border:'1px solid rgba(47,107,69,0.30)',color:'var(--lime)',borderRadius:7,fontSize:12,fontWeight:600,cursor:'pointer'}}>
                             Connect Gmail
                           </button>
                         )}
@@ -4619,7 +4632,7 @@ export default function Dashboard() {
                     </div>
 
                     {/* Delete account */}
-                    <div style={{background:'var(--coral-soft)',border:'1px solid rgba(168,44,44,0.25)',borderRadius:10,padding:16}}>
+                    <div style={{background:'var(--coral-soft)',border:'1px solid rgba(158,43,37,0.25)',borderRadius:10,padding:16}}>
                       <div style={{color:'var(--coral)',fontSize:13,fontWeight:700,marginBottom:4}}>⚠ Delete Account &amp; All Data</div>
                       <div style={{color:'var(--text-2)',fontSize:11,marginBottom:12,lineHeight:1.6}}>
                         This permanently deletes your account, all portfolio data, transaction history, goals, and Gmail tokens. This action cannot be undone. Gmail access will be revoked immediately.
@@ -4643,9 +4656,9 @@ export default function Dashboard() {
                   <>
                     {(incomeSummary.currentFYTotal>0||incomeEntries.length>0) && (
                       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:18}}>
-                        {[{label:`${incomeSummary.fyLabel||'FY26'} Total`,val:fmt(incomeSummary.currentFYTotal||0),color:'#6b8e23'},
-                          {label:'This Month',val:fmt(incomeSummary.thisMonthTotal||0),color:'#5d3b78'},
-                          {label:'Entries',val:incomeEntries.length,color:'#34487a'}].map(s=>(
+                        {[{label:`${incomeSummary.fyLabel||'FY26'} Total`,val:fmt(incomeSummary.currentFYTotal||0),color:'#2F6B45'},
+                          {label:'This Month',val:fmt(incomeSummary.thisMonthTotal||0),color:'#111111'},
+                          {label:'Entries',val:incomeEntries.length,color:'#3A3833'}].map(s=>(
                           <div key={s.label} style={{background:'var(--surface-2)',borderRadius:8,padding:'10px 14px',border:'1px solid var(--border-2)',textAlign:'center'}}>
                             <div style={{color:s.color,fontWeight:700,fontSize:18}}>{s.val}</div>
                             <div style={{color:'var(--text-3)',fontSize:11,marginTop:2}}>{s.label}</div>
@@ -4656,16 +4669,16 @@ export default function Dashboard() {
 
                     {showRuleForm ? (
                       <div style={{background:'var(--surface-2)',borderRadius:10,padding:18,border:'1px solid var(--border-2)',marginBottom:16}}>
-                        <div style={{color:'#6b8e23',fontWeight:700,fontSize:13,marginBottom:16}}>{editingRule?'✎ Edit Rule':'+ New Income Rule'}</div>
+                        <div style={{color:'#2F6B45',fontWeight:700,fontSize:13,marginBottom:16}}>{editingRule?'✎ Edit Rule':'+ New Income Rule'}</div>
 
                         {/* Name + Category */}
                         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
                           <div>
-                            <label style={{display:'block',color:'var(--text-3)',fontSize:11,fontWeight:700,marginBottom:5}}>RULE NAME <span style={{color:'#a82c2c'}}>*</span></label>
+                            <label style={{display:'block',color:'var(--text-3)',fontSize:11,fontWeight:700,marginBottom:5}}>RULE NAME <span style={{color:'#9E2B25'}}>*</span></label>
                             <input className="db-input" placeholder="e.g. HDFC Salary" value={ruleForm.rule_name} onChange={e=>setRuleForm(p=>({...p,rule_name:e.target.value}))} />
                           </div>
                           <div>
-                            <label style={{display:'block',color:'var(--text-3)',fontSize:11,fontWeight:700,marginBottom:5}}>CATEGORY <span style={{color:'#a82c2c'}}>*</span></label>
+                            <label style={{display:'block',color:'var(--text-3)',fontSize:11,fontWeight:700,marginBottom:5}}>CATEGORY <span style={{color:'#9E2B25'}}>*</span></label>
                             <div style={{display:'flex',gap:6}}>
                               <select className="db-input" style={{flex:1,background:'var(--surface-2)',color:'var(--text)',cursor:'pointer'}}
                                 value={INCOME_CATS.includes(ruleForm.category)?ruleForm.category:'__custom'}
@@ -4683,7 +4696,7 @@ export default function Dashboard() {
                         {/* Receive bank - mandatory */}
                         <div style={{marginBottom:12}}>
                           <label style={{display:'block',color:'var(--text-3)',fontSize:11,fontWeight:700,marginBottom:5}}>
-                            RECEIVE BANK <span style={{color:'#a82c2c'}}>*</span>
+                            RECEIVE BANK <span style={{color:'#9E2B25'}}>*</span>
                             <span style={{color:'var(--text-4)',fontWeight:400,marginLeft:6}}>— which account receives the money</span>
                           </label>
                           <select className="db-input" style={{background:'var(--surface-2)',color:ruleForm.receive_bank?'var(--text)':'var(--text-3)',cursor:'pointer',width:'100%'}}
@@ -4770,7 +4783,7 @@ export default function Dashboard() {
                         {/* Credit only toggle */}
                         <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:14,padding:'10px 12px',background:'var(--surface-2)',borderRadius:8,border:'1px solid var(--border)'}}>
                           <div onClick={()=>setRuleForm(p=>({...p,credit_only:!p.credit_only}))}
-                            style={{width:38,height:22,borderRadius:11,background:ruleForm.credit_only?'#6b8e23':'var(--surface-3)',cursor:'pointer',position:'relative',transition:'background 0.2s',flexShrink:0}}>
+                            style={{width:38,height:22,borderRadius:11,background:ruleForm.credit_only?'#2F6B45':'var(--surface-3)',cursor:'pointer',position:'relative',transition:'background 0.2s',flexShrink:0}}>
                             <div style={{position:'absolute',top:4,left:ruleForm.credit_only?20:4,width:14,height:14,borderRadius:'50%',background:'#fff',transition:'left 0.2s'}}/>
                           </div>
                           <div>
@@ -4786,7 +4799,7 @@ export default function Dashboard() {
                         </div>
 
                         {ruleError && (
-                          <div style={{color:'#a82c2c',fontSize:12,marginBottom:10,padding:'7px 10px',background:'rgba(168,44,44,0.08)',borderRadius:6,border:'1px solid rgba(168,44,44,0.20)'}}>
+                          <div style={{color:'#9E2B25',fontSize:12,marginBottom:10,padding:'7px 10px',background:'rgba(158,43,37,0.08)',borderRadius:6,border:'1px solid rgba(158,43,37,0.20)'}}>
                             ⚠ {ruleError}
                           </div>
                         )}
@@ -4809,8 +4822,8 @@ export default function Dashboard() {
                             <div style={{flex:1}}>
                               <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4,flexWrap:'wrap'}}>
                                 <span style={{color:'var(--text)',fontWeight:700,fontSize:13}}>{rule.rule_name}</span>
-                                <span style={{fontSize:10,background:'rgba(107,142,35,0.10)',color:'#6b8e23',borderRadius:4,padding:'1px 7px',fontWeight:600}}>{rule.category}</span>
-                                {rule.receive_bank && <span style={{fontSize:10,background:'rgba(52,72,122,0.10)',color:'#34487a',borderRadius:4,padding:'1px 7px'}}>🏦 {rule.receive_bank}</span>}
+                                <span style={{fontSize:10,background:'rgba(47,107,69,0.10)',color:'#2F6B45',borderRadius:4,padding:'1px 7px',fontWeight:600}}>{rule.category}</span>
+                                {rule.receive_bank && <span style={{fontSize:10,background:'rgba(58,56,51,0.10)',color:'#3A3833',borderRadius:4,padding:'1px 7px'}}>🏦 {rule.receive_bank}</span>}
                               </div>
                               <div style={{color:'var(--text-3)',fontSize:11,lineHeight:1.7}}>
                                 {rule.bank_sender&&<span>Sender: <b style={{color:'var(--text-3)'}}>{rule.bank_sender}</b> · </span>}
@@ -4821,7 +4834,7 @@ export default function Dashboard() {
                             </div>
                             <div style={{display:'flex',gap:6,marginLeft:10,flexShrink:0}}>
                               <button onClick={()=>openRuleForm(rule)} style={{background:'var(--surface-3)',border:'1px solid var(--text-4)',color:'var(--text-3)',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:11}}>Edit</button>
-                              <button onClick={()=>deleteRule(rule.id)} style={{background:'rgba(168,44,44,0.08)',border:'1px solid rgba(168,44,44,0.20)',color:'#a82c2c',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:11}}>✕</button>
+                              <button onClick={()=>deleteRule(rule.id)} style={{background:'rgba(158,43,37,0.08)',border:'1px solid rgba(158,43,37,0.20)',color:'#9E2B25',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:11}}>✕</button>
                             </div>
                           </div>
                         ))}
@@ -4833,16 +4846,16 @@ export default function Dashboard() {
                         )}
 
                         <div style={{display:'flex',gap:10,marginBottom:14}}>
-                          <button onClick={()=>openRuleForm()} style={{flex:1,background:'rgba(107,142,35,0.10)',border:'1px solid rgba(107,142,35,0.25)',color:'#6b8e23',borderRadius:8,padding:'11px',fontWeight:700,fontSize:13,cursor:'pointer'}}>
+                          <button onClick={()=>openRuleForm()} style={{flex:1,background:'rgba(47,107,69,0.10)',border:'1px solid rgba(47,107,69,0.25)',color:'#2F6B45',borderRadius:8,padding:'11px',fontWeight:700,fontSize:13,cursor:'pointer'}}>
                             + New Rule
                           </button>
                           <button onClick={scanIncome} disabled={incomeScanning||incomeRules.length===0}
-                            style={{flex:1,background:incomeRules.length>0?'#34487a':'var(--surface-3)',border:'none',color:incomeRules.length>0?'#fff':'var(--text-4)',borderRadius:8,padding:'11px',fontWeight:700,fontSize:13,cursor:incomeRules.length>0?'pointer':'not-allowed'}}>
+                            style={{flex:1,background:incomeRules.length>0?'#3A3833':'var(--surface-3)',border:'none',color:incomeRules.length>0?'#fff':'var(--text-4)',borderRadius:8,padding:'11px',fontWeight:700,fontSize:13,cursor:incomeRules.length>0?'pointer':'not-allowed'}}>
                             {incomeScanning?'⟳ Scanning…':'⟳ Scan Gmail Now'}
                           </button>
                         </div>
 
-                        {incomeScanResult&&<div style={{marginTop:10,padding:'8px 12px',borderRadius:8,fontSize:12,background:incomeScanResult.success?'rgba(107,142,35,0.08)':'rgba(168,44,44,0.08)',border:`1px solid ${incomeScanResult.success?'rgba(107,142,35,0.20)':'rgba(168,44,44,0.20)'}`,color:incomeScanResult.success?'#6b8e23':'#a82c2c'}}>{incomeScanResult.success?'✅':'⚠'} {incomeScanResult.message}{(incomeScanResult.emailsRead||0)>0&&` · ${incomeScanResult.emailsRead} read, ${incomeScanResult.found} captured`}</div>}
+                        {incomeScanResult&&<div style={{marginTop:10,padding:'8px 12px',borderRadius:8,fontSize:12,background:incomeScanResult.success?'rgba(47,107,69,0.08)':'rgba(158,43,37,0.08)',border:`1px solid ${incomeScanResult.success?'rgba(47,107,69,0.20)':'rgba(158,43,37,0.20)'}`,color:incomeScanResult.success?'#2F6B45':'#9E2B25'}}>{incomeScanResult.success?'✅':'⚠'} {incomeScanResult.message}{(incomeScanResult.emailsRead||0)>0&&` · ${incomeScanResult.emailsRead} read, ${incomeScanResult.found} captured`}</div>}
                       </>
                     )}
                   </>
@@ -4864,7 +4877,7 @@ export default function Dashboard() {
             <div className="db-modal-body">
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
                 <div>
-                  <label style={{display:'block',color:'var(--text-3)',fontSize:11,fontWeight:700,marginBottom:5}}>CATEGORY <span style={{color:'#a82c2c'}}>*</span></label>
+                  <label style={{display:'block',color:'var(--text-3)',fontSize:11,fontWeight:700,marginBottom:5}}>CATEGORY <span style={{color:'#9E2B25'}}>*</span></label>
                   <div style={{display:'flex',gap:6}}>
                     <select className="db-input" style={{flex:1,background:'var(--surface-2)',color:'var(--text)',cursor:'pointer'}}
                       value={INCOME_CATS.includes(manualEntryForm.category)?manualEntryForm.category:'__custom'}
@@ -4878,13 +4891,13 @@ export default function Dashboard() {
                   </div>
                 </div>
                 <div>
-                  <label style={{display:'block',color:'var(--text-3)',fontSize:11,fontWeight:700,marginBottom:5}}>AMOUNT (₹) <span style={{color:'#a82c2c'}}>*</span></label>
+                  <label style={{display:'block',color:'var(--text-3)',fontSize:11,fontWeight:700,marginBottom:5}}>AMOUNT (₹) <span style={{color:'#9E2B25'}}>*</span></label>
                   <input className="db-input" type="number" placeholder="e.g. 75000" value={manualEntryForm.amount} onChange={e=>setManualEntryForm(p=>({...p,amount:e.target.value}))} />
                 </div>
               </div>
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
                 <div>
-                  <label style={{display:'block',color:'var(--text-3)',fontSize:11,fontWeight:700,marginBottom:5}}>DATE <span style={{color:'#a82c2c'}}>*</span></label>
+                  <label style={{display:'block',color:'var(--text-3)',fontSize:11,fontWeight:700,marginBottom:5}}>DATE <span style={{color:'#9E2B25'}}>*</span></label>
                   <input className="db-input" type="date" value={manualEntryForm.credited_on} onChange={e=>setManualEntryForm(p=>({...p,credited_on:e.target.value}))} />
                 </div>
                 <div>

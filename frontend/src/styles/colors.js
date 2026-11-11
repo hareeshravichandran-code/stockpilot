@@ -2,79 +2,83 @@
 // Maps 1:1 to the CSS variables in kanalyst-tokens.css
 export const C = {
   // Core surfaces
-  bg:       '#efe8d7',
-  bg2:      '#e8e0cc',
-  surface:  '#faf5e8',
-  surface2: '#f3ecd9',
-  surface3: '#e8dfc7',
+  bg:       '#F3EEE3',
+  bg2:      '#ECE6D8',
+  surface:  '#FAF7F0',
+  surface2: '#EFE9DC',
+  surface3: '#E6DFCF',
 
   // Text (ink scale)
-  text:  '#1a1612',
-  text2: '#5b4e3a',
-  text3: '#8a7d6a',
-  text4: '#b8ad97',
+  text:  '#111111',
+  text2: '#4A4741',
+  text3: '#85817A',
+  text4: '#B5B0A6',
 
   // Borders
-  border:  'rgba(26,22,18,0.08)',
-  border2: 'rgba(26,22,18,0.14)',
-  border3: 'rgba(26,22,18,0.22)',
+  border:  'rgba(17,17,17,0.08)',
+  border2: 'rgba(17,17,17,0.14)',
+  border3: 'rgba(17,17,17,0.22)',
 
   // Accent system — one colour, one job
-  lime:   '#6b8e23',   // moss — signature, hero & active nav
-  limeSoft: 'rgba(107,142,35,0.12)',
-  mint:   '#1f6b4a',   // forest — positive / gains
-  mintSoft: 'rgba(31,107,74,0.10)',
-  coral:  '#a82c2c',   // madder — negative / losses / expenses
-  coralSoft: 'rgba(168,44,44,0.10)',
-  gold:   '#a8741a',   // sienna — dividends
-  goldSoft: 'rgba(168,116,26,0.10)',
-  violet: '#5d3b78',   // aubergine — mutual funds
-  violetSoft: 'rgba(93,59,120,0.10)',
-  teal:   '#2d6b6b',   // deep teal — EPF
-  tealSoft: 'rgba(45,107,107,0.10)',
-  peach:  '#b8551f',   // terracotta — bank deposits / expenses
-  peachSoft: 'rgba(184,85,31,0.10)',
-  rose:   '#964062',   // mulberry — SSY
-  roseSoft: 'rgba(150,64,98,0.10)',
-  indigo: '#34487a',   // prussian — NPS / family / invested
-  indigoSoft: 'rgba(52,72,122,0.10)',
+  lime:   '#D9541E',   // burnt orange — the one accent: buttons, active, due-now
+  limeSoft: 'rgba(217,84,30,0.10)',
+  pop:    '#D9541E',
+  sand:   '#CFC6B4',
+  mint:   '#2F6B45',   // forest — positive / gains
+  mintSoft: 'rgba(47,107,69,0.10)',
+  coral:  '#9E2B25',   // madder — negative / losses / expenses
+  coralSoft: 'rgba(158,43,37,0.10)',
+  gold:   '#A39B8B',   // sienna — dividends
+  goldSoft: 'rgba(163,155,139,0.10)',
+  violet: '#111111',   // aubergine — mutual funds
+  violetSoft: 'rgba(17,17,17,0.10)',
+  teal:   '#6F6A61',   // deep teal — EPF
+  tealSoft: 'rgba(90,86,79,0.10)',
+  peach:  '#8C8270',   // terracotta — bank deposits / expenses
+  peachSoft: 'rgba(140,130,112,0.10)',
+  rose:   '#B9B09E',   // mulberry — SSY
+  roseSoft: 'rgba(111,106,97,0.10)',
+  indigo: '#4A4741',   // prussian — NPS / family / invested
+  indigoSoft: 'rgba(58,56,51,0.10)',
 };
 
 // Recharts tooltip style — reuse everywhere
 export const TOOLTIP_STYLE = {
-  background: '#faf5e8',
-  border: '1px solid rgba(26,22,18,0.12)',
+  background: '#FAF7F0',
+  border: '1px solid rgba(17,17,17,0.12)',
   borderRadius: 8,
   fontSize: 12,
-  color: '#1a1612',
-  boxShadow: '0 4px 14px rgba(26,22,18,0.08)',
+  color: '#111111',
+  boxShadow: '0 4px 14px rgba(17,17,17,0.08)',
 };
 
 // Sector colours mapped to the muted palette
 export const SECTOR_COLORS = {
-  IT:     '#2d6b6b',   // teal
-  Auto:   '#a8741a',   // gold
-  Bank:   '#1f6b4a',   // mint
-  Infra:  '#6b8e23',   // lime
-  Pharma: '#5d3b78',   // violet
-  FMCG:   '#a82c2c',   // coral
-  Energy: '#b8551f',   // peach
-  Other:  '#8a7d6a',   // text3
+  // Charts: ink → sand steps (orange is kept for actions, red for losses)
+  IT:     '#111111',
+  Auto:   '#A39B8B',
+  Bank:   '#4A4741',
+  Infra:  '#8C8270',
+  Pharma: '#6F6A61',
+  FMCG:   '#2F2D29',
+  Energy: '#CFC6B4',
+  Metal:  '#5A564F',
+  Other:  '#B9B09E',
 };
 
 // Generic chart colour palette (10 muted accents)
 export const CHART_COLORS = [
-  '#6b8e23','#1f6b4a','#2d6b6b','#34487a','#5d3b78',
-  '#964062','#a82c2c','#a8741a','#b8551f','#8a7d6a',
+  '#111111','#4A4741','#8C8270','#CFC6B4','#2F2D29',
+  '#6F6A61','#A39B8B','#5A564F','#B9B09E','#85817A',
 ];
 
 // Asset allocation pie colours (by asset class)
 export const ASSET_COLORS = {
-  Stocks:         '#6b8e23',
-  'Mutual Funds': '#5d3b78',
-  PPF:            '#a8741a',
-  EPF:            '#2d6b6b',
-  NPS:            '#34487a',
-  'Bank Deposits':'#b8551f',
-  SSY:            '#964062',
+  'Mutual Funds': '#111111',
+  NPS:            '#4A4741',
+  EPF:            '#6F6A61',
+  'Bank Deposits':'#8C8270',
+  Stocks:         '#CFC6B4',
+  PPF:            '#A39B8B',
+  SSY:            '#B9B09E',
 };

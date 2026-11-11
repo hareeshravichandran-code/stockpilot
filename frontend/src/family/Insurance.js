@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { householdAPI } from '../lib/api';
+import LogoLoader from '../components/LogoLoader';
 import {
   Modal, Field, Empty, Faces, Avatar, MemberPicker, Seg, POLICY_KINDS, policyKind, FREQS, inr, inrFull,
   fmtDate, daysUntil, whenLabel, urgency, shortName, errMsg,
@@ -7,7 +8,7 @@ import {
 
 const KIND_COLOR = { health: 'var(--fo-teal)', term: 'var(--fo-prussian)', life: 'var(--fo-aubergine)', vehicle: 'var(--fo-terracotta)', home: 'var(--fo-moss)', accident: 'var(--fo-mulberry)', travel: 'var(--fo-marigold)', other: 'var(--fo-ink-3)' };
 // Lighter tints for the donut, which sits on the dark blue block
-const DONUT_COLOR = { health: '#7fc4c4', term: '#f3ecd9', life: '#cfadea', vehicle: '#f2a46f', home: '#bcd67f', accident: '#eaa3c0', travel: '#e3a018', other: '#b8ad97' };
+const DONUT_COLOR = { health: '#7fc4c4', term: '#EFE9DC', life: '#cfadea', vehicle: '#f2a46f', home: '#bcd67f', accident: '#eaa3c0', travel: '#D9541E', other: '#B5B0A6' };
 const perYear = (p) => (+p.premium || 0) * (FREQS.find(f => f[0] === p.premium_frequency)?.[2] ?? 1);
 
 function PolicyForm({ policy, members, onClose, onSaved, notify }) {
@@ -102,7 +103,7 @@ export default function Insurance({ members, notify }) {
   });
   const maxLife = Math.max(1, ...cover.map(c => c.life)), maxHealth = Math.max(1, ...cover.map(c => c.health));
 
-  if (items === null) return <div className="fo-loading"><span className="fo-spin" /> Loading policies…</div>;
+  if (items === null) return <LogoLoader label="Loading policies…" />;
   return (
     <div className="fo-page">
       <div className="fo-page-head">

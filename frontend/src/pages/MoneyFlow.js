@@ -6,8 +6,8 @@ import './MoneyFlow.css';
 
 const SECTIONS = [
   ['income', 'Came in', '#4d6a16'],
-  ['expense', 'Spent', '#b8551f'],
-  ['investment', 'Invested', '#5d3b78'],
+  ['expense', 'Spent', '#8C8270'],
+  ['investment', 'Invested', '#111111'],
 ];
 const monthLabel = (ym) => new Date(ym + '-01T00:00:00').toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
 const shortMonth = (ym) => new Date(ym + '-01T00:00:00').toLocaleDateString('en-IN', { month: 'short' });
@@ -57,7 +57,7 @@ function Trend({ months, current }) {
           <title>{`${shortMonth(m.month)} · ${['In', 'Spent', 'Invested'][k]} ${inrShort(v)}`}</title></rect>;
         return (
           <g key={m.month} className={m.month === current ? 'cur' : ''}>
-            {bar(m.income, 0, '#5f7f1f')}{bar(m.expense, 1, '#b8551f')}{bar(m.investment, 2, '#5d3b78')}
+            {bar(m.income, 0, '#2F6B45')}{bar(m.expense, 1, '#8C8270')}{bar(m.investment, 2, '#111111')}
             <text x={pad + i * gw + gw / 2} y={H + 16} textAnchor="middle">{shortMonth(m.month)}</text>
           </g>
         );
@@ -66,7 +66,7 @@ function Trend({ months, current }) {
   );
 }
 
-export default function MoneyFlow() {
+export default function MoneyFlow({ embedded = false }) {
   const nav = useNavigate();
   const [month, setMonth] = useState(thisMonth());
   const [data, setData] = useState(null);
@@ -97,9 +97,9 @@ export default function MoneyFlow() {
   };
 
   return (
-    <div className="mf">
+    <div className={`mf${embedded ? ' mf-embed' : ''}`}>
       <header className="mf-top">
-        <button type="button" className="mf-back" onClick={() => nav('/dashboard')} aria-label="Back">‹</button>
+        {!embedded && <button type="button" className="mf-back" onClick={() => nav('/dashboard')} aria-label="Back">‹</button>}
         <div className="mf-brand"><h1>Money flow</h1><small>Income, spending and investments · actual vs your usual month</small></div>
         <div className="mf-month">
           <button type="button" onClick={() => setMonth(m => addMonths(m, -1))} aria-label="Previous month">‹</button>
@@ -133,8 +133,8 @@ export default function MoneyFlow() {
 
           <div className="mf-grid">
             <section className="mf-card wide">
-              <h2><span style={{ background: '#b8551f' }} />Where it went <small>{inrShort(data.sections.expense.actual)}</small></h2>
-              <GroupRows groups={data.sections.expense.groups} color="#b8551f" goodWhenLow isNow={isNow} />
+              <h2><span style={{ background: '#8C8270' }} />Where it went <small>{inrShort(data.sections.expense.actual)}</small></h2>
+              <GroupRows groups={data.sections.expense.groups} color="#8C8270" goodWhenLow isNow={isNow} />
             </section>
             {SECTIONS.filter(s => s[0] !== 'expense').map(([k, title, c]) => (
               <section key={k} className="mf-card">
@@ -143,7 +143,7 @@ export default function MoneyFlow() {
               </section>
             ))}
             <section className="mf-card wide">
-              <h2>Last 7 months <small className="mf-legend"><i style={{ background: '#5f7f1f' }} />In <i style={{ background: '#b8551f' }} />Spent <i style={{ background: '#5d3b78' }} />Invested</small></h2>
+              <h2>Last 7 months <small className="mf-legend"><i style={{ background: '#2F6B45' }} />In <i style={{ background: '#8C8270' }} />Spent <i style={{ background: '#111111' }} />Invested</small></h2>
               <Trend months={data.months} current={month} />
             </section>
             {data.subscriptions.length > 0 && (

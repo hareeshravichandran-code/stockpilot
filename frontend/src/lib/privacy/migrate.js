@@ -3,7 +3,7 @@ import { sealTxn, sealRule } from './vault';
 import { sealFields } from './fields';
 
 // Bumped when more fields become encrypted: accounts on an older version run the catch-up once more
-export const MIGRATION_V = 2;
+export const MIGRATION_V = 3;
 
 /** Encrypts this account's existing readable data, table by table, a page at a time. onProgress(done) */
 export async function migrateAll(onProgress = () => {}) {

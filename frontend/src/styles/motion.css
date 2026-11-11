@@ -1,0 +1,45 @@
+/* ── Motion: things rise in, numbers count up, the one orange thing breathes ─────────────── */
+@keyframes k-rise { from { opacity: 0; transform: translateY(14px) scale(.985); } to { opacity: 1; transform: none; } }
+@keyframes k-slide-in { from { opacity: 0; transform: translateX(-12px); } to { opacity: 1; transform: none; } }
+@keyframes k-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(217,84,30,.45); } 70% { box-shadow: 0 0 0 8px rgba(217,84,30,0); } }
+@keyframes k-blink { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@keyframes k-shimmer { from { background-position: -320px 0; } to { background-position: 320px 0; } }
+@keyframes k-grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+/* Cards rise in, one after another */
+.db-card, .ov-card, .ov-hero, .ov-fam, .ov-stat, .fo-card, .mf-tile, .mc-card, .k-rise {
+  animation: k-rise .55s cubic-bezier(.32,.72,0,1) both;
+}
+.db-content > *:nth-child(2), .ov > *:nth-child(2) { animation-delay: .05s; }
+.db-content > *:nth-child(3), .ov > *:nth-child(3) { animation-delay: .10s; }
+.db-content > *:nth-child(4), .ov > *:nth-child(4) { animation-delay: .15s; }
+.db-content > *:nth-child(5), .ov > *:nth-child(5) { animation-delay: .20s; }
+.db-content > *:nth-child(n+6), .ov > *:nth-child(n+6) { animation-delay: .25s; }
+.ov-stats > *:nth-child(2) { animation-delay: .06s; } .ov-stats > *:nth-child(3) { animation-delay: .12s; } .ov-stats > *:nth-child(4) { animation-delay: .18s; }
+
+/* Hover: a soft lift */
+.db-card, .ov-card, .ov-stat, .fo-card { transition: transform .25s cubic-bezier(.32,.72,0,1), box-shadow .25s; }
+.ov-stat:hover, .fo-card:hover, .ov-card.clickable:hover { transform: translateY(-2px); box-shadow: 0 10px 28px rgba(17,17,17,.08); }
+
+/* Bars and meters grow from the left */
+.ov-bar > span, .ov-meter > span, .k-grow { transform-origin: left center; animation: k-grow .9s cubic-bezier(.32,.72,0,1) both; animation-delay: .15s; }
+
+/* Side menu items slide in */
+.db-nav-item { animation: k-slide-in .4s cubic-bezier(.32,.72,0,1) both; }
+.db-nav-item:hover { transform: translateX(2px); }
+.db-nav-item { transition: transform .2s, background .2s, color .2s; }
+
+/* Due-now: the orange dot breathes; urgent text blinks gently */
+.k-pulse { animation: k-pulse 1.8s ease-out infinite; border-radius: 999px; }
+.k-blink { animation: k-blink 1.6s ease-in-out infinite; }
+
+/* Skeleton shimmer for loading rows */
+.k-skel { border-radius: 8px; background: linear-gradient(90deg, rgba(17,17,17,.05) 0%, rgba(17,17,17,.10) 40%, rgba(17,17,17,.05) 80%); background-size: 640px 100%; animation: k-shimmer 1.3s linear infinite; }
+
+/* Buttons: press feel */
+button { transition: transform .12s, background .2s, box-shadow .2s, color .2s; }
+button:active:not(:disabled) { transform: scale(.97); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+}

@@ -21,42 +21,43 @@
   --ease-quick:  cubic-bezier(0.4, 0, 0.2, 1);
 
   /* ── Surfaces (paper / cream) ───────────────────────────────── */
-  --bg:        #efe8d7;   /* page background — warm cream */
-  --bg-2:      #e8e0cc;   /* sidebar slightly deeper */
-  --surface:   #faf5e8;   /* cards */
-  --surface-2: #f3ecd9;   /* recessed wells */
-  --surface-3: #e8dfc7;   /* divider fills */
+  --bg:        #F3EEE3;   /* page background — warm cream */
+  --bg-2:      #ECE6D8;   /* sidebar slightly deeper */
+  --surface:   #FAF7F0;   /* cards */
+  --surface-2: #EFE9DC;   /* recessed wells */
+  --surface-3: #E6DFCF;   /* divider fills */
 
   /* ── Borders ────────────────────────────────────────────────── */
-  --border:    rgba(26,22,18,0.08);
-  --border-2:  rgba(26,22,18,0.14);
-  --border-3:  rgba(26,22,18,0.22);
+  --border:    rgba(17,17,17,0.08);
+  --border-2:  rgba(17,17,17,0.14);
+  --border-3:  rgba(17,17,17,0.22);
 
   /* ── Text (ink) ─────────────────────────────────────────────── */
-  --text:      #1a1612;
-  --text-2:    #5b4e3a;
-  --text-3:    #8a7d6a;
-  --text-4:    #b8ad97;
+  --text:      #111111;
+  --text-2:    #4A4741;
+  --text-3:    #85817A;
+  --text-4:    #B5B0A6;
 
-  /* ── Accent system (muted vibrant) ──────────────────────────── */
-  --lime:      #6b8e23;   /* moss — signature, hero & active nav */
-  --lime-soft: rgba(107,142,35,0.12);
-  --mint:      #1f6b4a;   /* forest — positive / gains */
-  --mint-soft: rgba(31,107,74,0.10);
-  --coral:    #a82c2c;    /* madder — negative / losses */
-  --coral-soft:rgba(168,44,44,0.10);
-  --gold:     #a8741a;    /* sienna — dividends */
-  --gold-soft:rgba(168,116,26,0.10);
-  --violet:   #5d3b78;    /* aubergine — mutual funds */
-  --violet-soft:rgba(93,59,120,0.10);
-  --teal:     #2d6b6b;    /* deep teal — EPF */
-  --teal-soft:rgba(45,107,107,0.10);
-  --peach:    #b8551f;    /* terracotta — bank deposits */
-  --peach-soft:rgba(184,85,31,0.10);
-  --rose:     #964062;    /* mulberry — SSY */
-  --rose-soft:rgba(150,64,98,0.10);
-  --indigo:   #34487a;    /* prussian — NPS / family / invested */
-  --indigo-soft:rgba(52,72,122,0.10);
+  /* ── Colour system: cream + ink, and one burnt orange that pops ──
+     Orange is only for the thing to act on: main buttons, active tab, due-now.
+     Data uses ink → sand steps. Gains green, losses red, on numbers only.   */
+  --pop:       #D9541E;   /* burnt orange — the one accent */
+  --pop-soft:  rgba(217,84,30,0.10);
+  --pop-ink:   #B8441A;   /* pressed / hover */
+  --sand:      #CFC6B4;
+  --lime:      var(--pop);              /* legacy name: signature, active nav, buttons */
+  --lime-soft: var(--pop-soft);
+  --mint:      #2F6B45;   /* gains */
+  --mint-soft: rgba(47,107,69,0.10);
+  --coral:     #9E2B25;   /* losses */
+  --coral-soft:rgba(158,43,37,0.09);
+  /* Data steps (modules): ink → sand */
+  --violet:    #111111;  --violet-soft: rgba(17,17,17,0.06);   /* mutual funds */
+  --indigo:    #4A4741;  --indigo-soft: rgba(17,17,17,0.06);   /* NPS / family */
+  --teal:      #6F6A61;  --teal-soft:   rgba(17,17,17,0.06);   /* EPF */
+  --peach:     #8C8270;  --peach-soft:  rgba(17,17,17,0.06);   /* bank deposits */
+  --gold:      #A39B8B;  --gold-soft:   rgba(17,17,17,0.06);   /* PPF / dividends */
+  --rose:      #B9B09E;  --rose-soft:   rgba(17,17,17,0.06);   /* SSY */
 
   /* Legacy alias mappings — keeps your existing CSS working
      without renaming. Remove these once migrated.               */
@@ -79,9 +80,9 @@
   --r-xl: 12px;
 
   /* ── Shadow ladder ──────────────────────────────────────────── */
-  --shadow-1: 0 1px 2px rgba(26,22,18,0.04), 0 0 0 1px rgba(26,22,18,0.015);
-  --shadow-2: 0 4px 14px rgba(26,22,18,0.06), 0 0 0 1px rgba(26,22,18,0.02);
-  --shadow-3: 0 12px 36px rgba(26,22,18,0.12), 0 0 0 1px rgba(26,22,18,0.025);
+  --shadow-1: 0 1px 2px rgba(17,17,17,0.04), 0 0 0 1px rgba(17,17,17,0.015);
+  --shadow-2: 0 4px 14px rgba(17,17,17,0.06), 0 0 0 1px rgba(17,17,17,0.02);
+  --shadow-3: 0 12px 36px rgba(17,17,17,0.12), 0 0 0 1px rgba(17,17,17,0.025);
 
   --sidebar-width: 232px;
 }
@@ -96,8 +97,8 @@ body {
 body::before {
   content:''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
   background:
-    radial-gradient(900px 600px at 12% -8%, rgba(107,142,35,0.06), transparent 60%),
-    radial-gradient(700px 500px at 100% 0%,  rgba(168,116,26,0.05), transparent 60%);
+    radial-gradient(900px 600px at 12% -8%, rgba(47,107,69,0.06), transparent 60%),
+    radial-gradient(700px 500px at 100% 0%,  rgba(163,155,139,0.05), transparent 60%);
 }
 
 /* ── Scrollbar (Apple narrow) ────────────────────────────────── */
@@ -143,10 +144,10 @@ body::before {
   display: inline-flex; align-items: center; gap: 6px;
   cursor: pointer;
   transition: all .25s var(--ease);
-  box-shadow: 0 1px 2px rgba(26,22,18,0.1);
+  box-shadow: 0 1px 2px rgba(17,17,17,0.1);
 }
-.k-btn-primary:hover  { background:#000; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(26,22,18,0.18), 0 0 0 4px rgba(26,22,18,0.06); }
-.k-btn-primary:active { transform: translateY(0); box-shadow: 0 1px 2px rgba(26,22,18,0.1); }
+.k-btn-primary:hover  { background:#000; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(17,17,17,0.18), 0 0 0 4px rgba(17,17,17,0.06); }
+.k-btn-primary:active { transform: translateY(0); box-shadow: 0 1px 2px rgba(17,17,17,0.1); }
 
 /* Ghost button */
 .k-btn-ghost {
@@ -160,7 +161,7 @@ body::before {
   cursor: pointer;
   transition: all .25s var(--ease);
 }
-.k-btn-ghost:hover  { border-color: var(--text); color: var(--text); transform: translateY(-1px); box-shadow: 0 4px 10px rgba(26,22,18,0.05); }
+.k-btn-ghost:hover  { border-color: var(--text); color: var(--text); transform: translateY(-1px); box-shadow: 0 4px 10px rgba(17,17,17,0.05); }
 .k-btn-ghost:active { transform: translateY(0); }
 
 /* Tinted action — use with --c set to one of the accents
@@ -177,7 +178,7 @@ body::before {
   display: inline-flex; align-items: center; gap: 6px;
   transition: all .25s var(--ease);
 }
-.k-act:hover  { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(26,22,18,0.07); }
+.k-act:hover  { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(17,17,17,0.07); }
 .k-act:active { transform: translateY(0); }
 
 /* Icon button (34px square) */
@@ -191,7 +192,7 @@ body::before {
   cursor: pointer;
   transition: all .25s var(--ease);
 }
-.k-iconbtn:hover  { color: var(--text); border-color: var(--text); transform: translateY(-1px); box-shadow: 0 4px 10px rgba(26,22,18,0.05); }
+.k-iconbtn:hover  { color: var(--text); border-color: var(--text); transform: translateY(-1px); box-shadow: 0 4px 10px rgba(17,17,17,0.05); }
 .k-iconbtn:active { transform: translateY(0); }
 
 /* Segmented control */
@@ -201,7 +202,7 @@ body::before {
   border: 1px solid var(--border);
   border-radius: 9px;
   padding: 3px; gap: 2px;
-  box-shadow: inset 0 1px 1px rgba(26,22,18,0.03);
+  box-shadow: inset 0 1px 1px rgba(17,17,17,0.03);
 }
 .k-seg button {
   padding: 5px 12px;
@@ -219,7 +220,7 @@ body::before {
 .k-seg button[aria-selected="true"] {
   background: var(--surface);
   color: var(--text);
-  box-shadow: 0 1px 2px rgba(26,22,18,0.08), 0 0 0 1px rgba(26,22,18,0.04);
+  box-shadow: 0 1px 2px rgba(17,17,17,0.08), 0 0 0 1px rgba(17,17,17,0.04);
 }
 
 /* Type tabs — stacked label + amount  */
@@ -229,7 +230,7 @@ body::before {
   border: 1px solid var(--border);
   border-radius: 11px;
   padding: 4px; gap: 2px;
-  box-shadow: inset 0 1px 1px rgba(26,22,18,0.03);
+  box-shadow: inset 0 1px 1px rgba(17,17,17,0.03);
 }
 .k-type-tabs button {
   padding: 9px 18px;
@@ -238,10 +239,10 @@ body::before {
   cursor: pointer; text-align: left; min-width: 148px;
   transition: all .25s var(--ease);
 }
-.k-type-tabs button:hover { background: rgba(26,22,18,0.025); }
+.k-type-tabs button:hover { background: rgba(17,17,17,0.025); }
 .k-type-tabs button.on {
   background: var(--surface);
-  box-shadow: 0 1px 3px rgba(26,22,18,0.07), 0 0 0 1px rgba(26,22,18,0.03);
+  box-shadow: 0 1px 3px rgba(17,17,17,0.07), 0 0 0 1px rgba(17,17,17,0.03);
 }
 .k-type-tabs .ttl {
   font: 600 9.5px/1 var(--font-mono);
@@ -312,7 +313,7 @@ body::before {
 }
 .k-tbl tr:last-child td { border-bottom: none; }
 .k-tbl tbody tr { transition: background .12s var(--ease); }
-.k-tbl tbody tr:hover td { background: rgba(26,22,18,0.025); }
+.k-tbl tbody tr:hover td { background: rgba(17,17,17,0.025); }
 .k-tbl td.mono { font: 500 12px/1.4 var(--font-mono); color: var(--text); }
 
 /* Topbar (sticky, blurred paper) */
@@ -320,7 +321,7 @@ body::before {
   display: flex; align-items: center; justify-content: space-between;
   padding: 0 28px; height: 60px;
   border-bottom: 1px solid var(--border);
-  background: rgba(239,232,215,0.85);
+  background: rgba(243,238,227,0.85);
   backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
   position: sticky; top: 0; z-index: 50;
 }
@@ -329,12 +330,12 @@ body::before {
 .k-live {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 6px 11px;
-  border: 1px solid rgba(31,107,74,0.25);
+  border: 1px solid rgba(47,107,69,0.25);
   border-radius: var(--r-md);
   font: 600 11px/1 var(--font-mono);
   letter-spacing: .04em;
   color: var(--mint);
-  background: rgba(31,107,74,0.10);
+  background: rgba(47,107,69,0.10);
 }
 .k-live::before {
   content:''; width: 6px; height: 6px; border-radius: 50%;
@@ -354,9 +355,22 @@ body::before {
 .recharts-legend-item-text { fill: var(--text-3) !important; color: var(--text-2) !important; }
 .recharts-tooltip-label     { color: var(--text) !important; }
 .recharts-tooltip-item      { color: var(--text-2) !important; }
-.recharts-default-tooltip   { background: var(--surface) !important; border: 1px solid rgba(26,22,18,0.12) !important; border-radius: 8px !important; }
+.recharts-default-tooltip   { background: var(--surface) !important; border: 1px solid rgba(17,17,17,0.12) !important; border-radius: 8px !important; }
 .recharts-cartesian-grid line { stroke: var(--border) !important; }
 
 /* Trend chart area fills — muted on cream */
 .recharts-area-area   { opacity: 0.7; }
 .recharts-line-curve  { stroke-width: 1.8; }
+
+/* ── Segmented switch (sub-screens: Holdings | Dividends, Money flow | Income | Expenses) ── */
+.k-seg { display: inline-flex; gap: 4px; padding: 4px; margin: 0 0 18px; background: var(--surface); border: 1px solid var(--border); border-radius: 999px; }
+.k-seg button { border: 0; background: none; padding: 8px 18px; border-radius: 999px; font: 500 14px var(--font-ui); color: var(--text-2); cursor: pointer; }
+.k-seg button:hover { color: var(--text); }
+.k-seg button.on { background: var(--text); color: var(--surface); font-weight: 600; }
+.k-stack { display: flex; flex-direction: column; gap: 22px; }
+.k-soon { padding: 36px; text-align: left; } .k-soon h3 { font-family: var(--font-display); font-weight: 400; font-size: 26px; margin: 0 0 8px; } .k-soon p { color: var(--text-2); margin: 0 0 18px; max-width: 560px; }
+.nav-soon { margin-left: auto; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-4); border: 1px solid var(--border-2); border-radius: 999px; padding: 1px 7px; }
+/* Primary action = the one orange */
+.k-btn-primary, .btn-primary { background: var(--pop) !important; color: #FAF7F0 !important; border-color: var(--pop) !important; }
+.k-btn-primary:hover, .btn-primary:hover { background: var(--pop-ink) !important; }
+.db-nav-item.active .nav-icon { color: var(--pop); }

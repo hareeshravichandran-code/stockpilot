@@ -4,6 +4,7 @@ import { householdAPI } from '../lib/api';
 import { PersonForm } from './People';
 import { Avatar, Faces, MODULE, inr, fmtDay, urgency, shortName, relLabel, ageFrom, errMsg, parseDate } from './shared';
 
+import LogoLoader from '../components/LogoLoader';
 const GO = { insurance: 'insurance', documents: 'documents', family: 'calendar', money: 'calendar', goals: 'calendar', loans: 'calendar' };
 
 export default function FamilyHome({ members, reloadMembers, notify, go }) {
@@ -17,7 +18,7 @@ export default function FamilyHome({ members, reloadMembers, notify, go }) {
 
   const me = members.find(m => m.is_me);
   const others = members.filter(m => !m.is_me);
-  if (!ov) return <div className="fo-loading"><span className="fo-spin" /> Looking across your family…</div>;
+  if (!ov) return <LogoLoader label="Looking across your family…" />;
   const c = ov.counts || {};
   const maxLife = Math.max(1, ...(ov.cover || []).map(x => x.life)), maxHealth = Math.max(1, ...(ov.cover || []).map(x => x.health));
   // Upcoming grouped by week

@@ -11,6 +11,7 @@ import Masters from '../family/Masters';
 import Events from '../family/Events';
 import './Family.css';
 
+import LogoLoader from '../components/LogoLoader';
 const TABS = [
   ['home', 'Home', 'var(--fo-marigold)'],
   ['people', 'People', 'var(--fo-ink)'],
@@ -18,10 +19,21 @@ const TABS = [
   ['documents', 'Documents', 'var(--fo-mulberry)'],
   ['calendar', 'Calendar', 'var(--fo-moss)'],
   ['masters', 'Masters', 'var(--fo-terracotta)'],
-  ['events', 'Events', 'var(--fo-coral, #a82c2c)'],
+  ['events', 'Events', 'var(--fo-coral, #9E2B25)'],
 ];
 
+const NEW_TAB = { home: 'dashboard', people: 'm-people', insurance: 'm-insurance', documents: 'm-documents', calendar: 'calendar', masters: 'm-all', events: 'm-events' };
+
+/** The Family pages now live inside the main app (Dashboards and Masters). Old links forward there. */
 export default function Family() {
+  const nav = useNavigate();
+  const [params] = useSearchParams();
+  useEffect(() => { nav(`/dashboard?tab=${NEW_TAB[params.get('tab') || 'home'] || 'dashboard'}`, { replace: true }); }, [nav, params]);
+  return null;
+}
+
+// eslint-disable-next-line no-unused-vars
+function FamilyLegacy() {
   const nav = useNavigate();
   const [params, setParams] = useSearchParams();
   const tab = TABS.some(t => t[0] === params.get('tab')) ? params.get('tab') : 'home';
@@ -61,7 +73,7 @@ export default function Family() {
       </header>
       <main className="fo-main">
         {err && <div className="fo-banner">{err}</div>}
-        {members === null ? <div className="fo-loading"><span className="fo-spin" /> Gathering your family…</div> : (
+        {members === null ? <LogoLoader label="Gathering your family…" /> : (
           <>
             {tab === 'home' && <FamilyHome {...shared} />}
             {tab === 'people' && <People {...shared} />}

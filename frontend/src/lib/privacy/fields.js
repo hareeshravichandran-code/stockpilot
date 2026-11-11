@@ -61,6 +61,7 @@ const RULES = [
   [/^\/api\/blueprint\/buckets\/[^/]+\/emi$/, ['post'], (d) => sealFields(d, { text: ['loan_name'] })],
   [/^\/api\/blueprint\/buckets\/[^/]+\/comments$/, ['post'], (d) => sealFields(d, { text: ['body'] })],
   [/^\/api\/auth\/profile$/, ['put'], (d) => sealFields(d, { text: ['name', 'mobile', 'clientCode'], ref: ['pan'], date: ['dob'] })],
+  [/^\/api\/epf\/accounts$/, ['post'], (d) => sealFields(d, { ref: ['uan', 'member_id'] })],
 ];
 
 export async function sealRequest(url, method, data) {
@@ -73,7 +74,7 @@ export async function sealRequest(url, method, data) {
 
 // The server needs PAN / DOB / name for opening statement PDFs and for age-based plans. Encrypted accounts
 // hand them over on just those requests, from this device, and the server never stores them readable.
-const PROFILE_PATHS = /^\/api\/(email|nps|mf|retirement|household|portfolio\/history|auth\/pdf-passwords)(\/|$)/;
+const PROFILE_PATHS = /^\/api\/(email|nps|mf|epf|retirement|household|portfolio\/history|auth\/pdf-passwords)(\/|$)/;
 let profile = null;
 export const rememberProfile = (me) => {
   if (!me || typeof me !== 'object') return;

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { smsIssuesAPI } from '../lib/api';
 import { fmtWhen } from './supportChat';
 
+import LogoLoader from '../components/LogoLoader';
 const STATUS = [['pending', 'Pending'], ['included', 'Included in code'], ['ignored', 'Not needed']];
 
 // Highlights the blanks in a template: # (numbers) and <name>, <url>, <mon>
@@ -54,7 +55,7 @@ export default function AdminSmsIssues() {
           )}
         </div>
         {err && <div className="sp-err">{err}</div>}
-        {!d ? <div className="sp-empty">Loading…</div> : d.issues.length === 0 ? <div className="sp-empty">Nothing here.</div> : (
+        {!d ? <LogoLoader /> : d.issues.length === 0 ? <div className="sp-empty">Nothing here.</div> : (
           <ul className="si-items">
             {d.issues.map(it => (
               <li key={it.id} className={`${sel === it.id ? 'on' : ''} ${it.reopened ? 'reopened' : ''}`} onClick={() => setSel(it.id)}>
@@ -90,7 +91,7 @@ function IssueDetail({ id, onChanged }) {
     setD(null);
     smsIssuesAPI.get(id).then(r => { setD(r.data); setNote(r.data.issue.admin_note || ''); setFixedIn(r.data.issue.fixed_in || ''); });
   }, [id]);
-  if (!d) return <div className="sp-empty">Loading…</div>;
+  if (!d) return <LogoLoader />;
   const it = d.issue;
   const save = async (status) => {
     await smsIssuesAPI.update(id, { status: status || it.status, admin_note: note, fixed_in: fixedIn });

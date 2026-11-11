@@ -24,8 +24,8 @@ function BarChart({ byFY }) {
             <div style={{
               width:'100%', height:h, borderRadius:'4px 4px 0 0',
               background: fy === CURRENT_FY
-                ? 'linear-gradient(180deg,#6b8e23,#1f6b4a)'
-                : 'linear-gradient(180deg,rgba(107,142,35,0.30),rgba(107,142,35,0.06))',
+                ? 'linear-gradient(180deg,#2F6B45,#2F6B45)'
+                : 'linear-gradient(180deg,rgba(47,107,69,0.30),rgba(47,107,69,0.06))',
               transition:'height 0.5s ease',
             }} />
             <div style={{ fontSize:11, color:'#888' }}>{fy}</div>
@@ -77,7 +77,7 @@ function MonthDrillDown({ yearMonth, income, onClose }) {
 
   return (
     <div style={{ background:'rgba(255,255,255,0.04)', borderRadius:12, padding:24,
-      border:'1px solid rgba(107,142,35,0.15)', marginBottom:24 }}>
+      border:'1px solid rgba(47,107,69,0.15)', marginBottom:24 }}>
 
       {/* Header row */}
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20 }}>
@@ -127,8 +127,8 @@ function MonthDrillDown({ yearMonth, income, onClose }) {
                 border:'1px solid rgba(255,255,255,0.06)', overflow:'hidden' }}>
                 {/* Date header */}
                 <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center',
-                  padding:'8px 14px', background:'rgba(107,142,35,0.06)',
-                  borderBottom:'1px solid rgba(107,142,35,0.10)' }}>
+                  padding:'8px 14px', background:'rgba(47,107,69,0.06)',
+                  borderBottom:'1px solid rgba(47,107,69,0.10)' }}>
                   <span style={{ fontSize:13, fontWeight:700, color:'var(--lime)' }}>{dayLabel}</span>
                   <span style={{ fontSize:13, fontWeight:700, color:'var(--lime)' }}>{fmtD(dayTotal)}</span>
                 </div>
@@ -140,7 +140,7 @@ function MonthDrillDown({ yearMonth, income, onClose }) {
                     onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.03)'}
                     onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
                     <div style={{ display:'flex', alignItems:'center', gap:12 }}>
-                      <div style={{ width:32, height:32, borderRadius:8, background:'rgba(107,142,35,0.10)',
+                      <div style={{ width:32, height:32, borderRadius:8, background:'rgba(47,107,69,0.10)',
                         display:'flex', alignItems:'center', justifyContent:'center',
                         fontSize:11, fontWeight:700, color:'var(--lime)', flexShrink:0 }}>
                         {(d.symbol || d.company || '??').slice(0, 4)}
@@ -197,16 +197,16 @@ function CalendarView({ byMonth, income, onMonthClick, selectedMonthKey }) {
                     padding:'6px 4px', borderRadius:6, textAlign:'center',
                     cursor: hasData ? 'pointer' : 'default',
                     background: isSelected
-                      ? 'rgba(107,142,35,0.25)'
+                      ? 'rgba(47,107,69,0.25)'
                       : amt > 0
                       ? `rgba(100,255,218,${intensity})`
                       : 'rgba(255,255,255,0.04)',
                     border: isSelected
-                      ? '1px solid rgba(107,142,35,0.50)'
+                      ? '1px solid rgba(47,107,69,0.50)'
                       : '1px solid rgba(255,255,255,0.06)',
                     transform: hasData && !isSelected ? undefined : undefined,
                     transition: 'all 0.15s',
-                    boxShadow: isSelected ? '0 0 8px rgba(107,142,35,0.20)' : 'none',
+                    boxShadow: isSelected ? '0 0 8px rgba(47,107,69,0.20)' : 'none',
                   }}>
                   <div style={{ fontSize:10, color: isSelected ? 'var(--text)' : '#aaa' }}>{m}</div>
                   {amt > 0 && (
@@ -291,7 +291,7 @@ export default function Dividends() {
             </span>
           )}
           <button onClick={() => load(true)} disabled={loading} style={{
-            background:'rgba(107,142,35,0.08)', border:'1px solid rgba(107,142,35,0.15)',
+            background:'rgba(47,107,69,0.08)', border:'1px solid rgba(47,107,69,0.15)',
             color:'var(--lime)', borderRadius:8, padding:'7px 14px', cursor:'pointer', fontSize:12, fontWeight:600
           }}>{loading ? '⏳ Fetching...' : '🔄 Refresh from Yahoo'}</button>
         </div>
@@ -341,7 +341,7 @@ export default function Dividends() {
           background:'rgba(255,255,255,0.04)',
           borderRadius:'0 0 12px 12px',
           border:'1px solid rgba(255,255,255,0.08)',
-          borderTopColor:'rgba(107,142,35,0.15)',
+          borderTopColor:'rgba(47,107,69,0.15)',
           marginBottom:24,
           padding:'0 24px 24px',
         }}>
@@ -355,7 +355,7 @@ export default function Dividends() {
 
       {/* Upcoming dividends */}
       {upcoming.length > 0 && (
-        <div style={{ background:'rgba(107,142,35,0.06)', borderRadius:12, padding:20, marginBottom:24, border:'1px solid rgba(107,142,35,0.12)' }}>
+        <div style={{ background:'rgba(47,107,69,0.06)', borderRadius:12, padding:20, marginBottom:24, border:'1px solid rgba(47,107,69,0.12)' }}>
           <div style={{ fontWeight:600, color:'var(--lime)', marginBottom:12, fontSize:14 }}>⏰ Upcoming Dividends</div>
           <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
             {upcoming.map((d, i) => (
@@ -421,7 +421,7 @@ export default function Dividends() {
                   <td style={{ padding:'10px 12px' }}>
                     <span style={{
                       padding:'2px 8px', borderRadius:12, fontSize:11,
-                      background: d.dividend_type === 'Final' ? 'rgba(107,142,35,0.12)' : 'rgba(255,215,0,0.15)',
+                      background: d.dividend_type === 'Final' ? 'rgba(47,107,69,0.12)' : 'rgba(255,215,0,0.15)',
                       color: d.dividend_type === 'Final' ? 'var(--mint)' : 'var(--gold)',
                     }}>{d.dividend_type}</span>
                   </td>

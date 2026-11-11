@@ -62,7 +62,7 @@
 .db-nav-item.active::before {
   content: ''; position: absolute; left: -1px; top: 8px; bottom: 8px;
   width: 2px; background: var(--lime); border-radius: 0 2px 2px 0;
-  box-shadow: 0 0 10px rgba(107,142,35,0.5);
+  box-shadow: 0 0 10px rgba(47,107,69,0.5);
 }
 .db-sidebar.closed .db-nav-item { justify-content: center; padding: 10px 0; }
 .db-sidebar.closed .nav-label   { display: none; }
@@ -117,7 +117,7 @@
   display: flex; align-items: center; justify-content: space-between;
   padding: 0 28px; height: 60px;
   border-bottom: 1px solid var(--border);
-  background: rgba(239,232,215,0.88);
+  background: rgba(243,238,227,0.88);
   backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
   position: sticky; top: 0; z-index: 50;
 }
@@ -135,7 +135,7 @@
 
 .db-live-badge {
   display: inline-flex; align-items: center; gap: 6px;
-  padding: 6px 11px; border: 1px solid rgba(31,107,74,0.25);
+  padding: 6px 11px; border: 1px solid rgba(47,107,69,0.25);
   border-radius: var(--r-md); font: 600 11px/1 var(--font-mono);
   letter-spacing: .04em; color: var(--mint); background: var(--mint-soft);
 }
@@ -147,9 +147,9 @@
 @keyframes k-pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
 
 .db-banner { display: flex; align-items: center; gap: 12px; padding: 10px 28px; font-size: 13px; border-bottom: 1px solid; }
-.db-banner.success { background: var(--mint-soft);   border-color: rgba(31,107,74,0.25);  color: var(--mint); }
-.db-banner.error   { background: var(--coral-soft);  border-color: rgba(168,44,44,0.25);  color: var(--coral); }
-.db-banner.info    { background: var(--indigo-soft); border-color: rgba(52,72,122,0.25); color: var(--indigo); }
+.db-banner.success { background: var(--mint-soft);   border-color: rgba(47,107,69,0.25);  color: var(--mint); }
+.db-banner.error   { background: var(--coral-soft);  border-color: rgba(158,43,37,0.25);  color: var(--coral); }
+.db-banner.info    { background: var(--indigo-soft); border-color: rgba(58,56,51,0.25); color: var(--indigo); }
 
 .db-content { padding: 24px 28px; flex: 1; }
 
@@ -190,7 +190,7 @@
 .db-table td { padding:12px 16px; font-size:13px; border-bottom:1px solid var(--border); color:var(--text-2); }
 .db-table tr:last-child td { border-bottom:none; }
 .db-table tbody tr { transition:background 0.1s; }
-.db-table tbody tr:hover td { background:rgba(26,22,18,0.025); }
+.db-table tbody tr:hover td { background:rgba(17,17,17,0.025); }
 .db-table td.right { text-align:right; }
 .db-table td.mono  { font:500 12px/1.4 var(--font-mono); color:var(--text); }
 .db-table td.pos   { color:var(--mint);  font:600 12px/1.4 var(--font-mono); }
@@ -226,7 +226,7 @@
 .db-legend-val   { font:500 11px/1.4 var(--font-mono); color:var(--text); }
 
 /* ── Connect prompt ───────────────────────────────────────────── */
-.db-connect-prompt { display:flex; align-items:center; gap:16px; padding:16px 20px; background:var(--lime-soft); border:1px solid rgba(107,142,35,0.25); border-radius:var(--r-xl); margin-bottom:20px; font-size:13px; }
+.db-connect-prompt { display:flex; align-items:center; gap:16px; padding:16px 20px; background:var(--lime-soft); border:1px solid rgba(47,107,69,0.25); border-radius:var(--r-xl); margin-bottom:20px; font-size:13px; }
 .db-connect-prompt-icon { font-size:28px; flex-shrink:0; }
 .db-connect-prompt strong { display:block; margin-bottom:3px; color:var(--text); }
 .db-connect-prompt p { color:var(--text-2); font-size:12px; }
@@ -234,7 +234,7 @@
 .db-connect-btn-inline:hover { background:#000; transform:translateY(-1px); box-shadow:var(--shadow-2); }
 
 /* ── Modals ───────────────────────────────────────────────────── */
-.db-modal-overlay { position:fixed; inset:0; background:rgba(26,22,18,0.4); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); z-index:200; display:flex; align-items:center; justify-content:center; }
+.db-modal-overlay { position:fixed; inset:0; background:rgba(17,17,17,0.4); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); z-index:200; display:flex; align-items:center; justify-content:center; }
 .db-modal { background:var(--surface); border:1px solid var(--border-2); border-radius:16px; padding:32px; width:460px; max-width:95vw; position:relative; box-shadow:var(--shadow-3); }
 .db-modal-close { position:absolute; top:14px; right:14px; background:var(--surface-2); border:1px solid var(--border); border-radius:6px; color:var(--text-3); font-size:14px; width:28px; height:28px; display:flex; align-items:center; justify-content:center; cursor:pointer; transition:all 0.15s; }
 .db-modal-close:hover { color:var(--coral); border-color:var(--coral); }
@@ -284,12 +284,12 @@ select.db-input { cursor:pointer; }
 .recharts-text tspan { fill: var(--text-3); }
 .recharts-cartesian-axis-tick-value tspan { fill: var(--text-3); }
 .recharts-legend-item-text { color: var(--text-2) !important; }
-.recharts-default-tooltip { background: var(--surface) !important; border-color: rgba(26,22,18,0.12) !important; color: var(--text) !important; }
+.recharts-default-tooltip { background: var(--surface) !important; border-color: rgba(17,17,17,0.12) !important; color: var(--text) !important; }
 .recharts-tooltip-label   { color: var(--text) !important; }
 .recharts-tooltip-item    { color: var(--text-2) !important; }
 
 /* ── Shared dashboard polish (all tabs) ─────────────────────────── */
-.db-content .db-card { border-radius: 16px; border-color: var(--border-2); box-shadow: 0 1px 0 rgba(26,22,18,0.03), 0 4px 14px rgba(26,22,18,0.05); }
+.db-content .db-card { border-radius: 16px; border-color: var(--border-2); box-shadow: 0 1px 0 rgba(17,17,17,0.03), 0 4px 14px rgba(17,17,17,0.05); }
 .db-content .db-card-title { font-size: 15px; }
 .db-content .db-card-sub { font-size: 12px; }
 .db-content .db-table th { font: 600 11.5px/1.4 var(--font-ui); text-transform: none; letter-spacing: 0; color: var(--text-3); }

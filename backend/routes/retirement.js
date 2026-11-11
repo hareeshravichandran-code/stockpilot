@@ -222,6 +222,7 @@ router.get('/autofill', requireAuth, async (req, res) => {
     ]);
     const user = profileOf(req, user0 || {});   // encrypted accounts: name / birthday from the device
 
+    const epfMod = await require('../services/epf').epfTotal(uid).catch(() => null);
     const bal = {};
     for (const r of abRes.data || []) bal[String(r.asset_type).toLowerCase()] = num(r.balance);
 
@@ -239,7 +240,7 @@ router.get('/autofill', requireAuth, async (req, res) => {
       stocks:   { value: r0(stocks), source: 'Stock holdings' },
       mf:       { value: r0(mf), source: 'Mutual funds' },
       nps:      { value: r0(nps || bal.nps), source: nps ? 'NPS statements' : 'Typed balance' },
-      epf:      { value: r0(bal.epf), source: 'Typed balance' },
+      epf:      epfMod != null ? { value: r0(epfMod), source: 'EPFO passbook / SMS' } : { value: r0(bal.epf), source: 'Typed balance' },
       ppf:      { value: r0(bal.ppf), source: 'Typed balance' },
       ssy:      { value: r0(bal.ssy), source: 'Typed balance' },
       deposits: { value: r0(deposits), source: fdModule + rdModule > 0 ? `Bank deposits (${fdCount} FD${rdModule ? ' + RD' : ''})` : 'Typed FD balance' },

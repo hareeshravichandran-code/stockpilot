@@ -3,6 +3,7 @@ import { mastersAPI } from '../lib/api';
 import { Modal, Field, Empty, errMsg, fmtDate } from './shared';
 import { kindOf, KindIcon, inrShort } from '../money/kinds';
 
+import LogoLoader from '../components/LogoLoader';
 // Every master has an event (when it's expected) and actuals (the bank SMS that matched it).
 const KINDS = [
   ['loan', 'Loans', 'Loan', 'emi'],
@@ -129,10 +130,10 @@ function MasterDetail({ id, folios = [], onClose, onEdit, notify, onChanged }) {
       footer={<><span className="fo-grow" /><button type="button" className="fo-btn ghost" onClick={onClose}>Close</button>
         {m && <button type="button" className="fo-btn" onClick={() => onEdit(m)}>Edit</button>}</>}>
       {err && <div className="fo-err">{err}</div>}
-      {!d && !err && <div className="fo-loading"><span className="fo-spin" /> Loading…</div>}
+      {!d && !err && <LogoLoader size={36} />}
       {m && <div className="fm-detail">
         <div className="fm-d-top" style={{ '--c': kindOf(vk).c }}>
-          <span className="fm-ic big"><KindIcon kind={vk} size={26} color="#faf5e8" /></span>
+          <span className="fm-ic big"><KindIcon kind={vk} size={26} color="#FAF7F0" /></span>
           <div><div className="fm-d-amt">{m.amount ? inrShort(m.amount) : '—'}</div><div className="fm-d-sub">{whenText(m)}{m.institution ? ` · ${m.institution}` : ''}{m.ref ? ` ••${m.ref}` : ''}</div></div>
           {d.next_due && <div className="fm-d-next"><small>Next expected</small><b>{fmtDate(d.next_due)}</b></div>}
         </div>
@@ -156,11 +157,12 @@ function MasterDetail({ id, folios = [], onClose, onEdit, notify, onChanged }) {
   );
 }
 
-export default function Masters({ notify, go }) {
+export default function Masters({ notify, go, kind = 'all' }) {
   const [list, setList] = useState(null);
   const [folios, setFolios] = useState([]);
   const [err, setErr] = useState('');
-  const [tab, setTab] = useState('all');
+  const [tab, setTab] = useState(kind || 'all');
+  useEffect(() => { setTab(kind || 'all'); }, [kind]);
   const [form, setForm] = useState(null);       // { master } | { kind }
   const [detail, setDetail] = useState(null);
   const load = useCallback(async () => {
@@ -175,7 +177,7 @@ export default function Masters({ notify, go }) {
   return (
     <div className="fo-page">
       <div className="fo-page-head">
-        <div><h1>Masters</h1><p>Loans, cards, SIPs, income and regular expenses. Each has a date in the calendar, and bank SMS that match it become its actuals.</p></div>
+        <div><h1>{tab === 'all' ? 'Masters' : (KINDS.find(k => k[0] === tab) || [, 'Masters'])[1].replace('Accounts', 'Bank accounts').replace('Cards', 'Credit cards')}</h1><p>Loans, cards, SIPs, income and regular expenses. Each has a date in the calendar, and bank SMS that match it become its actuals.</p></div>
         <button type="button" className="fo-btn" onClick={() => setForm({ kind: tab === 'all' ? 'loan' : tab })}>+ Add master</button>
       </div>
       {err && <div className="fo-banner">{err}</div>}
@@ -191,7 +193,7 @@ export default function Masters({ notify, go }) {
           return <button key={v} type="button" className={tab === v ? 'on' : ''} onClick={() => setTab(v)}><KindIcon kind={vk} size={14} /> {l}{n ? ` ${n}` : ''}</button>;
         })}
       </div>
-      {list === null ? <div className="fo-loading"><span className="fo-spin" /> Loading masters…</div>
+      {list === null ? <LogoLoader label="Loading masters…" />
         : !shown.length ? <Empty title={tab === 'all' ? 'No masters yet' : `No ${kindMeta(tab)[1].toLowerCase()} yet`}
             action={<button type="button" className="fo-btn" onClick={() => setForm({ kind: tab === 'all' ? 'loan' : tab })}>Add one</button>}>
             The phone app finds these from your bank SMS (Discover). You can also add them here, such as rent you pay or receive.</Empty>
@@ -199,7 +201,7 @@ export default function Masters({ notify, go }) {
             const vk = visualKind(m);
             return (
               <button key={m.id} type="button" className={`fm-card${m.status === 'closed' ? ' closed' : ''}`} style={{ '--c': kindOf(vk).c }} onClick={() => setDetail(m.id)}>
-                <span className="fm-ic"><KindIcon kind={vk} size={20} color="#faf5e8" /></span>
+                <span className="fm-ic"><KindIcon kind={vk} size={20} color="#FAF7F0" /></span>
                 <span className="fm-main"><b>{m.title}</b><small>{kindOf(vk).label}{m.institution && m.institution !== m.title ? ` · ${m.institution}` : ''}{m.ref ? ` ••${m.ref}` : ''}</small><small>{m.kind === 'bank_account' && m.meta?.balance != null ? <>Balance <b className="fm-bal">{inrShort(m.meta.balance)}</b> · {fmtDate(m.meta.balance_at)}</> : whenText(m)}</small>{m.kind === 'sip' && m.linked_id && <small className="fm-folio">↻ {folios.find(f => f.id === String(m.linked_id))?.fund_name || 'Folio linked'}</small>}</span>
                 <span className={`fm-amt${m.kind === 'income' ? ' in' : ''}`}>{m.amount ? inrShort(m.amount) : ''}</span>
                 {m.source === 'discover' && <span className="fm-src">from SMS</span>}

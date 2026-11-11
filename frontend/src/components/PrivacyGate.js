@@ -7,6 +7,7 @@ import { migrateAll, MIGRATION_V } from '../lib/privacy/migrate';
 import { isEnc } from '../lib/privacy/kcrypto';
 import './PrivacyGate.css';
 
+import LogoLoader from './LogoLoader';
 // Every account is end-to-end encrypted. Before any money page opens, this browser must hold the key.
 // First time: the key is made here and kept in the user's own Google account (no passphrase to remember);
 // a passphrase is the alternative. New browser: one tap on "Unlock with Google" (or the recovery code).
@@ -47,7 +48,7 @@ export default function PrivacyGate({ children }) {
   if (state.phase === 'open' && !vault.unlocked()) return <Shell><Unlock server={state.server} onDone={() => setState({ phase: 'open' })} /></Shell>;
   return (
     <Shell>
-      {state.phase === 'loading' && <p className="pg-muted">Checking your privacy key…</p>}
+      {state.phase === 'loading' && <LogoLoader label="Checking your privacy key…" />}
       {state.phase === 'error' && <><h1>Could not check your key</h1><p className="pg-err">{state.error}</p><button className="pg-btn" onClick={() => window.location.reload()}>Try again</button></>}
       {state.phase === 'intro' && <Intro user={user} onPassphrase={() => setState({ ...state, phase: 'create' })} onDone={(code) => setState({ phase: 'saved', code })} />}
       {state.phase === 'saved' && <Saved code={state.code} onDone={() => setState({ phase: 'migrate' })} />}
@@ -64,7 +65,7 @@ function Shell({ children }) {
     <div className="pg-page">
       <div className="pg-card">
         <div className="pg-lock" aria-hidden="true">
-          <svg viewBox="0 0 64 64" width="56" height="56"><rect x="12" y="28" width="40" height="28" rx="8" fill="#2b2620" /><path d="M20 28v-7a12 12 0 0 1 24 0v7" stroke="#2b2620" strokeWidth="6" fill="none" strokeLinecap="round" /><circle cx="32" cy="41" r="4.5" fill="#f2b544" /><rect x="30" y="43" width="4" height="7" rx="2" fill="#f2b544" /></svg>
+          <svg viewBox="0 0 64 64" width="56" height="56"><rect x="12" y="28" width="40" height="28" rx="8" fill="#1F1E1C" /><path d="M20 28v-7a12 12 0 0 1 24 0v7" stroke="#1F1E1C" strokeWidth="6" fill="none" strokeLinecap="round" /><circle cx="32" cy="41" r="4.5" fill="#D9541E" /><rect x="30" y="43" width="4" height="7" rx="2" fill="#D9541E" /></svg>
         </div>
         {children}
       </div>
@@ -153,7 +154,7 @@ function Create({ user, onDone }) {
       <h1>Choose a privacy passphrase</h1>
       <p className="pg-muted">It is different from your login. We never see it, so we cannot reset it for you.</p>
       <input className="pg-in" type="password" autoFocus placeholder="Passphrase (e.g. a short sentence)" value={p1} onChange={e => setP1(e.target.value)} />
-      <div className="pg-meter"><i style={{ width: `${Math.min(100, s * 20)}%`, background: s >= 4 ? '#4c6b1c' : s >= 2 ? '#f2b544' : '#a82c2c' }} /></div>
+      <div className="pg-meter"><i style={{ width: `${Math.min(100, s * 20)}%`, background: s >= 4 ? '#2F6B45' : s >= 2 ? '#D9541E' : '#9E2B25' }} /></div>
       <input className="pg-in" type="password" placeholder="Type it again" value={p2} onChange={e => setP2(e.target.value)} />
       {err && <p className="pg-err">{err}</p>}
       <button className="pg-btn" disabled={busy}>{busy ? 'Creating your key…' : 'Create my key'}</button>
@@ -259,7 +260,7 @@ function Migrate({ onDone }) {
     <>
       <h1>Encrypting your data</h1>
       <p className="pg-muted">This happens once. Your existing records are being locked with your key.</p>
-      <div className="pg-spin" /><p className="pg-count">{n} records encrypted</p>
+      <LogoLoader size={48} /><p className="pg-count">{n} records encrypted</p>
       {err && <><p className="pg-err">{err}</p><button className="pg-btn" onClick={() => window.location.reload()}>Try again</button></>}
     </>
   );

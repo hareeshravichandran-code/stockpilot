@@ -252,6 +252,9 @@ router.get('/assets', requireAuth, async (req, res) => {
     .select('*').eq('user_id', req.user.id);
   const balances = { ppf:0, epf:0, nps:0, fd:0, ssy:0 };
   if (data) data.forEach(r => { balances[r.asset_type.toLowerCase()] = r.balance; });
+  // EPFO module (passbook / SMS) overrides a typed EPF balance
+  const epf = await require('../services/epf').epfTotal(req.user.id).catch(() => null);
+  if (epf != null) { balances.epf = epf; balances.epf_source = 'EPFO'; }
   res.json(balances);
 });
 

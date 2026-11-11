@@ -82,7 +82,7 @@ function Controls({ user, onDeleted }) {
       {msg && <p className="pg-muted">{msg}</p>}
       <h3>Delete account</h3>
       <p className="pg-muted">Deletes your account and every record we hold for it.</p>
-      <button className="pg-btn" style={{ background: '#a82c2c' }} onClick={del}>Delete my account and data</button>
+      <button className="pg-btn" style={{ background: '#9E2B25' }} onClick={del}>Delete my account and data</button>
     </div>
   );
 }

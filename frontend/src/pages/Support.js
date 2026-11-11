@@ -4,6 +4,7 @@ import { supportAPI } from '../lib/api';
 import { Bubbles, Composer } from './supportChat';
 import './Support.css';
 
+import LogoLoader from '../components/LogoLoader';
 export default function Support() {
   const nav = useNavigate();
   const [msgs, setMsgs] = useState(null);
@@ -20,7 +21,7 @@ export default function Support() {
       </header>
       <main className="sp-chat">
         {err && <div className="sp-err">{err}</div>}
-        {msgs ? <Bubbles messages={msgs} mine={m => !m.from_admin} /> : <div className="sp-empty">Loading…</div>}
+        {msgs ? <Bubbles messages={msgs} mine={m => !m.from_admin} /> : <LogoLoader />}
         <div ref={end} />
       </main>
       <Composer placeholder="Describe the problem or idea…" onSend={async (d) => { await supportAPI.send(d); await load(); }} />

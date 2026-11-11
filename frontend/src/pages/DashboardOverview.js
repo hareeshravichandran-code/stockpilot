@@ -228,8 +228,8 @@ export function GoalsSnapshot({ hideValues, onOpen }) {
 }
 
 // ── Family strip: people, what needs attention, links into Family ───
-const FAM_COLOR = { ink: '#1a1612', mulberry: '#964062', marigold: '#e3a018', teal: '#2d6b6b', prussian: '#2f4577', moss: '#5f7f1f', aubergine: '#5d3b78', terracotta: '#b8551f' };
-const FAM_MOD = { insurance: '#2f4577', documents: '#964062', family: '#e3a018', money: '#5f7f1f', goals: '#5d3b78', loans: '#b8551f' };
+const FAM_COLOR = { ink: '#111111', mulberry: '#6F6A61', marigold: '#D9541E', teal: '#5A564F', prussian: '#3A3833', moss: '#2F6B45', aubergine: '#111111', terracotta: '#8C8270' };
+const FAM_MOD = { insurance: '#3A3833', documents: '#6F6A61', family: '#D9541E', money: '#2F6B45', goals: '#111111', loans: '#8C8270' };
 export function FamilyStrip({ onOpen }) {
   const [ov, setOv] = useState(null);
   useEffect(() => {
@@ -247,7 +247,7 @@ export function FamilyStrip({ onOpen }) {
         <div className="ov-fam-k">Family</div>
         <div className="ov-fam-faces">
           {members.slice(0, 6).map(m => (
-            <span key={m.id} className="ov-fam-av" style={{ background: FAM_COLOR[m.color] || FAM_COLOR.ink, color: m.color === 'marigold' ? '#1a1612' : '#faf5e8' }} title={m.name}>{(m.name || '?')[0]}</span>
+            <span key={m.id} className="ov-fam-av" style={{ background: FAM_COLOR[m.color] || FAM_COLOR.ink, color: m.color === 'marigold' ? '#111111' : '#FAF7F0' }} title={m.name}>{(m.name || '?')[0]}</span>
           ))}
           <button type="button" className="ov-fam-add" onClick={() => onOpen('people')} aria-label="Add a family member">+</button>
         </div>
@@ -260,7 +260,7 @@ export function FamilyStrip({ onOpen }) {
       </div>
       <div className="ov-fam-att">
         {att.length ? att.map(a => (
-          <button key={`${a.module}${a.ref}${a.date}`} type="button" className="ov-fam-row" style={{ '--c': FAM_MOD[a.module] || '#8a7d6a' }} onClick={() => onOpen(a.module === 'insurance' ? 'insurance' : a.module === 'documents' ? 'documents' : 'calendar')}>
+          <button key={`${a.module}${a.ref}${a.date}`} type="button" className="ov-fam-row" style={{ '--c': FAM_MOD[a.module] || '#85817A' }} onClick={() => onOpen(a.module === 'insurance' ? 'insurance' : a.module === 'documents' ? 'documents' : 'calendar')}>
             <span className="ov-fam-days">{a.days < 0 ? `${-a.days}d late` : a.days === 0 ? 'Today' : `${a.days}d`}</span>
             <span className="ov-fam-title">{a.title}</span>
           </button>

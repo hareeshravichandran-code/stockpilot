@@ -5,7 +5,7 @@ import api from '../lib/api';
 const fmtDate = (iso) => iso ? new Date(iso).toLocaleString('en-IN', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '—';
 const fmtShort = (iso) => iso ? new Date(iso).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' }) : '';
 
-const STATUS_COLOR = { completed:'#6b8e23', failed:'#a82c2c', running:'#a8741a', null:'var(--text-3)' };
+const STATUS_COLOR = { completed:'#2F6B45', failed:'#9E2B25', running:'#A39B8B', null:'var(--text-3)' };
 
 function StatusBadge({ status, spinning }) {
   const c = STATUS_COLOR[status] || 'var(--text-3)';
@@ -34,7 +34,7 @@ function LogRow({ log }) {
   const isOk   = log.status === 'success';
   const isSkip = log.status === 'skipped';
   const dot    = isOk ? '✅' : isSkip ? '⚠️' : '❌';
-  const errColor = isOk ? '#6b8e23' : isSkip ? '#a8741a' : '#a82c2c';
+  const errColor = isOk ? '#2F6B45' : isSkip ? '#A39B8B' : '#9E2B25';
 
   return (
     <div style={{ borderBottom:'1px solid var(--border)', padding:'9px 12px' }}>
@@ -49,7 +49,7 @@ function LogRow({ log }) {
               {fmtShort(log.email_date)}
             </span>
             {log.items_found > 0 && (
-              <span style={{ fontSize:10, fontFamily:'var(--font-mono)', color:'#6b8e23', background:'rgba(107,142,35,0.10)', padding:'1px 6px', borderRadius:4 }}>
+              <span style={{ fontSize:10, fontFamily:'var(--font-mono)', color:'#2F6B45', background:'rgba(47,107,69,0.10)', padding:'1px 6px', borderRadius:4 }}>
                 {log.items_found} holdings
               </span>
             )}
@@ -57,7 +57,7 @@ function LogRow({ log }) {
               <span style={{ fontSize:10, color:'var(--text-3)', background:'var(--surface-2)', padding:'1px 5px', borderRadius:4 }}>PDF</span>
             )}
             {log.pdf_unlocked === false && log.has_pdf && (
-              <span style={{ fontSize:10, color:'#a82c2c', background:'rgba(168,44,44,0.08)', padding:'1px 5px', borderRadius:4 }}>🔒 PDF locked</span>
+              <span style={{ fontSize:10, color:'#9E2B25', background:'rgba(158,43,37,0.08)', padding:'1px 5px', borderRadius:4 }}>🔒 PDF locked</span>
             )}
             {log.phase && (
               <span style={{ fontSize:9, color:'var(--text-4)', fontFamily:'var(--font-mono)', textTransform:'uppercase' }}>[{log.phase}]</span>
@@ -94,7 +94,7 @@ function LogRow({ log }) {
                 </pre>
               )}
               {log.error_stack && (
-                <pre style={{ fontSize:9, color:'#a82c2c', background:'rgba(168,44,44,0.04)', padding:8, borderRadius:6, whiteSpace:'pre-wrap', wordBreak:'break-all', maxHeight:100, overflow:'auto', margin:0 }}>
+                <pre style={{ fontSize:9, color:'#9E2B25', background:'rgba(158,43,37,0.04)', padding:8, borderRadius:6, whiteSpace:'pre-wrap', wordBreak:'break-all', maxHeight:100, overflow:'auto', margin:0 }}>
                   {log.error_stack}
                 </pre>
               )}
@@ -161,9 +161,9 @@ function SyncSection({ title, syncType, running }) {
 
       <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:8, marginBottom:12 }}>
         <StatCard label="Emails found"   value={session.emails_scanned ?? logs.length}                    color="var(--indigo)" />
-        <StatCard label="Parsed OK"      value={session.emails_parsed  ?? success}                        color="#6b8e23" />
-        <StatCard label="Failed/Skipped" value={session.emails_failed  ?? failed}                         color={failed > 0 ? '#a82c2c' : 'var(--text-3)'} />
-        <StatCard label="Snapshots"      value={session.holdings_found ?? success}                        color="#a8741a" />
+        <StatCard label="Parsed OK"      value={session.emails_parsed  ?? success}                        color="#2F6B45" />
+        <StatCard label="Failed/Skipped" value={session.emails_failed  ?? failed}                         color={failed > 0 ? '#9E2B25' : 'var(--text-3)'} />
+        <StatCard label="Snapshots"      value={session.holdings_found ?? success}                        color="#A39B8B" />
       </div>
 
       <div style={{ fontSize:11, color:'var(--text-4)', marginBottom:10 }}>
@@ -277,9 +277,9 @@ function ActivityLogPanel() {
         <div style={{ display:'flex', gap:16, marginBottom:12, flexWrap:'wrap' }}>
           {[
             { label:'Total', val: logs.length, color:'var(--text)' },
-            { label:'Success', val: logs.filter(l=>l.status==='success').length, color:'#6b8e23' },
-            { label:'Failed', val: logs.filter(l=>l.status==='failed').length, color:'#a82c2c' },
-            { label:'Skipped', val: logs.filter(l=>l.status==='skipped').length, color:'#a8741a' },
+            { label:'Success', val: logs.filter(l=>l.status==='success').length, color:'#2F6B45' },
+            { label:'Failed', val: logs.filter(l=>l.status==='failed').length, color:'#9E2B25' },
+            { label:'Skipped', val: logs.filter(l=>l.status==='skipped').length, color:'#A39B8B' },
             { label:'PDF locked', val: logs.filter(l=>l.status==='password_failed').length, color:'var(--indigo)' },
           ].map(s => (
             <div key={s.label} style={{ fontSize:12 }}>

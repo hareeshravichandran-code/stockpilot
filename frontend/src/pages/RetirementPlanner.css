@@ -15,10 +15,10 @@
 .rp-save.error { background: var(--coral-soft); color: var(--coral); }
 .rp-seg { display: inline-flex; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 3px; }
 .rp-seg button { border: 0; background: none; font: inherit; font-size: 13px; padding: 7px 12px; border-radius: 7px; color: var(--text-2); cursor: pointer; transition: background .2s var(--ease), color .2s; }
-.rp-seg button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(26,22,18,.12); font-weight: 600; }
+.rp-seg button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(17,17,17,.12); font-weight: 600; }
 
 .rp-banner { padding: 10px 14px; border-radius: 10px; font-size: 13px; line-height: 1.45; }
-.rp-banner.warn { background: var(--gold-soft); color: var(--gold); border: 1px solid rgba(168,116,26,.25); }
+.rp-banner.warn { background: var(--gold-soft); color: var(--gold); border: 1px solid rgba(163,155,139,.25); }
 
 /* Hero */
 .rp-hero { display: grid; grid-template-columns: 1.3fr 1fr 1fr; gap: 14px; align-items: start; }
@@ -40,7 +40,7 @@
 .rp-verdict { margin-top: 10px; padding: 9px 12px; border-radius: 10px; font-size: 13px; line-height: 1.4; }
 .rp-target.ok .rp-verdict { background: var(--mint-soft); color: var(--mint); }
 .rp-target.short .rp-verdict { background: var(--coral-soft); color: var(--coral); }
-.rp-target.short { border-color: rgba(168,44,44,.25) !important; }
+.rp-target.short { border-color: rgba(158,43,37,.25) !important; }
 
 .rp-goal-name { font-family: var(--font-display); font-size: 22px; margin: 6px 0 4px; }
 .rp-goal-p { font-size: 13px; color: var(--text-2); line-height: 1.5; margin: 8px 0 10px; }
@@ -92,7 +92,7 @@
 .rp-field label { font-size: 12.5px; font-weight: 500; color: var(--text-2); }
 .rp-src { font-size: 10.5px; padding: 2px 7px; border-radius: 999px; background: var(--lime-soft); color: var(--lime); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px; border: 0; font-family: inherit; }
 .rp-src.edited { background: var(--gold-soft); color: var(--gold); cursor: pointer; max-width: 150px; }
-.rp-src.edited:hover { background: rgba(168,116,26,.2); }
+.rp-src.edited:hover { background: rgba(163,155,139,.2); }
 .rp-input-wrap { position: relative; }
 .rp-pre, .rp-suf { position: absolute; top: 50%; transform: translateY(-50%); font-size: 13px; color: var(--text-3); pointer-events: none; }
 .rp-pre { left: 11px; }
@@ -152,7 +152,7 @@
 .rp-loan-flags input { accent-color: var(--mint); }
 .rp-suggest { margin-bottom: 12px; border: 1px dashed var(--indigo); background: var(--indigo-soft); border-radius: 12px; }
 .rp-suggest-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 12px; font-size: 13px; }
-.rp-suggest-row + .rp-suggest-row { border-top: 1px dashed rgba(52,72,122,.3); }
+.rp-suggest-row + .rp-suggest-row { border-top: 1px dashed rgba(58,56,51,.3); }
 .rp-suggest-row small { display: block; color: var(--text-3); font-size: 11.5px; margin-top: 2px; }
 .rp-suggest-actions { display: flex; gap: 6px; flex: 0 0 auto; }
 .rp-empty { font-size: 13px; color: var(--text-3); padding: 12px; background: var(--surface-2); border-radius: 10px; margin-bottom: 12px; }

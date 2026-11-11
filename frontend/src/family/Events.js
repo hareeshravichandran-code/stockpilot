@@ -3,6 +3,7 @@ import { mastersAPI } from '../lib/api';
 import { Modal, Field, Empty, errMsg } from './shared';
 import { kindOf, KindIcon, inrShort } from '../money/kinds';
 
+import LogoLoader from '../components/LogoLoader';
 // Every expected payment or receipt lives here: EMIs (loan), card bills (card), SIPs (fund folio),
 // premiums (insurance), RD instalments (RD) and events you add yourself (rent, school fee, reminders).
 export const LEVELS = [
@@ -126,7 +127,7 @@ export default function Events({ notify }) {
   }, [list, filter]);
   const blinking = (list || []).filter(e => e.blink).length;
 
-  if (list === null) return <div className="fo-loading"><span className="fo-spin" /> Loading events…</div>;
+  if (list === null) return <LogoLoader label="Loading events…" />;
   return (
     <div className="fo-page ev">
       <div className="fo-page-head">
