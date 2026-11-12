@@ -80,6 +80,7 @@ app.use('/api/rd',       rdRoutes);
 app.use('/api/blueprint', blueprintRoutes);
 app.use('/api/retirement', retirementRoutes);
 app.use('/api/household', householdRoutes);
+app.use('/api/events', require('./routes/events'));   // events + SMS rules management
 app.use('/api/masters', mastersRoutes);
 app.use('/api/moneyflow', require('./routes/moneyflow'));
 app.use('/api/setup', require('./routes/setup'));

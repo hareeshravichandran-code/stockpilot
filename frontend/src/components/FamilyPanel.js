@@ -7,7 +7,7 @@ import Insurance from '../family/Insurance';
 import Documents from '../family/Documents';
 import CalendarView from '../family/Calendar';
 import Masters from '../family/Masters';
-import Events from '../family/Events';
+import EventsHub from '../family/EventsHub';
 import LogoLoader from './LogoLoader';
 import '../pages/Family.css';
 
@@ -38,7 +38,7 @@ export default function FamilyPanel({ panel, kind }) {
           {panel === 'documents' && <Documents {...shared} />}
           {panel === 'calendar' && <CalendarView {...shared} />}
           {panel === 'masters' && <Masters {...shared} kind={kind} />}
-          {panel === 'events' && <Events {...shared} />}
+          {panel === 'events' && <EventsHub {...shared} />}
         </>
       )}
       {toast && <div key={toast.k} className={`fo-toast ${toast.kind}`} role="status">{toast.text}</div>}

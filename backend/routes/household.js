@@ -219,7 +219,7 @@ const ageOn = (dob, on) => { const a = parse(dob), b = parse(on); let n = b.getU
 const POLICY_LABEL = { term: 'Term insurance', life: 'Life insurance', health: 'Health insurance', vehicle: 'Vehicle insurance', home: 'Home insurance', accident: 'Accident cover', travel: 'Travel insurance', other: 'Insurance' };
 const DOC_LABEL = { passport: 'Passport', driving_licence: 'Driving licence', pan: 'PAN', aadhaar: 'Aadhaar', voter_id: 'Voter ID', vehicle_rc: 'Vehicle RC', puc: 'PUC certificate', property_tax: 'Property tax', school_fees: 'School fees', subscription: 'Subscription', other: 'Document' };
 
-async function buildCalendar(uid, from, to, req = null) {
+async function buildCalendar(uid, from, to, req = null, opts = {}) {
   const scope = await familyScope(uid, req);
   const ids = scope.ids;
   const members = await loadMembers(uid, scope);
@@ -302,39 +302,31 @@ async function buildCalendar(uid, from, to, req = null) {
       push({ ...base, kind: b.special_kind === 'retirement' ? 'retirement' : 'goal_target', date: b.target_date, title: `${b.name} target date`, amount: num(b.target_amount) || null });
     }
   }
-  // Events master: one series per obligation, with paid / overdue from event_payments
+  // Events master: one series per obligation. Whether a due date is done, due, overdue or missed
+  // comes from one place (services/eventMatch.stateOf), so the phone, the web and alerts agree.
   const evRows = (rev && rev.data) || [];
   if (evRows.length) {
-    const { data: pays } = await supabase.from('event_payments').select('event_id, period, status')
-      .in('event_id', evRows.map(e => e.id)).gte('period', ymd(new Date(parse(from).getTime() - 10 * DAY))).lte('period', ymd(new Date(parse(to).getTime() + 10 * DAY)));
-    const paidOn = {};
-    for (const p of pays || []) if (p.status === 'paid') (paidOn[p.event_id] = paidOn[p.event_id] || []).push(parse(p.period).getTime());
-    const isPaid = (id, d) => (paidOn[id] || []).some(t => Math.abs(t - parse(d).getTime()) <= 6 * DAY);
+    const EM = require('../services/eventMatch');
+    const today = todayStr();
+    const lookFrom = opts.carryOverdue ? ymd(new Date(parse(from).getTime() - 400 * DAY)) : from;
+    const { data: pays } = await supabase.from('event_payments').select('event_id, period, status, paid_on, timing, amount')
+      .in('event_id', evRows.map(e => e.id)).gte('period', lookFrom).lte('period', to);
+    const payOf = {};
+    for (const p of pays || []) payOf[p.event_id + '|' + p.period] = p;
     const blueprintEmis = items.filter(i => i.kind === 'emi');
     const MODULE = { emi: 'loans', sip: 'money', rd_instalment: 'money', salary: 'money', card_due: 'money', premium: 'insurance', subscription: 'calendar', bill: 'calendar', maturity: 'money' };
-    const today = todayStr();
     for (const e of evRows) {
-      const day = Math.min(28, e.due_day || (e.start_date ? parseInt(e.start_date.slice(8, 10), 10) : 1) || 1);
-      let dates = [];
-      if (e.frequency === 'once') { const d = e.end_date || e.start_date; if (d && d >= from && d <= to) dates = [d]; }
-      else if (e.frequency === 'monthly') {
-        const f0 = parse(from); dates = occurrences(ymd(new Date(Date.UTC(f0.getUTCFullYear(), f0.getUTCMonth(), day))), 'monthly', from, to, 24);
-      } else {
-        const m = e.due_month || (e.start_date ? parseInt(e.start_date.slice(5, 7), 10) : parse(from).getUTCMonth() + 1);
-        const anchor = ymd(new Date(Date.UTC(parse(from).getUTCFullYear() - 1, m - 1, day)));
-        dates = occurrences(anchor, e.frequency, from, to, 12);
-      }
-      if (e.end_date) dates = dates.filter(d => d <= e.end_date);
-      if (e.start_date) dates = dates.filter(d => d >= e.start_date);
-      // Only call a past date overdue if we were already tracking it then
-      const trackedFrom = ymd(new Date((e.created_at ? Date.parse(e.created_at) : Date.now()) - 7 * DAY));
       const om = ownerMember(e.owner_id);
-      for (const d of dates) {
+      for (const d of EM.periods(e, lookFrom, to)) {
         // A Blueprint EMI with the same amount in the same month is the same obligation
         if (e.kind === 'emi' && blueprintEmis.some(b => b.date.slice(0, 7) === d.slice(0, 7) && b.amount && e.amount && Math.abs(b.amount - num(e.amount)) <= num(e.amount) * 0.02)) continue;
-        const paid = isPaid(e.id, d);
+        const pay = payOf[e.id + '|' + d] || null;
+        const st = EM.stateOf(e, d, pay, today);
+        if (d < from && st.state !== 'overdue') continue;            // earlier dates only when still owed
+        const paid = st.state === 'done' || st.state === 'skipped';
         push({ module: MODULE[e.kind] || 'calendar', kind: e.kind, ref: e.id, date: d, title: e.title, amount: num(e.amount) || null,
-          sub: paid ? 'Paid' : null, paid, overdue: !paid && d < today && d >= trackedFrom, direction: e.direction,
+          sub: st.state === 'done' ? (st.timing === 'late' ? 'Paid late' : st.timing === 'early' ? 'Paid early' : 'Paid') : st.state === 'skipped' ? 'Skipped' : st.state === 'missed' ? 'Missed' : null,
+          paid, overdue: st.state === 'overdue', state: st.state, alert: st.alert, buffer_days: EM.bufferOf(e), direction: e.direction,
           member_ids: e.member_id ? [e.member_id] : (om ? [om.id] : []), event_id: e.id, alert_level: e.alert_level || null, manual: e.master_table === 'manual' });
       }
     }
@@ -365,7 +357,7 @@ router.get('/overview', requireAuth, async (req, res) => {
       loadMembers(uid, scope),
       supabase.from('insurance_policies').select('*').in('owner_id', scope.ids),
       supabase.from('family_documents').select('*').in('owner_id', scope.ids),
-      buildCalendar(uid, t, ymd(new Date(Date.now() + 60 * DAY)), req),
+      buildCalendar(uid, t, ymd(new Date(Date.now() + 60 * DAY)), req, { carryOverdue: true }),
     ]);
     const policies = (pol.data || []).filter(p => p.status === 'active');
     const allDocs = docs.data || [];
@@ -394,6 +386,14 @@ router.get('/overview', requireAuth, async (req, res) => {
     }
     for (const it of cal.items) {
       if (['birthday', 'maturity', 'retirement', 'goal_target', 'anniversary', 'event'].includes(it.kind) && daysTo(it.date) <= 21) attention.push({ ...it, days: daysTo(it.date) });
+      else if (it.event_id) {
+        // Events master: alert only while due (reminder window .. due + buffer) or overdue; done ones never show
+        if (!it.alert) continue;
+        const { alertOf } = require('../services/alerts');
+        const n = daysTo(it.date);
+        const a = alertOf(it.kind, it.alert_level, n, it.state === 'overdue');
+        attention.push({ ...it, days: n, level: a.level, blink: a.level !== 'low' });
+      }
       else if (['emi', 'card_due', 'sip', 'subscription', 'rd_instalment', 'bill', 'rent', 'school_fee', 'premium'].includes(it.kind) && !it.paid) {
         const { alertOf } = require('../services/alerts');
         const n = daysTo(it.date);

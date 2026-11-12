@@ -50,6 +50,8 @@ const RULES = [
   [/^\/api\/masters$|^\/api\/masters\/[0-9a-f-]{36}$/, ['post', 'put'], async (d) => sealFields(await keywordTok(d), MASTER)],
   [/^\/api\/masters\/apply$/, ['post'], async (d) => ({ ...d, finds: await each(d.finds, async f => ({ ...(await sealFields(await keywordTok(f), MASTER)), ...(f.event ? { event: await sealFields(f.event, { text: ['title'] }) } : {}) })) })],
   [/^\/api\/masters\/events(\/[^/]+)?$/, ['post', 'put'], (d) => sealFields(d, { text: ['title', 'notes'] })],
+  [/^\/api\/events\/rules(\/[^/]+)?$/, ['post', 'put'], sealRule],
+  [/^\/api\/events(\/[0-9a-f-]{36})?$/, ['post', 'put'], (d) => sealFields(d, { text: ['title', 'notes'] })],
   [/^\/api\/household\/policies(\/[^/]+)?$/, ['post', 'put'], (d) => sealFields(d, { text: ['nominee', 'notes'] })],
   [/^\/api\/household\/members(\/[^/]+)?$/, ['post', 'put'], (d) => sealFields(d, { text: ['name', 'notes'] })],
   [/^\/api\/household\/documents(\/[^/]+)?$/, ['post', 'put'], (d) => sealFields(d, { text: ['title', 'kept_at', 'notes'] })],

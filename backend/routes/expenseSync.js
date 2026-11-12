@@ -60,8 +60,9 @@ router.get('/sync/pull', auth, async (req, res) => {
         .gt('updated_at', lastSyncAt).eq('is_deleted', false),
       supabase.from('expense_budgets').select('*')
         .eq('user_id', uid).gt('updated_at', lastSyncAt).eq('is_deleted', false),
+      // Rules without words (sender / amount only, made for an event) are server-side only
       supabase.from('user_sms_rules').select('*')
-        .eq('user_id', uid).gt('updated_at', lastSyncAt).eq('is_deleted', false),
+        .eq('user_id', uid).gt('updated_at', lastSyncAt).eq('is_deleted', false).not('merchant_pattern', 'is', null),
       supabase.from('custom_fields').select('*')
         .eq('user_id', uid).gt('updated_at', lastSyncAt).eq('is_deleted', false),
       supabase.from('google_sheets_config').select('*')
@@ -136,6 +137,8 @@ router.post('/sync/push', auth, async (req, res) => {
       results.sheet_config = error ? `error: ${error.message}` : 'synced';
     }
 
+    // New payments may settle events: match them now (in the background, never blocks the sync)
+    setImmediate(() => require('./masters').linkActuals(uid).catch(() => {}));
     res.json({ success: true, results, server_time: Date.now() });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

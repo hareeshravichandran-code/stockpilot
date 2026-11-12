@@ -254,6 +254,25 @@ export const mastersAPI = {
   review:      (data)     => api.post('/api/masters/candidates/review', data),
 };
 
+// Events and SMS rules (management page). Model: backend/services/eventMatch.js
+const enc = encodeURIComponent;
+export const eventsAPI = {
+  list:     ()             => api.get('/api/events', { timeout: 45000 }),
+  get:      (id)           => api.get(`/api/events/${enc(id)}`, { timeout: 45000 }),
+  create:   (data)         => api.post('/api/events', data),
+  update:   (id, data)     => api.put(`/api/events/${enc(id)}`, data),
+  status:   (id, status)   => api.post(`/api/events/${enc(id)}/status`, { status }),
+  remove:   (id)           => api.delete(`/api/events/${enc(id)}`),
+  occurrence: (id, period, data) => api.post(`/api/events/${enc(id)}/occurrences/${period}`, data),
+  reopen:   (id, period)   => api.delete(`/api/events/${enc(id)}/occurrences/${period}`),
+  senders:  ()             => api.get('/api/events/senders'),
+  rules:    ()             => api.get('/api/events/rules', { timeout: 45000 }),
+  createRule: (data)       => api.post('/api/events/rules', data),
+  updateRule: (id, data)   => api.put(`/api/events/rules/${enc(id)}`, data),
+  removeRule: (id)         => api.delete(`/api/events/rules/${enc(id)}`),
+  previewRule: (data)      => api.post('/api/events/rules/preview', data),
+};
+
 export const moneyflowAPI = {
   get: (month) => api.get('/api/moneyflow', { params: { month }, timeout: 45000 }),
 };

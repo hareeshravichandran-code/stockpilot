@@ -318,6 +318,7 @@ function defaultEvent(m) {
 }
 
 const NON_SPEND = ['p_transfer', 'cc_bill', 'self_transfer'];
+const eventMatch = require('../services/eventMatch');
 const { txnText, has: hasSig } = require('../services/privacy');
 
 /** Does this bank transaction belong to this master? Keywords win; otherwise kind-specific defaults. */
@@ -379,7 +380,7 @@ function nearestPeriod(e, dateStr) {
 const lastRun = new Map();
 /** Links unlinked transactions to masters and marks their event periods paid. Cheap enough to run on demand. */
 async function linkActuals(uid, { force = false } = {}) {
-  if (!force && Date.now() - (lastRun.get(uid) || 0) < 10 * 60 * 1000) return { skipped: true };
+  if (!force && Date.now() - (lastRun.get(uid) || 0) < 2 * 60 * 1000) return { skipped: true };
   lastRun.set(uid, Date.now());
   const since = Date.now() - 400 * 86400000;
   const [{ data: masters }, { data: events }, { data: txns }] = await Promise.all([
@@ -409,20 +410,13 @@ async function linkActuals(uid, { force = false } = {}) {
       m = ms.find(x => matches(x, t)) || learned(t);
       if (m) { (byMaster[m.id] = byMaster[m.id] || []).push(t.id); linked++; (history[m.id] = history[m.id] || []).push({ a: num(t.amount), bank: String(t.bank_name || '').toLowerCase() }); }
     }
-    if (!m) continue;
-    const ev = (events || []).find(e => e.master_id === m.id);
-    if (!ev) continue;
-    const date = new Date(Number(t.date_time)).toISOString().slice(0, 10);
-    const period = nearestPeriod(ev, date);
-    if (period) {
-      const { data } = await supabase.from('event_payments').upsert({ owner_id: uid, event_id: ev.id, period, status: 'paid', amount: num(t.amount), paid_on: date, txn_ref: t.id },
-        { onConflict: 'event_id,period', ignoreDuplicates: true }).select('id');
-      paid += (data || []).length;
-    }
   }
   for (const [mid, ids] of Object.entries(byMaster)) {
     for (let i = 0; i < ids.length; i += 200) await supabase.from('expense_transactions').update({ master_id: mid }).in('id', ids.slice(i, i + 200)).is('master_id', null);
   }
+  // Events and their due dates are settled by one engine (services/eventMatch.js), shared by every screen.
+  const r = await eventMatch.runMatching(uid, { force: true, matchesMaster: matches }).catch(e => ({ error: e.message }));
+  paid = r.linked || 0;
   return { linked, paid };
 }
 
@@ -914,9 +908,16 @@ router.get('/month', requireAuth, async (req, res) => {
       if (!MONEY_EVENT_KINDS.includes(it.kind)) continue;
       if (it.paid) continue;                                       // actual arrived: expected marker goes away
       const days = Math.round((new Date(it.date + 'T00:00:00Z') - new Date(today + 'T00:00:00Z')) / 86400000);
-      const status = it.overdue ? 'overdue' : (days >= 0 && days <= 5 ? 'due_soon' : days < 0 ? 'past' : 'expected');
-      const al = alertOf(it.kind, it.alert_level, days, status === 'overdue');
-      events.push({ date: it.date, kind: it.kind, title: it.title, sub: it.sub || null, amount: it.amount || null, status,
+      let status, al;
+      if (it.state) {                                              // events master: one state machine (eventMatch.stateOf)
+        if (it.state === 'skipped') continue;
+        status = { overdue: 'overdue', due: 'due_soon', upcoming: 'expected' }[it.state] || 'past';
+        al = { level: alertOf(it.kind, it.alert_level, days, false).level, blink: !!it.alert };
+      } else {
+        status = it.overdue ? 'overdue' : (days >= 0 && days <= 5 ? 'due_soon' : days < 0 ? 'past' : 'expected');
+        al = alertOf(it.kind, it.alert_level, days, status === 'overdue');
+      }
+      events.push({ date: it.date, kind: it.kind, title: it.title, sub: it.sub || null, amount: it.amount || null, status, state: it.state || null,
         level: al.level, blink: al.blink, urgent: al.blink && al.level === 'very_high',
         dir: it.direction === 'in' || ['salary', 'income', 'dividend', 'maturity'].includes(it.kind) ? 'in' : 'out', event_id: it.event_id || null, module: it.module });
     }
