@@ -646,6 +646,42 @@ router.get('/', requireAuth, async (req, res) => {
   }
 });
 
+// ── Family net worth (the phone's Summary) ─────────────────────────
+// Everyone in the family group: stocks, funds, deposits, NPS from their own tables, EPF / PPF and loans from
+// asset_balances. Per class and per person, plus what is owed.
+const CLASS = { stock: 'Stocks', mf: 'Mutual funds', fd: 'Bank deposits', rd: 'Bank deposits', nps: 'NPS' };
+const DEBT_RX = /LOAN|CREDIT_CARD|DEBT|LIABIL/i;
+router.get('/networth', requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.id;
+    const members = await familyMembers(uid);
+    const per = await Promise.all(members.map(async m => {
+      const [items, { data: bal }] = await Promise.all([
+        loadMemberUniverse(m.id, m.me ? '' : `fam:${m.id}:`, m),
+        supabase.from('asset_balances').select('asset_type, balance').eq('user_id', m.id),
+      ]);
+      const parts = {}; let owed = 0;
+      for (const it of items) { if (it.asset_type === 'broker' || !CLASS[it.asset_type]) continue; parts[CLASS[it.asset_type]] = (parts[CLASS[it.asset_type]] || 0) + num(it.value); }
+      for (const b of bal || []) {
+        const t = String(b.asset_type || '').toUpperCase(); const v = num(b.balance);
+        if (!v) continue;
+        if (DEBT_RX.test(t)) owed += Math.abs(v);
+        else { const name = t === 'EPF' ? 'EPF' : t === 'PPF' ? 'PPF' : t.charAt(0) + t.slice(1).toLowerCase().replace(/_/g, ' '); parts[name] = (parts[name] || 0) + v; }
+      }
+      const total = Object.values(parts).reduce((a, b) => a + b, 0);
+      return { id: m.id, name: m.name, me: m.me, total: round2(total), owed: round2(owed), parts };
+    }));
+    const parts = {};
+    for (const p of per) for (const [k, v] of Object.entries(p.parts)) parts[k] = (parts[k] || 0) + v;
+    const total = per.reduce((a, p) => a + p.total, 0), owed = per.reduce((a, p) => a + p.owed, 0);
+    res.json({
+      total: round2(total), owed: round2(owed), after_loans: round2(total - owed),
+      parts: Object.entries(parts).map(([name, value]) => ({ name, value: round2(value) })).filter(p => p.value > 0).sort((a, b) => b.value - a.value),
+      members: per.map(p => ({ id: p.id, name: p.name, me: p.me, total: p.total, owed: p.owed })),
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── Asset universe with ownership ──────────────────────────────────
 router.get('/assets', requireAuth, async (req, res) => {
   try {

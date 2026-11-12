@@ -222,6 +222,16 @@ router.post('/transactions/bulk', authMiddleware, async (req, res) => {
 });
 
 // ── PUT /api/expense/transactions/:id ─────────────────────────────────────────
+// One transaction (the phone opens a payment it does not have yet, e.g. from the month view)
+router.get('/transactions/:id([0-9a-fA-F-]{36})', authMiddleware, async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('expense_transactions').select('*').eq('id', req.params.id).eq('user_id', req.userId).maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Transaction not found' });
+    res.json(data);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 router.put('/transactions/:id', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;

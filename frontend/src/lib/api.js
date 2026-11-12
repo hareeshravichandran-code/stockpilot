@@ -271,6 +271,8 @@ export const eventsAPI = {
   updateRule: (id, data)   => api.put(`/api/events/rules/${enc(id)}`, data),
   removeRule: (id)         => api.delete(`/api/events/rules/${enc(id)}`),
   previewRule: (data)      => api.post('/api/events/rules/preview', data),
+  groups:   ()             => api.get('/api/events/groups'),
+  groupAction: (id, data)  => api.post(`/api/events/groups/${enc(id)}`, data, { timeout: 45000 }),
 };
 
 export const moneyflowAPI = {

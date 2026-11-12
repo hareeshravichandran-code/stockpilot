@@ -156,6 +156,8 @@ router.post('/apply', requireAuth, async (req, res) => {
         const { data: ex } = await supabase.from('user_sms_rules').select('id').eq('user_id', uid).eq('merchant_pattern', pattern).maybeSingle();
         if (ex) { await supabase.from('user_sms_rules').update({ category_id: it.category_id, user_confirmed: true, ...(ptok ? { pattern_tok: ptok } : {}), updated_at: Date.now() }).eq('id', ex.id); out.updated++; }
         else { await supabase.from('user_sms_rules').insert({ id: require('crypto').randomUUID(), user_id: uid, merchant_pattern: pattern, ...(ptok ? { pattern_tok: ptok } : {}), category_id: it.category_id, match_count: num(it.count) || 1, user_confirmed: true, created_at: Date.now(), updated_at: Date.now() }); out.created++; }
+        // The SMS group it came from is sorted now (web and app show it as done)
+        await supabase.from('sms_groups').update({ status: 'ruled', category_id: it.category_id, updated_at: nowIso() }).eq('owner_id', uid).eq('key', pattern).eq('status', 'open');
         // Existing uncategorised transactions from this merchant follow the rule
         let q = supabase.from('expense_transactions').update({ category_id: it.category_id, updated_at: Date.now() }).eq('user_id', uid).is('category_id', null);
         q = ptok?.length ? q.contains('merchant_tok', ptok) : q.ilike('merchant', `%${pattern}%`);
@@ -175,6 +177,41 @@ router.post('/apply', requireAuth, async (req, res) => {
     console.error(JSON.stringify({ event: 'SETUP_APPLY_ERROR', step, error: err.message }));
     res.status(500).json({ error: err.message, ...out });
   }
+});
+
+// SMS groups found during setup (same payee, many SMS). Saved to the account so the user can sort them
+// later on the web (Events > SMS groups) or in the app (Manage). Encrypted accounts send key / name / sample
+// encrypted and the key's word fingerprints in pattern_tok. Stats refresh on every run; the user's decision stays.
+router.post('/groups', requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.id;
+    const items = Array.isArray(req.body?.items) ? req.body.items.slice(0, 200) : [];
+    const { data: ex } = await supabase.from('sms_groups').select('id, key, status').eq('owner_id', uid);
+    const byKey = Object.fromEntries((ex || []).map(g => [g.key, g]));
+    let created = 0, updated = 0;
+    const rows = [];
+    for (const it of items) {
+      const key = typeof it.key === 'string' ? it.key.trim().slice(0, 600) : '';
+      if (key.length < 3) continue;
+      const row = {
+        owner_id: uid, key, pattern_tok: Array.isArray(it.pattern_tok) ? it.pattern_tok.filter(x => typeof x === 'string').slice(0, 20) : null,
+        name: str(it.name, 2000), sample: str(it.sample, 8000), sender_key: str(it.sender_key, 20),
+        count: Math.max(0, Math.round(num(it.count) || 0)), total: num(it.total), avg_amount: num(it.avg_amount), min_amount: num(it.min_amount), max_amount: num(it.max_amount),
+        first_seen: isDate(it.first_seen) ? it.first_seen : null, last_seen: isDate(it.last_seen) ? it.last_seen : null,
+        cadence: ['monthly', 'quarterly', 'half_yearly', 'yearly'].includes(it.cadence) ? it.cadence : null,
+        due_day: (() => { const d = parseInt(it.due_day, 10); return d >= 1 && d <= 31 ? d : null; })(),
+        suggested: str(it.suggested, 60), updated_at: nowIso(),
+      };
+      if (byKey[key]) { await supabase.from('sms_groups').update(row).eq('id', byKey[key].id); updated++; }
+      else rows.push({ ...row, status: 'open', source: 'phone' });
+    }
+    for (let i = 0; i < rows.length; i += 100) {
+      const { error } = await supabase.from('sms_groups').insert(rows.slice(i, i + 100));
+      if (error) throw error;
+      created += Math.min(100, rows.length - i);
+    }
+    res.json({ ok: true, created, updated });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 router.post('/done', requireAuth, async (req, res) => {

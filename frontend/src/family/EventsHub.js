@@ -627,6 +627,140 @@ function RulesTab({ cats, events, notify, onChanged }) {
   );
 }
 
+// ── SMS groups (found by the phone in setup) ────────────────────────────────
+const CADENCE = { monthly: 'every month', quarterly: 'every 3 months', half_yearly: 'every 6 months', yearly: 'every year' };
+function GroupEventForm({ g, cats, onClose, onDone, notify }) {
+  const [f, setF] = useState({ title: clean(g.name), kind: /netflix|prime|spotify|youtube|google|apple|claude|anthropic|openai|hotstar|jio|airtel/i.test(g.name || '') ? 'subscription' : 'bill',
+    category_id: g.suggested && cats.some(c => c.id === g.suggested) ? g.suggested : '', amount: g.avg_amount ? Math.round(g.avg_amount) : '', amount_mode: g.max_amount && g.min_amount && g.max_amount <= g.min_amount * 1.02 ? 'exact' : 'about',
+    frequency: g.cadence || 'monthly', due_day: g.due_day || (g.last_seen ? +g.last_seen.slice(8, 10) : ''), due_month: g.last_seen ? +g.last_seen.slice(5, 7) : '',
+    buffer_days: 2, also_subscription: true });
+  const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
+  const set = (k) => (v) => setF(x => ({ ...x, [k]: v && v.target ? (v.target.type === 'checkbox' ? v.target.checked : v.target.value) : v }));
+  const save = async () => {
+    setErr('');
+    if (!f.category_id) return setErr('Pick a category');
+    if (!f.due_day) return setErr('Pick the day it is due');
+    setBusy(true);
+    try {
+      await eventsAPI.groupAction(g.id, { action: 'event', ...f, amount: Number(f.amount) || 0, due_day: Number(f.due_day), due_month: f.frequency === 'monthly' ? null : Number(f.due_month) || null,
+        buffer_days: Number(f.buffer_days), also_subscription: f.kind === 'subscription' && f.also_subscription });
+      notify(`${clean(f.title)} is an event now · its SMS settle it`); onDone();
+    } catch (e) { setErr(errMsg(e)); } finally { setBusy(false); }
+  };
+  return (
+    <Modal title="Make it an event" onClose={onClose} wide
+      footer={<><button type="button" className="fo-btn ghost" onClick={onClose}>Cancel</button><button type="button" className="fo-btn" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Create event + rule'}</button></>}>
+      <div className="eh-form">
+        <p className="eh-explain">{g.count} SMS{g.cadence ? `, about ${CADENCE[g.cadence]}` : ''}. Kanalyst creates the event and an SMS rule for this payee, and marks past due dates done from these SMS.</p>
+        <fieldset>
+          <legend>Event</legend>
+          <Field label="Name" wide><input value={f.title} onChange={set('title')} maxLength={120} /></Field>
+          <Field label="Type"><select value={f.kind} onChange={set('kind')}>{TYPES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></Field>
+          <Field label="Category"><CategorySelect value={f.category_id} onChange={set('category_id')} cats={cats} required /></Field>
+          <Field label="Repeats" wide><Seg label="Repeats" options={FREQS.filter(x => x[0] !== 'once')} value={f.frequency} onChange={set('frequency')} /></Field>
+          <Field label="Due day"><input type="number" min="1" max="31" value={f.due_day} onChange={set('due_day')} /></Field>
+          {f.frequency !== 'monthly' && <Field label="Month"><select value={f.due_month} onChange={set('due_month')}><option value="">Pick…</option>{MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}</select></Field>}
+          <Field label="Amount"><input type="number" min="0" value={f.amount} onChange={set('amount')} /></Field>
+          <Field label="Amount matching"><Seg label="Amount matching" options={[['exact', 'Exact'], ['about', 'About ±10%'], ['any', 'Any']]} value={f.amount_mode} onChange={set('amount_mode')} /></Field>
+          <Field label="Buffer (± days)"><input type="number" min="0" max="15" value={f.buffer_days} onChange={set('buffer_days')} /></Field>
+          {f.kind === 'subscription' && (
+            <label className="eh-check wide"><input type="checkbox" checked={f.also_subscription} onChange={set('also_subscription')} /> Also add it to Subscriptions (a master)</label>
+          )}
+        </fieldset>
+        {err && <div className="fo-err" role="alert">{err}</div>}
+      </div>
+    </Modal>
+  );
+}
+
+function GroupRow({ g, cats, i, onAct, busy, onEvent }) {
+  const [cat, setCat] = useState(g.category_id || (g.suggested && cats.some(c => c.id === g.suggested) ? g.suggested : ''));
+  const sorted = g.status !== 'open';
+  return (
+    <li className={`eh-grp ${g.status}`} style={{ '--i': Math.min(i, 12) }}>
+      <div className="eh-grp-main">
+        <div className="eh-grp-top">
+          <b>{clean(g.name)}</b>
+          <span className="eh-dim">{g.count} SMS · {inr(g.total)} in all{g.avg_amount ? ` · about ${inr(g.avg_amount)} each` : ''}</span>
+        </div>
+        <div className="eh-row-tags">
+          {g.cadence && <span className="eh-tag hot">Repeats {CADENCE[g.cadence]}{g.due_day ? ` · ~${ord(g.due_day)}` : ''}</span>}
+          {g.sender_key && <span className="eh-tag">From {g.sender_key}</span>}
+          {g.last_seen && <span className="eh-tag">Last {fmt(g.last_seen)}</span>}
+        </div>
+        {g.sample && <p className="eh-sms">{clean(g.sample)}</p>}
+      </div>
+      <div className="eh-grp-act">
+        {g.status === 'open' && (
+          <>
+            <div className="eh-grp-cat">
+              <CategorySelect value={cat} onChange={setCat} cats={cats} required />
+              <button type="button" className="fo-btn sm" disabled={busy || !cat} onClick={() => onAct(g, { action: 'category', category_id: cat })}>Save rule</button>
+            </div>
+            <div className="eh-grp-more">
+              <button type="button" className="fo-btn sm ghost" disabled={busy} onClick={() => onEvent(g)}>Make it an event…</button>
+              <button type="button" className="eh-link" disabled={busy} onClick={() => onAct(g, { action: 'ignore' })}>Ignore</button>
+            </div>
+          </>
+        )}
+        {sorted && (
+          <div className="eh-grp-done">
+            {g.status === 'ignored' ? <Pill tone="mute">Ignored</Pill> : (
+              <span className="eh-then"><Pill tone="ok">{g.status === 'event' ? 'Event + rule' : 'Rule'}</Pill><CatChip id={g.category_id} cats={cats} />{g.event && <span className="eh-evchip">settles <b>{clean(g.event.title)}</b></span>}</span>
+            )}
+            <button type="button" className="eh-link" disabled={busy} onClick={() => onAct(g, { action: 'reopen' })}>{g.status === 'ignored' ? 'Sort it' : 'Change'}</button>
+          </div>
+        )}
+      </div>
+    </li>
+  );
+}
+
+function GroupsTab({ cats, notify, onChanged }) {
+  const [groups, setGroups] = useState(null);
+  const [filter, setFilter] = useState('open');
+  const [q, setQ] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [ev, setEv] = useState(null);
+  const load = useCallback(async () => {
+    try { const r = await eventsAPI.groups(); setGroups(r.data.groups || []); } catch (e) { notify(errMsg(e)); setGroups([]); }
+  }, [notify]);
+  useEffect(() => { load(); }, [load]);
+  const act = async (g, body) => {
+    setBusy(true);
+    try {
+      await eventsAPI.groupAction(g.id, body);
+      notify(body.action === 'category' ? `Rule saved · ${clean(g.name)} → ${cats.find(c => c.id === body.category_id)?.name || 'category'}` : body.action === 'ignore' ? 'Ignored' : 'Back in To sort');
+      await load(); onChanged();
+    } catch (e) { notify(errMsg(e)); } finally { setBusy(false); }
+  };
+  if (!groups) return <LogoLoader size={30} inline label="Reading SMS groups" />;
+  const n = { open: groups.filter(g => g.status === 'open').length, done: groups.filter(g => g.status === 'ruled' || g.status === 'event').length, ignored: groups.filter(g => g.status === 'ignored').length };
+  const list = groups.filter(g => (filter === 'open' ? g.status === 'open' : filter === 'done' ? (g.status === 'ruled' || g.status === 'event') : g.status === 'ignored')
+    && (!q || [g.name, g.sample, g.sender_key].some(x => x && clean(x).toLowerCase().includes(q.toLowerCase()))));
+  return (
+    <div className="eh-groups">
+      <p className="eh-dim eh-lead">Your phone groups SMS by payee. For each group, pick a category (a rule), or make it an event if it repeats. Rules reach the phone on its next sync.</p>
+      <div className="eh-tools">
+        <input className="eh-search" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search payee, SMS or sender" aria-label="Search groups" />
+      </div>
+      <div className="eh-filters" role="tablist" aria-label="Filter groups">
+        {[['open', 'To sort'], ['done', 'Sorted'], ['ignored', 'Ignored']].map(([k, l]) => (
+          <button key={k} type="button" role="tab" aria-selected={filter === k} className={`${filter === k ? 'on' : ''} ${k === 'open' && n.open ? 'hot' : ''}`} onClick={() => setFilter(k)}>{l}<span>{n[k]}</span></button>
+        ))}
+      </div>
+      {!groups.length ? (
+        <div className="eh-empty"><b>No SMS groups yet.</b><p>They appear after the phone app reads your SMS in setup (Settings › Run setup again).</p></div>
+      ) : !list.length ? (
+        <div className="eh-empty"><b>{filter === 'open' ? 'All sorted.' : 'Nothing here.'}</b></div>
+      ) : (
+        <ul className="eh-grps">{list.map((g, i) => <GroupRow key={g.id} g={g} i={i} cats={cats} busy={busy} onAct={act} onEvent={setEv} />)}</ul>
+      )}
+      {ev && <GroupEventForm g={ev} cats={cats} notify={notify} onClose={() => setEv(null)} onDone={() => { setEv(null); load(); onChanged(); }} />}
+    </div>
+  );
+}
+
 // ── Page ─────────────────────────────────────────────────────────────────────
 export default function EventsHub({ notify }) {
   const [tab, setTab] = useState(() => { try { return sessionStorage.getItem('eh-tab') || 'events'; } catch { return 'events'; } });
@@ -659,13 +793,14 @@ export default function EventsHub({ notify }) {
       </header>
       <HowItWorks />
       <nav className="eh-tabs" role="tablist" aria-label="Sections">
-        {[['events', 'Events'], ['rules', 'SMS rules'], ['found', 'Found in SMS']].map(([k, l]) => (
+        {[['events', 'Events'], ['groups', 'SMS groups'], ['rules', 'SMS rules'], ['found', 'Repeating in SMS']].map(([k, l]) => (
           <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? 'on' : ''} onClick={() => go(k)}>{l}</button>
         ))}
       </nav>
       {events === null ? <LogoLoader label="Reading your events…" /> : (
         <>
           {tab === 'events' && <EventsTab events={events} cats={cats} reload={load} notify={notify} selected={selected} setSelected={setSelected} />}
+          {tab === 'groups' && <GroupsTab cats={cats} notify={notify} onChanged={load} />}
           {tab === 'rules' && <RulesTab cats={cats} events={events} notify={notify} onChanged={load} />}
           {tab === 'found' && (
             <div className="eh-found">

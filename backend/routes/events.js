@@ -213,6 +213,104 @@ router.delete('/rules/:id', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── SMS groups (found by the phone during setup, sorted here or in the app) ──
+// A group is one payee seen in many SMS. The user decides what it is:
+//   category  -> an SMS rule (payee words -> category)
+//   event     -> an event (EMI, subscription, SIP...) + a rule tied to it; optionally a subscription master too
+//   ignore    -> leave it
+router.get('/groups', requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.id;
+    const [{ data: gs }, { data: evs }] = await Promise.all([
+      supabase.from('sms_groups').select('*').eq('owner_id', uid).order('count', { ascending: false }).range(0, 999),
+      supabase.from('recurring_events').select('id, title, kind').eq('owner_id', uid),
+    ]);
+    const evById = Object.fromEntries((evs || []).map(e => [e.id, e]));
+    res.json({ groups: (gs || []).map(g => ({
+      id: g.id, name: g.name || g.key, key: g.key, sample: g.sample, sender_key: g.sender_key, count: g.count, total: num(g.total),
+      avg_amount: num(g.avg_amount), min_amount: num(g.min_amount), max_amount: num(g.max_amount), first_seen: g.first_seen, last_seen: g.last_seen,
+      cadence: g.cadence, due_day: g.due_day, suggested: g.suggested, status: g.status, category_id: g.category_id,
+      event: g.event_id && evById[g.event_id] ? { id: g.event_id, title: evById[g.event_id].title, kind: evById[g.event_id].kind } : null, updated_at: g.updated_at,
+    })) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+/** Rule from a group: its payee words (already sealed by the phone for encrypted accounts). */
+async function ruleFromGroup(uid, g, { category_id, event_id = null, amountRange = null }) {
+  const { isEnc } = require('../services/privacy');
+  const pattern = isEnc(g.key) ? g.key : String(g.key).toLowerCase().trim();
+  const row = { user_id: uid, merchant_pattern: pattern, pattern_tok: g.pattern_tok || null, category_id, event_id, source: 'group', label: g.name || null,
+    amount_min: amountRange ? amountRange[0] : null, amount_max: amountRange ? amountRange[1] : null, user_confirmed: true, is_deleted: false,
+    match_count: g.count || 1, updated_at: Date.now() };
+  const { data: ex } = await supabase.from('user_sms_rules').select('id').eq('user_id', uid).eq('merchant_pattern', pattern).maybeSingle();
+  if (ex) { await supabase.from('user_sms_rules').update(row).eq('id', ex.id); return ex.id; }
+  const { data, error } = await supabase.from('user_sms_rules').insert({ ...row, created_at: Date.now() }).select('id').single();
+  if (error) throw error;
+  return data.id;
+}
+async function recategorise(uid, g, category_id) {
+  // Uncategorised (or NACH / other) payments from this payee follow the new rule
+  let q = supabase.from('expense_transactions').update({ category_id, updated_at: Date.now() }).eq('user_id', uid).or('category_id.is.null,category_id.in.(other,uncategorized,nach)');
+  q = Array.isArray(g.pattern_tok) && g.pattern_tok.length ? q.contains('merchant_tok', g.pattern_tok) : q.ilike('merchant', `%${String(g.key).toLowerCase()}%`);
+  await q;
+}
+
+router.post('/groups/:id', requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.id; const b = req.body || {};
+    if (!isUuid(req.params.id)) return res.status(404).json({ error: 'Not found' });
+    const { data: g } = await supabase.from('sms_groups').select('*').eq('id', req.params.id).eq('owner_id', uid).maybeSingle();
+    if (!g) return res.status(404).json({ error: 'Group not found' });
+    const set = (patch) => supabase.from('sms_groups').update({ ...patch, updated_at: nowIso() }).eq('id', g.id);
+    if (b.action === 'ignore') { await set({ status: 'ignored' }); return res.json({ ok: true }); }
+    if (b.action === 'reopen') { await set({ status: 'open' }); return res.json({ ok: true }); }
+    const category_id = str(b.category_id, 80);
+    if (!category_id) return res.status(400).json({ error: 'Pick a category' });
+    if (b.action === 'category') {
+      const rule_id = await ruleFromGroup(uid, g, { category_id });
+      await recategorise(uid, g, category_id);
+      await set({ status: 'ruled', category_id, rule_id, event_id: null });
+      return res.json({ ok: true, rule_id });
+    }
+    if (b.action !== 'event') return res.status(400).json({ error: 'Unknown action' });
+    // Event (+ subscription master when asked)
+    const kind = KINDS.includes(b.kind) ? b.kind : 'subscription';
+    const freq = FREQS.includes(b.frequency) && b.frequency !== 'once' ? b.frequency : (g.cadence || 'monthly');
+    const due_day = (() => { const d = parseInt(b.due_day ?? g.due_day, 10); return d >= 1 && d <= 31 ? d : null; })();
+    if (!due_day) return res.status(400).json({ error: 'Pick the day it is due' });
+    const due_month = freq === 'monthly' ? null : (() => { const m = parseInt(b.due_month, 10); return m >= 1 && m <= 12 ? m : (g.last_seen ? +g.last_seen.slice(5, 7) : null); })();
+    const amount = num(b.amount) || num(g.avg_amount);
+    const title = str(b.title, 4000) || g.name || g.key;
+    let eventId = null;
+    if (b.also_subscription) {
+      const M = require('./masters');
+      const r = await M.upsertMaster(uid, { kind: 'subscription', title, amount, frequency: freq, due_day, due_month, source: 'sms_group',
+        match: { keywords: [g.key], keyword_tok: g.pattern_tok || undefined, any_amount: b.amount_mode === 'any' } });
+      if (r.table === 'money_masters') {
+        const { data: m } = await supabase.from('money_masters').select('*').eq('id', r.id).maybeSingle();
+        if (m) eventId = await M.syncEvent(uid, m);
+      }
+    }
+    const fields = { kind, category_id, amount, amount_mode: ['exact', 'about', 'any'].includes(b.amount_mode) ? b.amount_mode : 'about', frequency: freq, due_day, due_month,
+      buffer_days: (() => { const x = parseInt(b.buffer_days, 10); return Number.isFinite(x) ? Math.max(0, Math.min(15, x)) : 2; })(), direction: IN_KINDS.includes(kind) ? 'in' : 'out' };
+    if (eventId) await supabase.from('recurring_events').update(fields).eq('id', eventId);
+    else {
+      const row = { owner_id: uid, master_table: 'manual', master_id: `g-${g.id}`, source: 'manual', status: 'active', title, start_date: null, pay_mode: 'auto',
+        remind_days: Math.max(0, WINDOW[levelOf(kind, null)] ?? 2), ...fields };
+      const { data, error } = await supabase.from('recurring_events').insert(await lockRow(uid, row, { texts: ['title'] })).select('id').single();
+      if (error) throw error;
+      eventId = data.id;
+    }
+    const steady = num(g.min_amount) && num(g.max_amount) && num(g.max_amount) <= num(g.min_amount) * 1.25;
+    const rule_id = await ruleFromGroup(uid, g, { category_id, event_id: eventId,
+      amountRange: steady && fields.amount_mode !== 'any' ? [Math.floor(num(g.min_amount) * 0.9), Math.ceil(num(g.max_amount) * 1.1)] : null });
+    await recategorise(uid, g, category_id);
+    await set({ status: 'event', category_id, rule_id, event_id: eventId });
+    require('./masters').linkActuals(uid, { force: true }).catch(() => {});
+    res.json({ ok: true, event_id: eventId, rule_id });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── One event ────────────────────────────────────────────────────────────────
 router.get('/:id', requireAuth, async (req, res) => {
   try {

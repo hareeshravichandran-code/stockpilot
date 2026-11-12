@@ -3,17 +3,14 @@
  * lives in Family calendar), then where the money sits, goals, history and top holdings.
  * Figures come from the Dashboard page; only the strip and goals fetch their own data.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useState } from 'react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
-import { mastersAPI } from '../lib/api';
-import { kindOf, KindIcon } from '../money/kinds';
 import { inr, GoalsSnapshot, FamilyStrip } from './DashboardOverview';
 import useCountUp from '../hooks/useCountUp';
+import MoneyStrip from './MoneyStrip';
 import './OverviewV2.css';
 
 const n = (v) => { const x = parseFloat(v); return Number.isFinite(x) ? x : 0; };
-const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-const mkey = (d) => ymd(d).slice(0, 7);
 
 function Money({ v, hidden, full }) {
   const x = useCountUp(n(v));
@@ -26,75 +23,6 @@ function greeting() {
   return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
 }
 
-// ── Next 14 days ───────────────────────────────────────────────────
-function NextDays({ hidden, onOpenCalendar, onOpenEvents }) {
-  const [events, setEvents] = useState(null);
-  useEffect(() => {
-    let live = true;
-    const now = new Date(); const later = new Date(now); later.setDate(now.getDate() + 13);
-    const months = [...new Set([mkey(now), mkey(later)])];
-    Promise.all(months.map(m => mastersAPI.month(m).then(r => r.data.events || []).catch(() => [])))
-      .then(all => { if (live) setEvents(all.flat()); });
-    return () => { live = false; };
-  }, []);
-  const days = useMemo(() => [...Array(14)].map((_, i) => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + i); return d; }), []);
-  const today = ymd(days[0]);
-  const by = useMemo(() => {
-    const o = {};
-    for (const e of events || []) {
-      if (e.status === 'past') continue;
-      const k = e.status === 'overdue' && e.date < today ? today : e.date;
-      (o[k] = o[k] || []).push(e);
-    }
-    return o;
-  }, [events, today]);
-  const list = days.flatMap(d => (by[ymd(d)] || []).map(e => ({ ...e, _d: d }))).slice(0, 6);
-  const total = days.reduce((a, d) => a + (by[ymd(d)] || []).filter(e => e.dir !== 'in').reduce((s, e) => s + n(e.amount), 0), 0);
-  const income = days.reduce((a, d) => a + (by[ymd(d)] || []).filter(e => e.dir === 'in').reduce((s, e) => s + n(e.amount), 0), 0);
-  const hot = (e) => e.blink || e.urgent || e.status === 'overdue';
-  const peak = Math.max(1, ...days.map(d => (by[ymd(d)] || []).reduce((s, e) => s + n(e.amount), 0)));
-  const money = (v) => (hidden ? '••' : inr(v));
-  return (
-    <section className="o3-card o3-next" aria-label="Next 14 days">
-      <header className="o3-head">
-        <div><h3>Next 14 days</h3><p>{events === null ? 'Loading…' : `${money(total)} going out${income ? ` · ${money(income)} coming in` : ''}`}</p></div>
-        <div className="o3-links">
-          <button type="button" onClick={onOpenEvents}>Events</button>
-          <button type="button" onClick={onOpenCalendar}>Full calendar ›</button>
-        </div>
-      </header>
-      <div className="o3-strip" role="list">
-        {days.map((d, i) => {
-          const ev = by[ymd(d)] || []; const sum = ev.reduce((s, e) => s + n(e.amount), 0);
-          const isHot = ev.some(hot);
-          return (
-            <div key={i} role="listitem" className={`o3-day${i === 0 ? ' today' : ''}${d.getDay() === 0 ? ' sun' : ''}${isHot ? ' hot' : ''}${ev.length ? ' has' : ''}`} style={{ '--i': i }}
-              title={ev.map(e => `${e.title}${e.amount ? ' ' + inr(e.amount) : ''}`).join('\n') || 'Nothing due'}>
-              <small>{i === 0 ? 'Today' : d.toLocaleDateString('en-IN', { weekday: 'short' })}</small>
-              <b>{d.getDate()}</b>
-              <span className="o3-bar"><i style={{ height: `${sum ? Math.max(14, (sum / peak) * 100) : 0}%` }} /></span>
-              <span className="o3-dots">{ev.slice(0, 3).map((e, j) => <i key={j} style={{ '--c': kindOf(e.kind).c }} className={hot(e) ? 'hot' : e.dir === 'in' ? 'in' : ''} />)}</span>
-            </div>
-          );
-        })}
-      </div>
-      {events !== null && (list.length ? (
-        <div className="o3-due">
-          {list.map((e, i) => {
-            const dd = Math.round((e._d - days[0]) / 864e5);
-            return (
-              <div key={i} className={`o3-due-i${hot(e) ? ' hot' : ''}`} style={{ '--c': kindOf(e.kind).c, '--i': i }}>
-                <span className="o3-due-ic"><KindIcon kind={e.kind} size={15} color="#FAF7F0" /></span>
-                <span className="o3-due-t"><b>{e.title}</b><small>{e.status === 'overdue' ? 'Overdue' : dd === 0 ? 'Today' : dd === 1 ? 'Tomorrow' : `In ${dd} days`} · {kindOf(e.kind).label}</small></span>
-                {e.amount ? <span className={`o3-due-a${e.dir === 'in' ? ' in' : ''}`}>{e.dir === 'in' ? '+' : ''}{money(e.amount)}</span> : null}
-              </div>
-            );
-          })}
-        </div>
-      ) : <p className="o3-none">Nothing due in the next two weeks.</p>)}
-    </section>
-  );
-}
 
 export default function OverviewV2({
   name, parts, owed, asOf, hideValues, income, spent, dividends, yieldPct,
@@ -166,12 +94,12 @@ export default function OverviewV2({
             </div>
           </div>
           <div className="o3-div"><small>Dividends this FY</small><b>{hideValues ? '••••' : inr(dividends)}</b>{yieldPct ? <em>{yieldPct}% yield</em> : null}</div>
-          <button type="button" className="o3-cta" onClick={() => onTab('cashflow')}>Income &amp; expense ›</button>
+          <button type="button" className="o3-cta" onClick={() => onTab('cashflow')}>Money flow ›</button>
         </section>
       </div>
 
       {/* ── Row 2: next 14 days ── */}
-      <NextDays hidden={hideValues} onOpenCalendar={() => onTab('calendar')} onOpenEvents={() => onTab('m-events')} />
+      <MoneyStrip hidden={hideValues} onOpenCalendar={() => onTab('calendar')} onOpenEvents={() => onTab('m-events')} />
 
       {!emailConnected && (
         <button type="button" className="o3-banner" onClick={onConnect}>

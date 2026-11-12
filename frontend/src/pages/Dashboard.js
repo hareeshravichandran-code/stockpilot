@@ -39,7 +39,7 @@ const NAV_SECTIONS = [
   ['Dashboards', [
     { id: 'dashboard', icon: '◈', label: 'Overview' },
     { id: 'calendar', icon: '▦', label: 'Family calendar', hint: 'Dues, income, dividends, birthdays and renewals' },
-    { id: 'cashflow', icon: '⇅', label: 'Income & expense', hint: 'Money in, money out and investments' },
+    { id: 'cashflow', icon: '⇅', label: 'Money flow', hint: 'Spending by month, categories, recent spends and a report' },
     { to: '/blueprint', icon: '◇', label: 'Blueprint', hint: 'Goals on a visual plan' },
     { id: 'retirement', icon: '◐', label: 'Retirement' },
   ]],
@@ -818,12 +818,12 @@ export default function Dashboard() {
   const loadTab = async (t0) => {
     let t = OLD_TAB[t0] && !['income', 'expenses'].includes(t0) ? OLD_TAB[t0] : t0;
     if (t0 === 'dividends') setStockView('dividends');
-    if (t0 === 'income' || t0 === 'expenses') { setCfView(t0); t = 'cashflow'; }
+    if (t0 === 'income' || t0 === 'expenses') { setCfView('flow'); t = 'cashflow'; }
     setNavTab(t === 'bankdeposits' ? 'fd' : t);
     if (t === 'fd' || t === 'rd') { setDepView(t); t = 'bankdeposits'; }
     if (t.startsWith('m-') && !MASTER_PANEL[t]) { setTab(t); return; }
     setTab(t);
-    if (t === 'cashflow') { const v = t0 === 'income' || t0 === 'expenses' ? t0 : cfView; if (v === 'income') await loadIncome(); if (v === 'expenses') await loadExpenses(); return; }
+    if (t === 'cashflow') return;                          // Money flow loads its own data
     if (t === 'transactions' && transactions.length === 0) {
       const r = await portfolioAPI.transactions().catch(() => ({ data: [] }));
       setTransactions(r.data);
@@ -1208,7 +1208,7 @@ export default function Dashboard() {
             <h1 className="db-page-title">
               {{ dashboard:'Overview', holdings:'Stocks', dividends:'Stocks', tax:'Tax summary', mutualfunds:'Mutual funds',
                  bankdeposits: depView === 'rd' ? 'Recurring deposits' : 'Fixed deposits', nps:'NPS', epfo:'EPFO', calendar:'Family calendar',
-                 cashflow:'Income & expense', retirement:'Retirement', admin:'Sync logs', reports:'Reports',
+                 cashflow:'Money flow', retirement:'Retirement', admin:'Sync logs', reports:'Reports',
                  'm-bank_account':'Bank accounts', 'm-card':'Credit cards', 'm-loan':'Loans', 'm-subscription':'Subscriptions', 'm-all':'All masters',
                  'm-insurance':'Insurance', 'm-events':'Events', 'm-people':'People', 'm-documents':'Documents' }[tab]}
             </h1>
@@ -2101,22 +2101,7 @@ export default function Dashboard() {
           )}
 
           {/* EXPENSES TAB */}
-          {tab === 'cashflow' && (
-            <div className="cf-bar">
-              <div className="k-seg" role="tablist" aria-label="Income and expense">
-                {[['flow', 'Money flow'], ['income', 'Income'], ['expenses', 'Expenses']].map(([v, l]) => (
-                  <button key={v} type="button" role="tab" aria-selected={cfView === v} className={cfView === v ? 'on' : ''}
-                    onClick={() => { setCfView(v); if (v === 'income') loadIncome(); if (v === 'expenses') loadExpenses(); }}>{l}</button>
-                ))}
-              </div>
-              <button type="button" className="cf-manage" onClick={() => setShowManageExpense(true)}
-                title="Categories, SMS rules, categorise in bulk, budgets, custom fields and Google Sheets">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>
-                Manage <small>categories · rules · budgets</small>
-              </button>
-            </div>
-          )}
-          {tab === 'cashflow' && cfView === 'flow' && <div className="fade-in"><MoneyFlow embedded /></div>}
+          {tab === 'cashflow' && <div className="fade-in"><MoneyFlow embedded onManage={() => setShowManageExpense(true)} /></div>}
           {(tab === 'expenses' || (tab === 'cashflow' && cfView === 'expenses')) && (() => {
             const INV_CATS = new Set(['investment','inv_return','bills']);
 

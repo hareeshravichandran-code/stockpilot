@@ -61,6 +61,7 @@ function toWebEntry(t) {
     comments:      t.note || t.description || null,
     type:          t.type || 'DEBIT',
     bank_sender:   t.bank_name || null,
+    sms_body:      t.sms_body || null,
     source:        t.source || 'sms',
     is_deleted:    t.is_deleted || false,
   };
@@ -94,27 +95,19 @@ function fromWebEntry(body, userId) {
 // Returns all non-deleted transactions, DEBITs = expenses, CREDITs available via ?type=CREDIT
 router.get('/entries', requireAuth, async (req, res) => {
   const { type, from, to, category, limit = 500 } = req.query;
-  let q = supabase
-    .from('expense_transactions')
-    .select('*')
-    .eq('user_id', req.user.id)
-    .eq('is_deleted', false)
-    .order('date_time', { ascending: false })
-    .limit(parseInt(limit));
-
-  if (type)     q = q.eq('type', type.toUpperCase());
-  if (category) q = q.eq('category_id', category);
-  if (from) {
-    const fromMs = new Date(from + 'T00:00:00').getTime();
-    q = q.gte('date_time', fromMs);
-  }
-  if (to) {
-    const toMs = new Date(to + 'T23:59:59').getTime();
-    q = q.lte('date_time', toMs);
-  }
-
-  const { data, error } = await q;
-  if (error) return res.status(500).json({ error: error.message });
+  // Supabase returns 1000 rows per request at most: page through for longer reports
+  const build = () => {
+    let q = supabase.from('expense_transactions').select('*').eq('user_id', req.user.id).eq('is_deleted', false)
+      .order('date_time', { ascending: false }).order('id');
+    if (type)     q = q.eq('type', type.toUpperCase());
+    if (category) q = q.eq('category_id', category);
+    if (from) q = q.gte('date_time', new Date(from + 'T00:00:00+05:30').getTime());
+    if (to)   q = q.lte('date_time', new Date(to + 'T23:59:59+05:30').getTime());
+    return q;
+  };
+  let data;
+  try { data = await require('../services/allRows').allRows(build, Math.min(Math.max(parseInt(limit) || 500, 1), 5000)); }
+  catch (error) { return res.status(500).json({ error: error.message }); }
 
   // Deduplicate in memory — same amount+date_time+type within 60s window
   // This handles any duplicates that slipped through before the DB constraint was added
