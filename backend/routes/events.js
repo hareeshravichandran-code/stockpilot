@@ -23,6 +23,7 @@ const supabase = require('../services/supabase');
 const EM = require('../services/eventMatch');
 const { levelOf, LEVELS, WINDOW } = require('../services/alerts');
 const { lockRow } = require('../services/privacy');
+const { allRows } = require('../services/allRows');
 
 const KINDS = ['emi', 'subscription', 'sip', 'rd_instalment', 'premium', 'card_due', 'bill', 'rent', 'school_fee', 'property_tax', 'salary', 'income', 'dividend', 'maturity', 'other'];
 const FREQS = ['monthly', 'quarterly', 'half_yearly', 'yearly', 'once'];
@@ -99,8 +100,8 @@ router.get('/', requireAuth, async (req, res) => {
 // ── Senders seen in SMS ──────────────────────────────────────────────────────
 router.get('/senders', requireAuth, async (req, res) => {
   try {
-    const { data } = await supabase.from('expense_transactions').select('sms_sender, bank_name').eq('user_id', req.user.id).eq('is_deleted', false)
-      .gte('date_time', Date.now() - 400 * 86400000).range(0, 7999);
+    const data = await allRows(() => supabase.from('expense_transactions').select('id, sms_sender, bank_name').eq('user_id', req.user.id).eq('is_deleted', false)
+      .gte('date_time', Date.now() - 400 * 86400000).order('id'));
     const by = {};
     for (const t of data || []) { const k = EM.senderKey(t.sms_sender); if (!k) continue; const o = by[k] = by[k] || { key: k, bank: t.bank_name || null, count: 0, examples: new Set() }; o.count++; if (o.examples.size < 3) o.examples.add(t.sms_sender); }
     res.json({ senders: Object.values(by).map(o => ({ ...o, examples: [...o.examples] })).sort((a, b) => b.count - a.count) });
@@ -134,9 +135,8 @@ async function checkRule(uid, r) {
   return null;
 }
 async function recentTxns(uid, days = 200) {
-  const { data } = await supabase.from('expense_transactions').select(TXN_COLS).eq('user_id', uid).eq('is_deleted', false)
-    .gte('date_time', Date.now() - days * 86400000).order('date_time', { ascending: false }).range(0, 4999);
-  return data || [];
+  return allRows(() => supabase.from('expense_transactions').select(TXN_COLS).eq('user_id', uid).eq('is_deleted', false)
+    .gte('date_time', Date.now() - days * 86400000).order('date_time', { ascending: false }).order('id', { ascending: true }));
 }
 
 router.get('/rules', requireAuth, async (req, res) => {

@@ -27,6 +27,7 @@
 const supabase = require('./supabase');
 const { ruleMatches, isEnc } = require('./privacy');
 const { WINDOW, levelOf } = require('./alerts');
+const { allRows } = require('./allRows');
 
 const DAY = 86400000;
 const STEP = { monthly: 1, quarterly: 3, half_yearly: 6, yearly: 12 };
@@ -128,11 +129,11 @@ async function runMatching(uid, { force = false, matchesMaster = null } = {}) {
   if (!force && Date.now() - (lastRun.get(uid) || 0) < 90 * 1000) return { skipped: true };
   lastRun.set(uid, Date.now());
   const since = Date.now() - 400 * DAY;
-  const [{ data: evs }, { data: rules }, { data: txns }] = await Promise.all([
+  const [{ data: evs }, { data: rules }, txns] = await Promise.all([
     supabase.from('recurring_events').select('*').eq('owner_id', uid).eq('status', 'active'),
     supabase.from('user_sms_rules').select('*').eq('user_id', uid).eq('is_deleted', false).not('event_id', 'is', null),
-    supabase.from('expense_transactions').select('id, amount, type, merchant, description, sms_body, sms_sender, bank_name, account_last4, date_time, category_id, master_id, event_id, event_skip, signals, merchant_tok')
-      .eq('user_id', uid).eq('is_deleted', false).gte('date_time', since).order('date_time', { ascending: true }).range(0, 7999),
+    allRows(() => supabase.from('expense_transactions').select('id, amount, type, merchant, description, sms_body, sms_sender, bank_name, account_last4, date_time, category_id, master_id, event_id, event_skip, signals, merchant_tok')
+      .eq('user_id', uid).eq('is_deleted', false).gte('date_time', since).order('date_time', { ascending: true }).order('id', { ascending: true })),
   ]);
   const events = (evs || []).filter(e => e.frequency);
   if (!events.length) return { linked: 0 };

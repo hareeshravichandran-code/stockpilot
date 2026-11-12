@@ -319,6 +319,7 @@ function defaultEvent(m) {
 
 const NON_SPEND = ['p_transfer', 'cc_bill', 'self_transfer'];
 const eventMatch = require('../services/eventMatch');
+const { allRows } = require('../services/allRows');
 const { txnText, has: hasSig } = require('../services/privacy');
 
 /** Does this bank transaction belong to this master? Keywords win; otherwise kind-specific defaults. */
@@ -383,11 +384,11 @@ async function linkActuals(uid, { force = false } = {}) {
   if (!force && Date.now() - (lastRun.get(uid) || 0) < 2 * 60 * 1000) return { skipped: true };
   lastRun.set(uid, Date.now());
   const since = Date.now() - 400 * 86400000;
-  const [{ data: masters }, { data: events }, { data: txns }] = await Promise.all([
+  const [{ data: masters }, { data: events }, txns] = await Promise.all([
     supabase.from('money_masters').select('*').eq('owner_id', uid).eq('status', 'active'),
     supabase.from('recurring_events').select('*').eq('owner_id', uid).eq('master_table', 'money_masters'),
-    supabase.from('expense_transactions').select('id, amount, type, merchant, description, sms_body, sms_sender, bank_name, account_last4, date_time, category_id, master_id, signals, merchant_tok')
-      .eq('user_id', uid).eq('is_deleted', false).gte('date_time', since).order('date_time', { ascending: true }).range(0, 4999),
+    allRows(() => supabase.from('expense_transactions').select('id, amount, type, merchant, description, sms_body, sms_sender, bank_name, account_last4, date_time, category_id, master_id, signals, merchant_tok')
+      .eq('user_id', uid).eq('is_deleted', false).gte('date_time', since).order('date_time', { ascending: true }).order('id', { ascending: true })),
   ]);
   const ms = (masters || []).filter(m => m.kind !== 'bank_account');
   const byMaster = {};
@@ -786,13 +787,13 @@ router.get('/candidates', requireAuth, async (req, res) => {
   try {
     const uid = req.user.id;
     const since = Date.now() - 400 * 864e5;
-    const [{ data: tx }, { data: rv }] = await Promise.all([
-      supabase.from('expense_transactions').select('id, amount, merchant, merchant_key, sms_sender, sms_body, bank_name, account_last4, date_time, type, category_id')
-        .eq('user_id', uid).eq('is_deleted', false).eq('type', 'DEBIT').is('master_id', null).gte('date_time', since).order('date_time', { ascending: false }).limit(5000),
+    const [tx, { data: rv }] = await Promise.all([
+      allRows(() => supabase.from('expense_transactions').select('id, amount, merchant, merchant_key, sms_sender, sms_body, bank_name, account_last4, date_time, type, category_id')
+        .eq('user_id', uid).eq('is_deleted', false).eq('type', 'DEBIT').is('master_id', null).gte('date_time', since).order('date_time', { ascending: false }).order('id')),
       supabase.from('recurring_reviews').select('*').eq('owner_id', uid),
     ]);
     // Payments already tracked by a master (same bank, same amount) are not new finds
-    const { data: tracked } = await supabase.from('expense_transactions').select('amount, bank_name, master_id').eq('user_id', uid).not('master_id', 'is', null).gte('date_time', since).range(0, 4999);
+    const tracked = await allRows(() => supabase.from('expense_transactions').select('id, amount, bank_name, master_id').eq('user_id', uid).not('master_id', 'is', null).gte('date_time', since).order('id'));
     const known = (bank, a) => (tracked || []).some(t => String(t.bank_name || '').toLowerCase() === bank && Math.abs(num(t.amount) - a) <= Math.max(1, a * 0.01));
     const reviews = Object.fromEntries((rv || []).map(r => [r.fp, r]));
     const groups = {};
@@ -877,9 +878,9 @@ router.get('/month', requireAuth, async (req, res) => {
     await linkActuals(uid).catch(() => {});
     const startMs = Date.UTC(y, mo - 1, 1) - 330 * 60000, endMs = Date.UTC(y, mo, 1) - 330 * 60000;   // IST month
     const { buildCalendar } = require('./household');
-    const [{ data: txns }, { data: masters }, cal, { data: divs }] = await Promise.all([
-      supabase.from('expense_transactions').select('id, amount, type, merchant, description, sms_body, date_time, category_id, master_id, signals, merchant_tok')
-        .eq('user_id', uid).eq('is_deleted', false).gte('date_time', startMs).lt('date_time', endMs).order('date_time', { ascending: true }).range(0, 2999),
+    const [txns, { data: masters }, cal, { data: divs }] = await Promise.all([
+      allRows(() => supabase.from('expense_transactions').select('id, amount, type, merchant, description, sms_body, date_time, category_id, master_id, signals, merchant_tok')
+        .eq('user_id', uid).eq('is_deleted', false).gte('date_time', startMs).lt('date_time', endMs).order('date_time', { ascending: true }).order('id'), 5000),
       supabase.from('money_masters').select('id, kind, subtype, title').eq('owner_id', uid),
       buildCalendar(uid, from, to),
       supabase.from('dividend_income').select('id, symbol, company, ex_date, total_dividend').eq('user_id', uid).gte('ex_date', ymd(new Date(Date.UTC(y, mo - 2, 1)))).lte('ex_date', to),
