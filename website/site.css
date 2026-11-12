@@ -419,6 +419,7 @@ input[type=range]:focus-visible { outline: 2px solid var(--prussian); outline-of
 .walker { position: absolute; left: 0; top: 0; width: 0; height: 0; will-change: transform; visibility: hidden; }
 .w-body { position: absolute; left: -34px; bottom: 0; width: 68px; transform-origin: 50% 100%; }
 .walker.kid .w-body { transform: scale(.86); }
+.w-lean { display: block; transform-origin: 50% 100%; }
 .rig { display: block; overflow: visible; filter: drop-shadow(0 6px 8px rgba(17,17,17,.16)); }
 .rig .fig { transform-origin: 50px 100%; transition: transform .18s var(--ease-out); }
 .walker.left .rig .fig { transform: scaleX(-1); }
@@ -430,12 +431,16 @@ input[type=range]:focus-visible { outline: 2px solid var(--prussian); outline-of
 /* Walk */
 .walker.moving .leg.l-a { animation: swingA .38s ease-in-out infinite; }
 .walker.moving .leg.l-b { animation: swingB .38s ease-in-out infinite; }
-.walker.moving .arm.a-back { animation: swingB .38s ease-in-out infinite; }
-.walker.moving .arm.a-front { animation: swingA .38s ease-in-out infinite; }
+.walker.moving .arm.a-back { animation: armB .38s cubic-bezier(.45,0,.55,1) -.04s infinite; }
+.walker.moving .arm.a-front { animation: armA .38s cubic-bezier(.45,0,.55,1) -.04s infinite; }
+.walker.moving .rig .fig > g[clip-path] { animation: headbob .38s ease-in-out -.06s infinite; transform-origin: 50px 66px; }
+@keyframes headbob { 0%, 50%, 100% { transform: rotate(0) translateY(0); } 25% { transform: rotate(-2.5deg) translateY(1.5px); } 75% { transform: rotate(2.5deg) translateY(1.5px); } }
 .walker.moving .rig .fig { animation: stepbob .19s ease-in-out infinite alternate; }
-@keyframes swingA { 0%, 100% { transform: rotate(26deg); } 50% { transform: rotate(-26deg); } }
-@keyframes swingB { 0%, 100% { transform: rotate(-26deg); } 50% { transform: rotate(26deg); } }
-@keyframes stepbob { to { translate: 0 -3px; } }
+@keyframes swingA { 0%, 100% { transform: rotate(28deg); } 25% { transform: rotate(4deg) scaleY(.84); } 50% { transform: rotate(-28deg); } 75% { transform: rotate(-4deg); } }
+@keyframes swingB { 0%, 100% { transform: rotate(-28deg); } 25% { transform: rotate(-4deg); } 50% { transform: rotate(28deg); } 75% { transform: rotate(4deg) scaleY(.84); } }
+@keyframes armA { 0%, 100% { transform: rotate(32deg); } 50% { transform: rotate(-30deg); } }
+@keyframes armB { 0%, 100% { transform: rotate(-30deg); } 50% { transform: rotate(32deg); } }
+@keyframes stepbob { from { translate: 0 1px; } to { translate: 0 -4px; } }
 /* Jump: arms up, knees tucked */
 .walker.up .arm.a-back { animation: none; transform: rotate(150deg); }
 .walker.up .arm.a-front { animation: none; transform: rotate(-150deg); }
@@ -453,15 +458,22 @@ input[type=range]:focus-visible { outline: 2px solid var(--prussian); outline-of
 .w-name { position: absolute; left: 50%; bottom: 124px; transform: translateX(-50%) translateY(4px); font-size: 11px; font-weight: 600; background: var(--ink); color: var(--paper); padding: 2px 7px; border-radius: 6px; white-space: nowrap; opacity: 0; transition: opacity .2s ease, transform .2s var(--ease-out); }
 .walker.kid .w-name { bottom: 100px; }
 .troupe.home .w-name { opacity: 1; transform: translateX(-50%); }
-/* At the end: Nila jumps with joy, Paati waves, Arjun and Meera point at Start free */
-.troupe.home .w-nila .w-body { animation: hopn 1.3s var(--ease-out) .3s infinite; }
-.troupe.home .w-nila .arm.a-back { transform: rotate(150deg); } .troupe.home .w-nila .arm.a-front { transform: rotate(-150deg); }
-.troupe.home .w-paati .arm.a-front { animation: wave2 1.1s ease-in-out .4s infinite; }
-.troupe.home .w-arjun .arm.a-front, .troupe.home .w-meera .arm.a-front { transform: rotate(-96deg); }
-@keyframes hopn { 0%, 60%, 100% { transform: scale(.86) translateY(0); } 28% { transform: scale(.86) translateY(-18px); } 44% { transform: scale(.88, .8) translateY(0); } }
+/* At the end: Nila leans on Start free, the other three point at it */
+.troupe.home .walker .w-lean { transition: transform .5s cubic-bezier(.34,1.56,.64,1); }
+.troupe.home .w-nila .w-lean { transform: rotate(16deg) !important; }
+.troupe.home .w-nila .arm.a-front { transform: rotate(-58deg); }
+.troupe.home .w-nila .arm.a-back { transform: rotate(-24deg) translateX(3px); }
+.troupe.home .w-nila .leg.l-b { transform: rotate(-14deg); }
+.troupe.home .w-nila .leg.l-a { transform: rotate(8deg); }
+.troupe.home .w-nila .rig .fig > g[clip-path] { animation: tilt 2.6s ease-in-out .6s infinite; transform-origin: 50px 66px; }
+@keyframes tilt { 0%, 60%, 100% { transform: rotate(0); } 75% { transform: rotate(8deg); } }
+.troupe.home .w-arjun .arm.a-front, .troupe.home .w-meera .arm.a-front, .troupe.home .w-paati .arm.a-front { animation: point 2.4s cubic-bezier(.34,1.56,.64,1) infinite; }
+.troupe.home .w-meera .arm.a-front { animation-delay: .15s; } .troupe.home .w-paati .arm.a-front { animation-delay: .3s; }
+.troupe.home .w-arjun .w-lean, .troupe.home .w-meera .w-lean, .troupe.home .w-paati .w-lean { transform: rotate(4deg) !important; }
+@keyframes point { 0%, 100% { transform: rotate(-100deg); } 10% { transform: rotate(-112deg); } 20% { transform: rotate(-98deg); } 30% { transform: rotate(-110deg); } 40% { transform: rotate(-100deg); } }
 @keyframes wave2 { 0%, 100% { transform: rotate(-150deg); } 50% { transform: rotate(-120deg); } }
 .troupe.home ~ * .end .btn, html:has(.troupe.home) .end .btn { animation: nudge 1.4s var(--ease-out) .3s infinite; }
-@keyframes nudge { 0%, 55%, 100% { transform: none; } 25% { transform: translateX(4px); } }
+@keyframes nudge { 0%, 60%, 100% { transform: none; } 20% { transform: scale(1.05); } 35% { transform: scale(.99); } }
 .stage .person { transition: opacity .35s ease, filter .35s ease; }
 .stage.away .person { opacity: .28 !important; filter: grayscale(.6); }
 html.family-hidden .troupe { display: none; }
@@ -474,11 +486,11 @@ html.family-hidden .stage.away .person { opacity: 1 !important; filter: none; }
 .end-family { display: flex; gap: 8px; align-items: flex-end; }
 .ef { width: 44px; display: block; opacity: 0; transform: translateY(14px); transition: opacity .4s ease, transform .5s var(--ease-out); }
 .ef .rig { width: 44px; height: auto; } .ef.kid .rig { width: 38px; }
-.end-family.in .ef-nila { animation: hopn2 1.4s var(--ease-out) 1s infinite; }
-.end-family.in .ef-nila .arm.a-back { transform: rotate(150deg); } .end-family.in .ef-nila .arm.a-front { transform: rotate(-150deg); }
-.end-family.in .ef-paati .arm.a-front { animation: wave2 1.1s ease-in-out 1s infinite; }
+.end-family.in .ef-nila .rig { transform: rotate(14deg); transform-origin: 50% 100%; transition: transform .5s cubic-bezier(.34,1.56,.64,1) .4s; }
+.end-family.in .ef-nila .arm.a-front { transform: rotate(-58deg); } .end-family.in .ef-nila .arm.a-back { transform: rotate(-24deg); }
+.end-family.in .ef-arjun .arm.a-front, .end-family.in .ef-meera .arm.a-front, .end-family.in .ef-paati .arm.a-front { animation: point 2.4s cubic-bezier(.34,1.56,.64,1) .6s infinite; transform: rotate(-100deg); }
 @keyframes hopn2 { 0%, 60%, 100% { transform: translateY(0); } 28% { transform: translateY(-12px); } }
 .end-family.in .ef { opacity: 1; transform: none; }
 .end-family.in .ef:nth-child(2) { transition-delay: .08s; } .end-family.in .ef:nth-child(3) { transition-delay: .16s; } .end-family.in .ef:nth-child(4) { transition-delay: .24s; }
 html.family-hidden .end-family { display: none; }
-@media (max-width: 720px) { .end-family { order: 2; } .end .btn { order: 3; } }
+@media (max-width: 720px) { .end-family { order: 2; margin-right: -22px; position: relative; z-index: 1; } .end .btn { order: 3; } }

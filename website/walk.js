@@ -100,7 +100,7 @@
     WHO.forEach(function (id) {
       var w = document.createElement('div');
       w.className = 'walker w-' + id + (LOOK[id].kid ? ' kid' : '');
-      w.innerHTML = '<span class="w-shadow"></span><span class="w-body">' + rigSVG(id) + '</span><span class="w-name">' + NAME[id] + '</span>';
+      w.innerHTML = '<span class="w-shadow"></span><span class="w-body"><span class="w-lean">' + rigSVG(id) + '</span></span><span class="w-name">' + NAME[id] + '</span>';
       layer.appendChild(w); walkers[id] = w;
     });
     document.body.appendChild(layer);
@@ -122,10 +122,11 @@
     var h = document.querySelector('.end h2'), b = document.querySelector('.end .btn');
     if (!h || !b) return null;
     var hp = h.getBoundingClientRect(), bp = b.getBoundingClientRect();
-    var left = hp.right + window.scrollX + 30, right = bp.left + window.scrollX - 40, base = bp.bottom + window.scrollY + 4;
-    var gap = Math.min(92, (right - left) / 4);
-    var start = right - gap * 3.5;
-    return WHO.map(function (id, i) { return { x: start + gap * i, y: base }; });
+    var left = hp.right + window.scrollX + 30, btnL = bp.left + window.scrollX, base = bp.bottom + window.scrollY + 4;
+    var right = btnL - 78;                                   // room for Nila
+    var gap = Math.min(86, (right - left) / 3);
+    // arjun, meera, paati in a row; nila right against the button
+    return WHO.map(function (id, i) { return id === 'nila' ? { x: btnL - 14, y: base } : { x: right - gap * (2 - i), y: base }; });
   }
   // Scroll position (0..1) at which an element sits comfortably in view
   function progressFor(el, frac) {
@@ -161,6 +162,8 @@
         if (t > pEnd - 0.02) t = pEnd - 0.02;
         var dur = Math.max(0.008, t - prevT);
         if (stop.hop) {
+          tl.to(body, { scaleY: 0.86, scaleX: 1.1, duration: 0.003, ease: 'power2.in' }, Math.max(0, prevT - 0.003))
+            .to(body, { scaleY: 1, scaleX: 1, duration: 0.003, ease: 'power2.out' }, prevT);
           var peak = Math.min(prev.y, to.y) - 90;
           tl.to(w, { motionPath: { path: [{ x: prev.x, y: prev.y }, { x: (prev.x + to.x) / 2, y: peak }, { x: to.x, y: to.y }], curviness: 1.4 }, duration: dur, ease: 'power1.inOut' }, prevT);
         } else {
@@ -196,6 +199,19 @@
   }
 
   // Feet move only while that person is moving; they face where they walk
+  var leanTo = {};
+  function secondary(id, dx, dy) {
+    var w = walkers[id], el = w.querySelector('.w-lean');
+    if (!leanTo[id]) leanTo[id] = {
+      r: gsap.quickTo(el, 'rotation', { duration: 0.35, ease: 'power3.out' }),
+      sy: gsap.quickTo(el, 'scaleY', { duration: 0.25, ease: 'power2.out' }),
+      sx: gsap.quickTo(el, 'scaleX', { duration: 0.25, ease: 'power2.out' })
+    };
+    var lean = Math.max(-11, Math.min(11, dx * 0.9));
+    var st = dy < -1.5 ? Math.min(0.12, -dy * 0.012) : 0;           // stretch going up
+    leanTo[id].r(lean); leanTo[id].sy(1 + st); leanTo[id].sx(1 - st * 0.6);
+  }
+  function settle(id) { if (leanTo[id]) { leanTo[id].r(0); leanTo[id].sy(1); leanTo[id].sx(1); } }
   function track() {
     WHO.forEach(function (id) {
       var w = walkers[id], x = gsap.getProperty(w, 'x'), y = gsap.getProperty(w, 'y'), p = lastPos[id];
@@ -205,8 +221,9 @@
         w.classList.toggle('up', dy < -1.2 && Math.abs(dy) > Math.abs(dx) * 0.5);       // going up: jump pose
         w.classList.toggle('down', dy > 3 && Math.abs(dy) > Math.abs(dx) * 1.2);        // dropping down the page
         if (Math.abs(dx) > 0.6) w.classList.toggle('left', dx < 0);
+        secondary(id, dx, dy);
         clearTimeout(idle[id]);
-        idle[id] = setTimeout(function () { w.classList.remove('moving', 'up', 'down'); }, 170);
+        idle[id] = setTimeout(function () { w.classList.remove('moving', 'up', 'down'); settle(id); }, 170);
       }
       lastPos[id] = { x: x, y: y };
     });
