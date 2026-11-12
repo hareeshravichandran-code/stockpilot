@@ -205,3 +205,4 @@
 .eh-check { display: flex; gap: 8px; align-items: center; font-size: 14px; grid-column: 1 / -1; }
 .eh-check input { width: 18px; height: 18px; min-height: 0; accent-color: var(--fo-ink); }
 @media (max-width: 760px) { .eh-grp { grid-template-columns: minmax(0, 1fr); } }
+.eh-dl-note { display: block; font-size: 11.5px; color: var(--fo-ink-3); font-weight: 400; }

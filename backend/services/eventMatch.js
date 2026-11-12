@@ -7,11 +7,10 @@
  *  SMS rule     sender + words in the message (+ amount range) -> category, optionally -> an event.
  *               A rule that points to an event always carries a category.
  *
- *  A payment is tied to an event, in this order:
- *    1. the user put it there (transaction.event_id)
- *    2. an SMS rule of the event matches (most specific rule wins)
- *    3. the event's master matches (keywords / bank / account number)
- *    4. it repeats an earlier payment of exactly one event (same sender or bank, same amount)
+ *  A payment is tied to an event ONLY through an SMS rule of that event (most specific rule wins), or because
+ *  the user picked it (which also saves a rule). No hidden matching: every link can be seen and edited as a rule.
+ *  Events that have no rule yet get rules made once (seedRules): from their master's keywords / sender, and from
+ *  the payments that already settled them (same sender, same amount range). They are ordinary rules after that.
  *  and then to an occurrence:
  *    inside due ± buffer -> on time; a little before the window -> early (counts for that due date);
  *    after the window, before the next one -> late. Each occurrence takes one payment.
@@ -120,6 +119,77 @@ function ruleScore(rule, t) {
   return (rule.sender_key ? 1 : 0) + (hasPattern ? 2 : 0) + (rule.amount_min != null || rule.amount_max != null ? 1 : 0);
 }
 
+/** Category an event's payments go to when the user hasn't picked one (ids from the app's category list). */
+const DEFAULT_CAT = { card_due: 'cc_bill', emi: 'p_loans', subscription: 'p_membership', sip: 'mf_sip', rd_instalment: 'rd', premium: 'p_insurance',
+  salary: 'salary', income: 'p_salary', bill: 'utilities', rent: 'rent_house', school_fee: 'school_fees', property_tax: 'p_home' };
+
+/**
+ * Rules for events that have none, made once per event (rules_seeded):
+ *   - from the master: its keywords (or their fingerprints) and its sender
+ *   - from payments already tied to the event: sender + amount range (+ payee words when every payment shares them)
+ * Each becomes a normal rule (source 'from_master' / 'from_payments') the user can see, edit or delete.
+ */
+async function seedRules(uid, events, rules, txns, pays) {
+  const has = new Set((rules || []).map(r => r.event_id));
+  const todo = events.filter(e => !e.rules_seeded && !has.has(e.id));
+  if (!todo.length) return [];
+  const masterIds = todo.filter(e => e.master_table === 'money_masters' && e.master_id).map(e => e.master_id);
+  const { data: masters } = masterIds.length ? await supabase.from('money_masters').select('id, amount, match').in('id', masterIds) : { data: [] };
+  const masterOf = Object.fromEntries((masters || []).map(m => [m.id, m]));
+  const byId = Object.fromEntries((txns || []).map(t => [t.id, t]));
+  const made = [];
+  for (const e of todo) {
+    const category_id = e.category_id || DEFAULT_CAT[e.kind] || null;
+    if (category_id && !e.category_id) await supabase.from('recurring_events').update({ category_id }).eq('id', e.id);
+    const rows = [];
+    if (category_id) {
+      // From the master: payee keywords / fingerprints and sender
+      const m = masterOf[e.master_id];
+      const kw = (m?.match?.keywords || []).filter(k => typeof k === 'string' && k.length >= 3 && !isEnc(k));
+      const tok = Array.isArray(m?.match?.keyword_tok) ? m.match.keyword_tok.filter(x => typeof x === 'string') : [];
+      const amt = num(m?.amount || e.amount);
+      const range = !m?.match?.any_amount && amt ? [Math.floor(amt * 0.85), Math.ceil(amt * 1.15)] : null;
+      const sender = m?.match?.sender ? senderKey(m.match.sender) || m.match.sender : null;
+      for (const k of kw.slice(0, 3)) rows.push({ merchant_pattern: k.toLowerCase(), pattern_tok: null, sender_key: sender, amount_min: range?.[0] ?? null, amount_max: range?.[1] ?? null, source: 'from_master', label: k });
+      if (!kw.length && tok.length) rows.push({ merchant_pattern: null, pattern_tok: tok.slice(0, 6), sender_key: sender, amount_min: range?.[0] ?? null, amount_max: range?.[1] ?? null, source: 'from_master', label: null });
+      // From payments already tied to it (or to its master): one rule per sender, amount range from those payments
+      const paid = (pays || []).filter(p => p.event_id === e.id && p.txn_ref && byId[p.txn_ref]).map(p => byId[p.txn_ref])
+        .concat((txns || []).filter(t => t.event_id === e.id || (e.master_table === 'money_masters' && e.master_id && t.master_id === e.master_id)));
+      const bySender = {};
+      for (const t of paid) { const k = senderKey(t.sms_sender); if (k) (bySender[k] = bySender[k] || []).push(t); }
+      for (const [k, list] of Object.entries(bySender)) {
+        const a = list.map(t => num(t.amount));
+        const lo = Math.min(...a), hi = Math.max(...a);
+        if (e.amount_mode === 'any' || hi > lo * 1.6) continue;      // a sender alone with no steady amount would catch every SMS of that bank
+        const names = [...new Set(list.map(t => (t.merchant && !isEnc(t.merchant) ? String(t.merchant).toLowerCase().trim() : '')))];
+        const word = names.length === 1 && names[0].length >= 3 ? names[0].slice(0, 60) : null;
+        if (rows.some(r => r.sender_key === k && r.amount_min != null && r.amount_min <= lo && r.amount_max >= hi)) continue;
+        rows.push({ merchant_pattern: word, pattern_tok: null, sender_key: k, amount_min: Math.floor(lo * 0.95), amount_max: Math.ceil(hi * 1.05), source: 'from_payments', label: null });
+      }
+    }
+    for (const r of rows) {
+      const row = { ...r, user_id: uid, event_id: e.id, category_id, user_confirmed: true, is_deleted: false, match_count: 1, updated_at: Date.now(), created_at: Date.now() };
+      if (row.merchant_pattern) {
+        // A pattern can belong to one rule only: an existing category-only rule for it becomes this event's rule
+        const { data: ex } = await supabase.from('user_sms_rules').select('id, event_id').eq('user_id', uid).eq('merchant_pattern', row.merchant_pattern).maybeSingle();
+        if (ex) {
+          if (ex.event_id && ex.event_id !== e.id) continue;
+          const { data } = await supabase.from('user_sms_rules').update({ ...row, created_at: undefined, is_deleted: false }).eq('id', ex.id).select('*').single();
+          if (data) made.push(data);
+          continue;
+        }
+      }
+      const { data } = await supabase.from('user_sms_rules').insert(row).select('*').single();
+      if (data) made.push(data);
+    }
+    if (!category_id) continue;                                   // made once the user picks a category
+    await supabase.from('recurring_events').update({ rules_seeded: true }).eq('id', e.id);
+    e.rules_seeded = true;
+    if (category_id) e.category_id = category_id;
+  }
+  return made;
+}
+
 const lastRun = new Map();
 /**
  * Tie the user's payments to their events and occurrences. Safe to call often (throttled).
@@ -140,18 +210,12 @@ async function runMatching(uid, { force = false, matchesMaster = null } = {}) {
   const ids = events.map(e => e.id);
   const { data: pays } = await supabase.from('event_payments').select('event_id, period, status, txn_ref').in('event_id', ids).gte('period', ymd(new Date(since - 40 * DAY)));
   const masterIds = events.filter(e => e.master_table === 'money_masters' && e.master_id).map(e => e.master_id);
-  const { data: masters } = masterIds.length ? await supabase.from('money_masters').select('*').in('id', masterIds).eq('status', 'active') : { data: [] };
+  const { data: masters } = masterIds.length ? await supabase.from('money_masters').select('id').in('id', masterIds).eq('status', 'active') : { data: [] };
   const masterOf = Object.fromEntries((masters || []).map(m => [m.id, m]));
+  const allRules = (rules || []).concat(await seedRules(uid, events, rules, txns, pays));
 
   const settled = {}; const used = new Set();
   for (const p of pays || []) { (settled[p.event_id] = settled[p.event_id] || new Set()).add(p.period); if (p.txn_ref) used.add(p.txn_ref); }
-  // What each event has been paid with: sender, bank, amount
-  const byId = Object.fromEntries((txns || []).map(t => [t.id, t]));
-  const hist = {};
-  for (const p of pays || []) { const t = byId[p.txn_ref]; if (t) (hist[p.event_id] = hist[p.event_id] || []).push(t); }
-  const repeats = (e, t) => (hist[e.id] || []).some(h => Math.abs(num(h.amount) - num(t.amount)) <= Math.max(1, num(t.amount) * 0.01)
-    && ((senderKey(h.sms_sender) && senderKey(h.sms_sender) === senderKey(t.sms_sender)) || (h.bank_name && h.bank_name === t.bank_name)));
-
   const newPays = []; const txnPatch = [];
   for (const t of txns || []) {
     if (used.has(t.id)) continue;
@@ -164,16 +228,8 @@ async function runMatching(uid, { force = false, matchesMaster = null } = {}) {
     if (t.event_id) { ev = mine.find(e => e.id === t.event_id); source = 'manual'; }
     if (!ev) {
       let best = 0;
-      for (const r of rules || []) { const s = ruleScore(r, t); if (s > best) { const e = mine.find(x => x.id === r.event_id); if (e) { best = s; ev = e; rule = r; } } }
+      for (const r of allRules) { const s = ruleScore(r, t); if (s > best) { const e = mine.find(x => x.id === r.event_id); if (e) { best = s; ev = e; rule = r; } } }
       if (ev) source = 'rule';
-    }
-    if (!ev && matchesMaster) {
-      const hits = mine.filter(e => e.master_id && masterOf[e.master_id] && (t.master_id === e.master_id || matchesMaster(masterOf[e.master_id], t)));
-      if (hits.length === 1) { ev = hits[0]; source = 'master'; }
-    }
-    if (!ev) {
-      const hits = mine.filter(e => repeats(e, t));
-      if (hits.length === 1) { ev = hits[0]; source = 'learned'; }
     }
     if (!ev) continue;
     const date = istDay(t.date_time);
@@ -187,7 +243,6 @@ async function runMatching(uid, { force = false, matchesMaster = null } = {}) {
     if (Object.keys(patch).length) txnPatch.push({ id: t.id, patch });
     if (!pick) continue;
     set.add(pick.period); used.add(t.id);
-    (hist[ev.id] = hist[ev.id] || []).push(t);
     newPays.push({ owner_id: uid, event_id: ev.id, period: pick.period, status: 'paid', amount: num(t.amount), paid_on: date, txn_ref: t.id, match_source: source, timing: pick.timing });
   }
   for (let i = 0; i < newPays.length; i += 200) {
@@ -197,4 +252,4 @@ async function runMatching(uid, { force = false, matchesMaster = null } = {}) {
   return { linked: newPays.length, tagged: txnPatch.length };
 }
 
-module.exports = { senderKey, periods, stateOf, pickPeriod, ruleScore, runMatching, intervalDays, bufferOf, todayStr, istDay, addDays, diffDays };
+module.exports = { seedRules, DEFAULT_CAT, senderKey, periods, stateOf, pickPeriod, ruleScore, runMatching, intervalDays, bufferOf, todayStr, istDay, addDays, diffDays };

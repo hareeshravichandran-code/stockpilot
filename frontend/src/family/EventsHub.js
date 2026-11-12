@@ -39,7 +39,7 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 const LEVELS = [['very_high', 'Very high'], ['high', 'High'], ['medium', 'Medium'], ['low', 'Low']];
 const DEFAULT_REMIND = { very_high: 5, high: 7, medium: 2, low: 0 };
 const DEFAULT_LEVEL = { emi: 'very_high', card_due: 'very_high', premium: 'high', salary: 'low', income: 'low', dividend: 'low', maturity: 'low' };
-const SOURCE = { rule: 'by SMS rule', master: 'by its master', learned: 'same as earlier payments', manual: 'picked by you', marked: 'marked by you', auto: 'automatically' };
+const SOURCE = { rule: 'by SMS rule', master: 'linked before rules', learned: 'linked before rules', manual: 'picked by you', marked: 'marked by you', auto: 'automatically' };
 const STATE = {
   done: ['Done', 'ok'], skipped: ['Skipped', 'mute'], due: ['Due', 'warn'], overdue: ['Overdue', 'bad'],
   upcoming: ['Upcoming', 'calm'], missed: ['Missed', 'mute'], untracked: ['Before tracking', 'mute'],
@@ -91,10 +91,14 @@ function ruleWhen(r) {
 }
 
 function Pill({ tone, children }) { return <span className={`eh-pill ${tone}`}>{children}</span>; }
+// Categories the phone has that the web list may not
+const CAT_NAMES = { cc_bill: 'Credit card bill', p_insurance: 'Insurance', p_transfer: 'Transfer', p_emi: 'EMI', p_education: 'Education', subscriptions: 'Subscriptions' };
+export const RULE_SOURCE = { event_map: 'made from a payment you picked', from_master: "made from the master's keywords", from_payments: 'made from earlier payments',
+  group: 'made from an SMS group', web: 'added on the web', manual: 'from the phone' };
 function CatChip({ id, cats }) {
   if (!id) return <span className="eh-cat none">No category</span>;
   const c = cats.find(x => x.id === id);
-  return <span className="eh-cat">{c?.icon ? <i aria-hidden="true">{c.icon}</i> : null}{c?.name || id}</span>;
+  return <span className="eh-cat">{c?.icon ? <i aria-hidden="true">{c.icon}</i> : null}{c?.name || CAT_NAMES[id] || id}</span>;
 }
 function CategorySelect({ value, onChange, cats, required }) {
   const list = useMemo(() => [...cats].sort((a, b) => String(a.name).localeCompare(String(b.name))), [cats]);
@@ -436,7 +440,7 @@ function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify }) {
           <div><dt>Amount</dt><dd>{amountText(e)}</dd></div>
           <div><dt>Paid by</dt><dd>{e.pay_mode === 'manual' ? 'You, by hand' : 'Auto-debit'}</dd></div>
           <div><dt>Alerts</dt><dd>{LEVELS.find(l => l[0] === e.level)?.[1]}{e.remind_days != null ? ` · from ${e.remind_days} days before` : ''}</dd></div>
-          <div><dt>Comes from</dt><dd>{e.master ? `${e.master.title || e.master.institution || 'Master'} (master)` : 'Added by you'}</dd></div>
+          <div><dt>Created from</dt><dd>{e.master ? `${e.master.title || e.master.institution || 'Master'} (master)` : 'Added by you'}<small className="eh-dl-note">SMS reach it only through its rules</small></dd></div>
           {e.status !== 'active' && <div><dt>Status</dt><dd>{e.status === 'paused' ? 'Paused' : 'Closed'}</dd></div>}
         </dl>
       </section>
@@ -447,13 +451,13 @@ function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify }) {
           <button type="button" className="fo-btn sm ghost" onClick={() => setRuleEdit({ preset: { event_id: e.id, category_id: e.category_id } })}>+ Add rule</button>
         </div>
         {!d.rules.length ? (
-          <p className="eh-dim">No rules yet. {e.master ? 'Its master’s keywords and earlier payments are used to find payments. ' : ''}Pick a payment for a due date below and a rule is saved for you, or add one.</p>
+          <div className="eh-callout warn"><b>No SMS rule, so no SMS can settle this event.</b> Add a rule, or pick the payment for a due date below (that saves a rule for you).{!e.category_id ? ' Pick a category first: every rule needs one.' : ''}</div>
         ) : (
           <ul className="eh-rules compact">
             {d.rules.map(r => (
               <li key={r.id}>
                 <div className="eh-when">{ruleWhen(r).map(([a, b]) => <span key={a}><em>{a}</em>{b}</span>)}</div>
-                <div className="eh-then"><CatChip id={r.category_id} cats={cats} /><span className="eh-dim">{r.caught} SMS</span></div>
+                <div className="eh-then"><CatChip id={r.category_id} cats={cats} /><span className="eh-dim">{r.caught} SMS · {RULE_SOURCE[r.source] || 'rule'}</span></div>
                 <div className="eh-r-acts">
                   <button type="button" className="eh-link" onClick={() => setRuleEdit({ rule: { ...r, event_id: e.id } })}>Edit</button>
                   <button type="button" className="eh-link danger" onClick={() => delRule(r)}>Remove</button>
@@ -613,7 +617,7 @@ function RulesTab({ cats, events, notify, onChanged }) {
                 {r.event ? <span className="eh-evchip">settles <b>{clean(r.event.title)}</b></span> : null}
               </span>
               <span className="eh-caught" role="cell"><b>{r.caught}</b><small>{r.last_caught ? `last ${fmt(r.last_caught)}` : 'none in 6 months'}</small>
-                <small className="eh-src">{r.source === 'event_map' ? 'made from a payment' : r.source === 'web' ? 'added on web' : 'from the phone'}</small></span>
+                <small className="eh-src">{RULE_SOURCE[r.source] || 'from the phone'}</small></span>
               <span className="eh-r-acts" role="cell">
                 <button type="button" className="eh-link" onClick={() => setEdit({ rule: r })}>Edit</button>
                 <button type="button" className="eh-link danger" onClick={() => del(r)}>Remove</button>
