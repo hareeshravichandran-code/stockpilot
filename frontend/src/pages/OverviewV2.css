@@ -1,5 +1,5 @@
 /* Overview v2 — cream / ink / burnt orange */
-.o3 { --cream: #F3EEE3; --paper: #FAF7F0; --well: #EFE9DC; --ink: #111111; --ink2: #4A4741; --ink3: #85817A; --pop: #D9541E; --moss: #2F6B45; --loss: #9E2B25; --sand: #CFC6B4;
+.o3 { --cream: #F3EEE3; --paper: #FAF7F0; --well: #EFE9DC; --ink: #2B211C; --ink2: #4A4741; --ink3: #85817A; --pop: #D9541E; --moss: #2F6B45; --loss: #9E2B25; --sand: #CFC6B4;
   --line: rgba(17,17,17,.09); --ease: cubic-bezier(.32,.72,0,1);
   display: flex; flex-direction: column; gap: 18px; font-family: "Outfit", sans-serif; color: var(--ink); min-width: 0; max-width: 100%; }
 .o3 h3 { font: 400 22px 'DM Serif Display', serif; margin: 0; letter-spacing: -.005em; }
@@ -20,9 +20,10 @@
 .o3-none { color: var(--ink3); font-size: 13.5px; margin: 6px 0 0; } .o3-none.tall { padding: 70px 0; text-align: center; }
 
 /* Hero */
-.o3-hero { position: relative; overflow: hidden; background: var(--ink); color: var(--paper); border-radius: 28px; padding: 26px 28px 22px; animation: k-rise .32s var(--ease) both; }
+.o3-hero { position: relative; overflow: hidden; background: linear-gradient(140deg, #3E2B21 0%, #2E211A 55%, #261B15 100%); color: var(--paper);
+  box-shadow: 0 1px 0 rgba(255,255,255,.06) inset, 0 18px 40px -24px rgba(62,43,33,.55); border-radius: 28px; padding: 26px 28px 22px; animation: k-rise .32s var(--ease) both; }
 .o3-hero::before { content: ''; position: absolute; width: 420px; height: 420px; right: -140px; top: -220px; border-radius: 50%;
-  background: radial-gradient(circle, rgba(217,84,30,.45), transparent 65%); animation: o3-drift 9s ease-in-out infinite alternate; pointer-events: none; }
+  background: radial-gradient(circle, rgba(217,84,30,.38), transparent 65%); animation: o3-drift 9s ease-in-out infinite alternate; pointer-events: none; }
 @keyframes o3-drift { from { transform: translate(0,0) scale(1); } to { transform: translate(-60px,40px) scale(1.15); } }
 .o3-hi { font-size: 14px; opacity: .7; margin-bottom: 14px; position: relative; }
 .o3-hero-top { display: flex; justify-content: space-between; gap: 20px; align-items: flex-end; flex-wrap: wrap; position: relative; }
@@ -168,3 +169,10 @@
 @media (max-width: 600px) { .ms-day { flex-basis: 66px; } .o3-links button[aria-label] { display: none; } }
 @media (prefers-reduced-motion: reduce) { .ms-day.hot { animation: none; box-shadow: inset 0 0 0 2px var(--pop); } }
 .ms-bar.none { visibility: hidden; }
+
+/* Today: warm highlight instead of a black block (tinted toward the brand orange) */
+.ms-day.today { background: #FBE6D8; color: var(--ink); box-shadow: inset 0 0 0 2px var(--pop); }
+.ms-day.today small { color: var(--pop); font-weight: 700; }
+.ms-day.today .ms-in { color: var(--moss, #2F6B45); } .ms-day.today .ms-out { color: #9E2B25; }
+.ms-day.today .ms-bar { background: rgba(217,84,30,.14); } .ms-day.today .ms-bar i { background: var(--pop); }
+.ms-day.today.on { box-shadow: inset 0 0 0 2px var(--pop), 0 0 0 2px rgba(217,84,30,.25); }

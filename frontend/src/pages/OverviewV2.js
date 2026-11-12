@@ -3,7 +3,8 @@
  * lives in Family calendar), then where the money sits, goals, history and top holdings.
  * Figures come from the Dashboard page; only the strip and goals fetch their own data.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { moneyflowAPI } from '../lib/api';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { inr, GoalsSnapshot, FamilyStrip } from './DashboardOverview';
 import useCountUp from '../hooks/useCountUp';
@@ -29,6 +30,14 @@ export default function OverviewV2({
   onTab, onNav, onUpdateBalances, emailConnected, onConnect,
   growthData, historyYears, onYears, historySummary, sectorData, holdings,
 }) {
+  // This month from bank SMS, the same numbers as Money flow (own transfers and repeated SMS left out)
+  const [mf, setMf] = useState(null);
+  useEffect(() => {
+    let live = true;
+    moneyflowAPI.get().then(r => { if (live) setMf(r.data?.totals || null); }).catch(() => {});
+    return () => { live = false; };
+  }, []);
+  if (mf) { income = n(mf.income?.actual); spent = n(mf.expense?.actual); }
   const total = parts.reduce((s, p) => s + n(p.value), 0);
   const shown = parts.filter(p => n(p.value) > 0).sort((a, b) => n(b.value) - n(a.value));
   const [hover, setHover] = useState(null);
