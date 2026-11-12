@@ -248,6 +248,9 @@ export const mastersAPI = {
   updateEvent: (id, data) => api.put(`/api/masters/events/${encodeURIComponent(id)}`, data),
   removeEvent: (id)       => api.delete(`/api/masters/events/${encodeURIComponent(id)}`),
   candidates:  ()         => api.get('/api/masters/candidates', { timeout: 45000 }),
+  eventPayments: (id)     => api.get(`/api/masters/events/${encodeURIComponent(id)}/payments`),
+  matchPayment: (id, data) => api.post(`/api/masters/events/${encodeURIComponent(id)}/match`, data),
+  unmatchPayment: (id, period) => api.delete(`/api/masters/events/${encodeURIComponent(id)}/match/${period}`),
   review:      (data)     => api.post('/api/masters/candidates/review', data),
 };
 

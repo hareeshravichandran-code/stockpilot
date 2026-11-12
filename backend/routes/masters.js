@@ -391,11 +391,23 @@ async function linkActuals(uid, { force = false } = {}) {
   const ms = (masters || []).filter(m => m.kind !== 'bank_account');
   const byMaster = {};
   let linked = 0, paid = 0;
+  // What each master has been paid with before: amount + bank. A later debit with no name in its SMS
+  // (NACH / autopay / card standing instruction) that repeats the same amount from the same bank, near the
+  // due date, is the same payment.
+  const history = {};
+  for (const t of txns || []) if (t.master_id && t.type === 'DEBIT') (history[t.master_id] = history[t.master_id] || []).push({ a: num(t.amount), bank: String(t.bank_name || '').toLowerCase() });
+  const learned = (t) => {
+    if (t.type !== 'DEBIT' || ['p_transfer', 'self_transfer', 'cc_bill'].includes(t.category_id)) return null;
+    const amt = num(t.amount), bank = String(t.bank_name || '').toLowerCase(), day = new Date(Number(t.date_time) + 330 * 60000).toISOString().slice(0, 10);
+    const hits = ms.filter(m => ['subscription', 'loan', 'sip', 'rd', 'expense'].includes(m.kind) && (history[m.id] || []).some(h => h.bank === bank && Math.abs(h.a - amt) <= Math.max(1, amt * 0.01)))
+      .filter(m => { const ev = (events || []).find(e => e.master_id === m.id); if (!ev) return true; const p = nearestPeriod(ev, day); return p && Math.abs(new Date(p) - new Date(day)) <= 6 * 86400000; });
+    return hits.length === 1 ? hits[0] : null;                      // only when it can only be one thing
+  };
   for (const t of txns || []) {
     let m = t.master_id ? ms.find(x => x.id === t.master_id) : null;
     if (!t.master_id) {
-      m = ms.find(x => matches(x, t));
-      if (m) { (byMaster[m.id] = byMaster[m.id] || []).push(t.id); linked++; }
+      m = ms.find(x => matches(x, t)) || learned(t);
+      if (m) { (byMaster[m.id] = byMaster[m.id] || []).push(t.id); linked++; (history[m.id] = history[m.id] || []).push({ a: num(t.amount), bank: String(t.bank_name || '').toLowerCase() }); }
     }
     if (!m) continue;
     const ev = (events || []).find(e => e.master_id === m.id);
@@ -566,6 +578,77 @@ const FLOW_KIND = (t, m) => {
 };
 // ── Events master: every expected payment/receipt, its alert level and the master it belongs to ──
 const MASTER_FOR_EVENT = { money_masters: 'master', insurance_policies: 'insurance', recurring_deposits: 'rd', manual: 'manual' };
+// One event's recent periods: paid by which payment (with its SMS), or still open, plus payments that could be it
+router.get('/events/:id/payments', requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.id;
+    const { data: ev } = await supabase.from('recurring_events').select('*').eq('id', req.params.id).eq('owner_id', uid).maybeSingle();
+    if (!ev) return res.status(404).json({ error: 'Not found' });
+    const today = todayStr();
+    const step = STEP[ev.frequency] || 1;
+    // the last six due dates up to the next one
+    const periods = [];
+    let d = nextDue(ev.frequency, ev.due_day, ev.due_month, ev.start_date);
+    if (d && ev.frequency !== 'once') {
+      let cur = new Date(d + 'T00:00:00Z');
+      for (let i = 0; i < 6; i++) { periods.push(cur.toISOString().slice(0, 10)); cur = new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth() - step, Math.min(28, ev.due_day || cur.getUTCDate()))); }
+    } else if (d) periods.push(d);
+    const { data: pays } = await supabase.from('event_payments').select('period, status, amount, paid_on, txn_ref').eq('event_id', ev.id).order('period', { ascending: false }).range(0, 40);
+    const near = (a, b, n) => Math.abs(Date.parse(a) - Date.parse(b)) <= n * 86400000;
+    const refs = (pays || []).map(p => p.txn_ref).filter(x => /^[0-9a-f-]{36}$/i.test(x || ''));
+    const since = Date.parse(periods[periods.length - 1] || today) - 25 * 86400000;
+    const [{ data: linked }, { data: cands }] = await Promise.all([
+      refs.length ? supabase.from('expense_transactions').select('id, amount, merchant, description, sms_body, sms_sender, bank_name, account_last4, date_time, category_id').in('id', refs).eq('user_id', uid) : Promise.resolve({ data: [] }),
+      supabase.from('expense_transactions').select('id, amount, merchant, description, sms_body, sms_sender, bank_name, account_last4, date_time, category_id, master_id')
+        .eq('user_id', uid).eq('is_deleted', false).eq('type', ev.direction === 'in' ? 'CREDIT' : 'DEBIT').gte('date_time', since).order('date_time', { ascending: false }).range(0, 1500),
+    ]);
+    const tx = (t) => t && ({ id: t.id, amount: num(t.amount), date: ymd(new Date(Number(t.date_time) + 330 * 60000)), payee: t.merchant || t.description || null,
+      body: t.sms_body || null, sender: t.sms_sender || t.bank_name || null, account: t.account_last4 || null, category_id: t.category_id || null });
+    const byId = Object.fromEntries((linked || []).map(t => [t.id, t]));
+    const usedRefs = new Set(refs);
+    const amt = num(ev.amount);
+    const out = periods.map(p => {
+      const pay = (pays || []).find(x => x.status === 'paid' && near(x.period, p, 6));
+      if (pay) return { period: p, status: 'paid', paid_on: pay.paid_on, amount: num(pay.amount), txn: tx(byId[pay.txn_ref]) || null };
+      const sugg = (cands || []).filter(t => !usedRefs.has(t.id) && near(ymd(new Date(Number(t.date_time) + 330 * 60000)), p, 20)
+        && (!amt || Math.abs(num(t.amount) - amt) <= Math.max(5, amt * 0.3)))
+        .sort((a, b) => Math.abs(num(a.amount) - amt) - Math.abs(num(b.amount) - amt) || Math.abs(Number(a.date_time) - Date.parse(p)) - Math.abs(Number(b.date_time) - Date.parse(p)))
+        .slice(0, 6).map(tx);
+      return { period: p, status: p > today ? 'upcoming' : 'open', suggestions: sugg };
+    });
+    res.json({ event: { id: ev.id, title: ev.title, amount: amt, frequency: ev.frequency }, periods: out });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+// This payment is that period: { txn_id, period }. Ties the payment to the event's master too.
+router.post('/events/:id/match', requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.id; const b = req.body || {};
+    const { data: ev } = await supabase.from('recurring_events').select('id, master_table, master_id').eq('id', req.params.id).eq('owner_id', uid).maybeSingle();
+    if (!ev) return res.status(404).json({ error: 'Not found' });
+    if (!isDate(b.period) || !/^[0-9a-f-]{36}$/i.test(b.txn_id || '')) return res.status(400).json({ error: 'Pick a payment and a period' });
+    const { data: t } = await supabase.from('expense_transactions').select('id, amount, date_time').eq('id', b.txn_id).eq('user_id', uid).maybeSingle();
+    if (!t) return res.status(404).json({ error: 'Payment not found' });
+    const paidOn = ymd(new Date(Number(t.date_time) + 330 * 60000));
+    await supabase.from('event_payments').delete().eq('event_id', ev.id).eq('period', b.period);
+    const { error } = await supabase.from('event_payments').insert({ owner_id: uid, event_id: ev.id, period: b.period, status: 'paid', amount: num(t.amount), paid_on: paidOn, txn_ref: t.id });
+    if (error) throw error;
+    if (ev.master_table === 'money_masters' && ev.master_id) await supabase.from('expense_transactions').update({ master_id: ev.master_id }).eq('id', t.id).eq('user_id', uid);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+// Not that payment after all: the period opens again
+router.delete('/events/:id/match/:period', requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.id;
+    const { data: ev } = await supabase.from('recurring_events').select('id, master_table, master_id').eq('id', req.params.id).eq('owner_id', uid).maybeSingle();
+    if (!ev || !isDate(req.params.period)) return res.status(404).json({ error: 'Not found' });
+    const { data: p } = await supabase.from('event_payments').select('txn_ref').eq('event_id', ev.id).eq('period', req.params.period).maybeSingle();
+    await supabase.from('event_payments').delete().eq('event_id', ev.id).eq('period', req.params.period);
+    if (p?.txn_ref && ev.master_id) await supabase.from('expense_transactions').update({ master_id: null }).eq('id', p.txn_ref).eq('user_id', uid).eq('master_id', ev.master_id);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 router.get('/events/all', requireAuth, async (req, res) => {
   try {
     const uid = req.user.id;
@@ -714,6 +797,9 @@ router.get('/candidates', requireAuth, async (req, res) => {
         .eq('user_id', uid).eq('is_deleted', false).eq('type', 'DEBIT').is('master_id', null).gte('date_time', since).order('date_time', { ascending: false }).limit(5000),
       supabase.from('recurring_reviews').select('*').eq('owner_id', uid),
     ]);
+    // Payments already tracked by a master (same bank, same amount) are not new finds
+    const { data: tracked } = await supabase.from('expense_transactions').select('amount, bank_name, master_id').eq('user_id', uid).not('master_id', 'is', null).gte('date_time', since).range(0, 4999);
+    const known = (bank, a) => (tracked || []).some(t => String(t.bank_name || '').toLowerCase() === bank && Math.abs(num(t.amount) - a) <= Math.max(1, a * 0.01));
     const reviews = Object.fromEntries((rv || []).map(r => [r.fp, r]));
     const groups = {};
     const SKIP_CAT = new Set(['p_transfer', 'self_transfer', 'self', 'cc_bill']);       // own transfers and card bill payments
@@ -735,6 +821,7 @@ router.get('/candidates', requireAuth, async (req, res) => {
       const gaps = days.slice(1).map((d, i) => (d - days[i]) / 864e5);
       const freq = cadence(gaps);
       if (!freq || (freq === 'monthly' && steady.length < 3 && gaps[0] > 36)) continue;
+      if (known(String(steady[0].bank_name || '').toLowerCase(), med)) continue;
       const r = reviews[fp];
       if (r && (r.status === 'ignored' || r.status === 'added')) continue;
       const last = steady[0];
@@ -808,7 +895,8 @@ router.get('/month', requireAuth, async (req, res) => {
     const flow = (txns || []).filter(t => !NON_SPEND.includes(t.category_id)).map(t => {
       const mm = t.master_id ? mById[t.master_id] : null;
       return { id: t.id, date: istDate(t.date_time), dir: t.type === 'CREDIT' ? 'in' : 'out', amount: num(t.amount),
-        title: (t.merchant || t.description || 'Transaction').slice(0, 60), kind: FLOW_KIND(t, mm), category_id: t.category_id,
+        title: (() => { const v = t.merchant || t.description || null; return v == null ? null : isEncV(v) ? v : String(v).slice(0, 60); })(),
+        body: t.sms_body || null, kind: FLOW_KIND(t, mm), category_id: t.category_id,
         master_id: t.master_id || null, master_title: mm?.title || null };
     });
     // Dividends: the announcement (ex/record date) is the event; the credit is the actual

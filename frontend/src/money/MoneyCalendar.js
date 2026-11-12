@@ -173,7 +173,7 @@ export default function MoneyCalendar({ hideValues, onOpenMasters, onOpenEvents,
                 {sel.flow.slice().sort((a, b) => (b.amount || 0) - (a.amount || 0)).map((f, i) => (
                   <div key={f.id} className={`mc2-row done ${f.dir}`} style={{ '--c': kindOf(f.kind).c, '--i': i }}>
                     <span className="mc2-ic"><KindIcon kind={f.kind} size={15} /></span>
-                    <span className="mc2-t">{f.master_title || f.title}<small>{kindOf(f.kind).label}{f.master_title ? ' · ' + f.title : ''}</small></span>
+                    <span className="mc2-t">{f.master_title || f.title || (f.body ? String(f.body).replace(/\s+/g, ' ').slice(0, 48) : 'Bank payment')}<small>{kindOf(f.kind).label}{f.master_title && f.title ? ' · ' + f.title : ''}</small></span>
                     <span className={`mc2-amt ${f.dir}`}>{f.dir === 'in' ? '+' : '−'}{money(f.amount)}</span>
                   </div>
                 ))}

@@ -27,6 +27,70 @@ const whenText = (e) => e.frequency === 'once' ? 'Once'
 const dueText = (e) => e.days == null ? '' : e.days === 0 ? 'Today' : e.days === 1 ? 'Tomorrow' : e.days < 0 ? 'Overdue' : `In ${e.days} days`;
 const fmtDue = (d) => d ? new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '—';
 
+const fmtD = (d) => d ? new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+const clean = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+
+/** Each due date of the event: which payment (and its SMS) paid it, or pick the one that did. */
+function Payments({ event, notify, onChanged }) {
+  const [data, setData] = useState(null);
+  const [open, setOpen] = useState(null);           // period being matched
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(async () => {
+    try { const r = await mastersAPI.eventPayments(event.id); setData(r.data.periods || []); } catch { setData([]); }
+  }, [event.id]);
+  useEffect(() => { load(); }, [load]);
+  const match = async (period, txn) => {
+    setBusy(true);
+    try { await mastersAPI.matchPayment(event.id, { period, txn_id: txn.id }); notify(`Marked paid · ${fmtD(txn.date)}`); setOpen(null); await load(); onChanged && onChanged(); }
+    catch (e) { notify(errMsg(e)); } finally { setBusy(false); }
+  };
+  const unmatch = async (period) => {
+    setBusy(true);
+    try { await mastersAPI.unmatchPayment(event.id, period); notify('Payment removed from this date'); await load(); onChanged && onChanged(); }
+    catch (e) { notify(errMsg(e)); } finally { setBusy(false); }
+  };
+  if (!data) return <div className="pm wide"><LogoLoader size={28} inline label="Reading payments" /></div>;
+  if (!data.length) return null;
+  return (
+    <div className="pm wide">
+      <div className="pm-head"><b>Payments</b><small>Kanalyst ties payments from your bank SMS to each date. Fix one by picking the right payment.</small></div>
+      <ul className="pm-list">
+        {data.map((p, i) => (
+          <li key={p.period} className={`pm-row ${p.status}`} style={{ '--i': i }}>
+            <span className="pm-dot" aria-hidden="true" />
+            <span className="pm-date"><b>{fmtD(p.period)}</b><small>{p.status === 'paid' ? `Paid ${fmtD(p.paid_on)}` : p.status === 'upcoming' ? 'Coming up' : 'No payment found'}</small></span>
+            {p.status === 'paid' ? (
+              <span className="pm-txn">
+                <b>{inrShort(p.amount)}</b>
+                {p.txn ? <small>{[clean(p.txn.payee), p.txn.sender].filter(Boolean).join(' · ') || 'From your bank SMS'}</small> : <small>Marked paid</small>}
+                {p.txn?.body && <q>{clean(p.txn.body)}</q>}
+              </span>
+            ) : (
+              <span className="pm-txn">
+                {p.suggestions?.length ? <button type="button" className="pm-pick" onClick={() => setOpen(open === p.period ? null : p.period)} aria-expanded={open === p.period}>
+                  {open === p.period ? 'Close' : `Pick the payment (${p.suggestions.length} close)`}</button>
+                  : <small>No payment near this date</small>}
+              </span>
+            )}
+            {p.status === 'paid' && <button type="button" className="pm-x" disabled={busy} onClick={() => unmatch(p.period)} title="Not this payment">Undo</button>}
+            {open === p.period && (
+              <div className="pm-sugg">
+                {p.suggestions.map(t => (
+                  <button key={t.id} type="button" className="pm-s" disabled={busy} onClick={() => match(p.period, t)}>
+                    <span className="pm-s-top"><b>{inrShort(t.amount)}</b><span>{fmtD(t.date)}</span><span className="pm-s-who">{[clean(t.payee), t.sender, t.account ? '••' + String(t.account).slice(-4) : ''].filter(Boolean).join(' · ') || 'Bank SMS'}</span></span>
+                    {t.body && <q>{clean(t.body)}</q>}
+                    <em>This is it</em>
+                  </button>
+                ))}
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function EventForm({ event, masters, onClose, onSaved, notify }) {
   const manual = !event || event.source === 'manual';
   const [d, setD] = useState({
@@ -101,6 +165,7 @@ function EventForm({ event, masters, onClose, onSaved, notify }) {
           </div>
         </Field>
         <Field label="Note" wide><input className="fo-in" value={d.notes} onChange={set('notes')} maxLength={200} placeholder="Optional" /></Field>
+        {event && !String(event.id).includes(':') && <Payments event={event} notify={notify} onChanged={onSaved} />}
         {err && <div className="fo-err wide">{err}</div>}
       </div>
     </Modal>
