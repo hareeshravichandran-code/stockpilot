@@ -368,7 +368,7 @@ input[type=range]:focus-visible { outline: 2px solid var(--prussian); outline-of
 .mail span { font-size: 13.5px; font-weight: 600; margin-top: 6px; }
 
 /* ═══ End + footer ═══ */
-.end { max-width: 1200px; margin: 88px auto 0; padding: 0 24px; display: flex; justify-content: space-between; align-items: center; gap: 20px; flex-wrap: wrap; border-top: 1px solid var(--line); padding-top: 40px; }
+.end { max-width: 1200px; margin: 88px auto 0; padding: 0 24px; display: flex; justify-content: space-between; align-items: center; gap: 20px; flex-wrap: wrap; border-top: 1px solid var(--line); padding-top: 72px; }
 .foot { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 16px; max-width: 1200px; margin: 0 auto; padding: 36px 24px; font-size: 13.5px; color: var(--ink-3); }
 .foot a { text-decoration: none; } .foot a:hover { color: var(--ink); }
 
@@ -413,3 +413,72 @@ input[type=range]:focus-visible { outline: 2px solid var(--prussian); outline-of
   *, *::before, *::after { animation: none !important; transition: none !important; }
   .reveal { opacity: 1; transform: none; } .person, .node { opacity: 1; } .thread { stroke-dashoffset: 0; } .line li { opacity: 1; }
 }
+
+/* ═══ The family walks the page ═══ */
+.troupe { position: absolute; left: 0; top: 0; width: 0; height: 0; z-index: 25; pointer-events: none; }
+.walker { position: absolute; left: 0; top: 0; width: 0; height: 0; will-change: transform; visibility: hidden; }
+.w-body { position: absolute; left: -34px; bottom: 0; width: 68px; transform-origin: 50% 100%; }
+.walker.kid .w-body { transform: scale(.86); }
+.rig { display: block; overflow: visible; filter: drop-shadow(0 6px 8px rgba(17,17,17,.16)); }
+.rig .fig { transform-origin: 50px 100%; transition: transform .18s var(--ease-out); }
+.walker.left .rig .fig { transform: scaleX(-1); }
+.rig .arm, .rig .leg { transition: transform .16s var(--ease-out); }
+/* Idle: breathing, arms relaxed */
+.rig .arm.a-back { transform: rotate(8deg); } .rig .arm.a-front { transform: rotate(-8deg); }
+.walker:not(.moving) .rig .torso, .walker:not(.moving) .rig .fig > g[clip-path] { animation: breathe4 3.2s ease-in-out infinite; }
+@keyframes breathe4 { 50% { transform: translateY(-1px); } }
+/* Walk */
+.walker.moving .leg.l-a { animation: swingA .38s ease-in-out infinite; }
+.walker.moving .leg.l-b { animation: swingB .38s ease-in-out infinite; }
+.walker.moving .arm.a-back { animation: swingB .38s ease-in-out infinite; }
+.walker.moving .arm.a-front { animation: swingA .38s ease-in-out infinite; }
+.walker.moving .rig .fig { animation: stepbob .19s ease-in-out infinite alternate; }
+@keyframes swingA { 0%, 100% { transform: rotate(26deg); } 50% { transform: rotate(-26deg); } }
+@keyframes swingB { 0%, 100% { transform: rotate(-26deg); } 50% { transform: rotate(26deg); } }
+@keyframes stepbob { to { translate: 0 -3px; } }
+/* Jump: arms up, knees tucked */
+.walker.up .arm.a-back { animation: none; transform: rotate(150deg); }
+.walker.up .arm.a-front { animation: none; transform: rotate(-150deg); }
+.walker.up .leg.l-a { animation: none; transform: rotate(28deg); }
+.walker.up .leg.l-b { animation: none; transform: rotate(-36deg); }
+.walker.up .rig .fig { animation: none; }
+/* Coming down: arms out for balance */
+.walker.down .arm.a-back { animation: flapB .3s ease-in-out infinite; }
+.walker.down .arm.a-front { animation: flapA .3s ease-in-out infinite; }
+.walker.down .leg.l-a { animation: none; transform: rotate(10deg); } .walker.down .leg.l-b { animation: none; transform: rotate(-14deg); }
+@keyframes flapA { 0%, 100% { transform: rotate(-95deg); } 50% { transform: rotate(-120deg); } }
+@keyframes flapB { 0%, 100% { transform: rotate(95deg); } 50% { transform: rotate(120deg); } }
+.w-shadow { position: absolute; left: -18px; bottom: -3px; width: 36px; height: 6px; border-radius: 50%; background: rgba(17,17,17,.14); transition: transform .2s ease, opacity .2s ease; }
+.walker.up .w-shadow, .walker.down .w-shadow { transform: scale(.6); opacity: .5; }
+.w-name { position: absolute; left: 50%; bottom: 124px; transform: translateX(-50%) translateY(4px); font-size: 11px; font-weight: 600; background: var(--ink); color: var(--paper); padding: 2px 7px; border-radius: 6px; white-space: nowrap; opacity: 0; transition: opacity .2s ease, transform .2s var(--ease-out); }
+.walker.kid .w-name { bottom: 100px; }
+.troupe.home .w-name { opacity: 1; transform: translateX(-50%); }
+/* At the end: Nila jumps with joy, Paati waves, Arjun and Meera point at Start free */
+.troupe.home .w-nila .w-body { animation: hopn 1.3s var(--ease-out) .3s infinite; }
+.troupe.home .w-nila .arm.a-back { transform: rotate(150deg); } .troupe.home .w-nila .arm.a-front { transform: rotate(-150deg); }
+.troupe.home .w-paati .arm.a-front { animation: wave2 1.1s ease-in-out .4s infinite; }
+.troupe.home .w-arjun .arm.a-front, .troupe.home .w-meera .arm.a-front { transform: rotate(-96deg); }
+@keyframes hopn { 0%, 60%, 100% { transform: scale(.86) translateY(0); } 28% { transform: scale(.86) translateY(-18px); } 44% { transform: scale(.88, .8) translateY(0); } }
+@keyframes wave2 { 0%, 100% { transform: rotate(-150deg); } 50% { transform: rotate(-120deg); } }
+.troupe.home ~ * .end .btn, html:has(.troupe.home) .end .btn { animation: nudge 1.4s var(--ease-out) .3s infinite; }
+@keyframes nudge { 0%, 55%, 100% { transform: none; } 25% { transform: translateX(4px); } }
+.stage .person { transition: opacity .35s ease, filter .35s ease; }
+.stage.away .person { opacity: .28 !important; filter: grayscale(.6); }
+html.family-hidden .troupe { display: none; }
+html.family-hidden .stage.away .person { opacity: 1 !important; filter: none; }
+.end { position: relative; }
+.fam-switch { position: fixed; left: 16px; bottom: 16px; z-index: 40; font: inherit; font-size: 12.5px; font-weight: 600; color: var(--ink-2); background: rgba(250,247,240,.92); border: 1px solid var(--line-2); border-radius: 999px; padding: 8px 14px; cursor: pointer; backdrop-filter: blur(8px); transition: transform 160ms var(--ease-out), border-color .2s ease; }
+.fam-switch:active { transform: scale(.96); }
+@media (hover: hover) and (pointer: fine) { .fam-switch:hover { border-color: var(--ink); color: var(--ink); } }
+/* Phones and reduced motion: they wait at the end */
+.end-family { display: flex; gap: 8px; align-items: flex-end; }
+.ef { width: 44px; display: block; opacity: 0; transform: translateY(14px); transition: opacity .4s ease, transform .5s var(--ease-out); }
+.ef .rig { width: 44px; height: auto; } .ef.kid .rig { width: 38px; }
+.end-family.in .ef-nila { animation: hopn2 1.4s var(--ease-out) 1s infinite; }
+.end-family.in .ef-nila .arm.a-back { transform: rotate(150deg); } .end-family.in .ef-nila .arm.a-front { transform: rotate(-150deg); }
+.end-family.in .ef-paati .arm.a-front { animation: wave2 1.1s ease-in-out 1s infinite; }
+@keyframes hopn2 { 0%, 60%, 100% { transform: translateY(0); } 28% { transform: translateY(-12px); } }
+.end-family.in .ef { opacity: 1; transform: none; }
+.end-family.in .ef:nth-child(2) { transition-delay: .08s; } .end-family.in .ef:nth-child(3) { transition-delay: .16s; } .end-family.in .ef:nth-child(4) { transition-delay: .24s; }
+html.family-hidden .end-family { display: none; }
+@media (max-width: 720px) { .end-family { order: 2; } .end .btn { order: 3; } }
