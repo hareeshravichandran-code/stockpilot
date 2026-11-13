@@ -176,3 +176,4 @@
 .ms-day.today .ms-in { color: var(--moss, #2F6B45); } .ms-day.today .ms-out { color: #9E2B25; }
 .ms-day.today .ms-bar { background: rgba(217,84,30,.14); } .ms-day.today .ms-bar i { background: var(--pop); }
 .ms-day.today.on { box-shadow: inset 0 0 0 2px var(--pop), 0 0 0 2px rgba(217,84,30,.25); }
+.o3-row.r3.solo { grid-template-columns: minmax(0, 1fr); }

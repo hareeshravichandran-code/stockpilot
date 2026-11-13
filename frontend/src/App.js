@@ -6,6 +6,7 @@ import Signup from './pages/Signup';
 import Dashboard from './pages/Dashboard';
 import Dividends from './pages/Dividends';
 import Blueprint from './pages/Blueprint';
+import { FEATURES } from './lib/features';
 import Family from './pages/Family';
 import MoneyFlow from './pages/MoneyFlow';
 import TestLogin, { TestAccountBar } from './pages/TestLogin';
@@ -53,7 +54,7 @@ export default function App() {
           <Route path="/signup" element={<PublicRoute><Signup /></PublicRoute>} />
           <Route path="/dashboard" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
           <Route path="/dividends" element={<PrivateRoute><Dividends /></PrivateRoute>} />
-          <Route path="/blueprint" element={<PrivateRoute><Blueprint /></PrivateRoute>} />
+          <Route path="/blueprint" element={FEATURES.blueprint ? <PrivateRoute><Blueprint /></PrivateRoute> : <Navigate to="/dashboard" replace />} />
           <Route path="/family" element={<PrivateRoute><Family /></PrivateRoute>} />
           <Route path="/money-flow" element={<PrivateRoute><MoneyFlow /></PrivateRoute>} />
           <Route path="/support" element={<PrivateRoute><Support /></PrivateRoute>} />

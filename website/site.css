@@ -142,7 +142,7 @@ a { text-underline-offset: 3px; }
 .b.documents { background: var(--mulberry); }
 .b.calendar { background: var(--marigold); color: var(--ink); }
 .b.spend { background: var(--terracotta); }
-.b.family { grid-column: span 3; background: var(--paper); color: var(--ink); border: 1px solid var(--line); }
+.b.family { grid-column: span 2; background: var(--paper); color: var(--ink); border: 1px solid var(--line); }
 
 .mbar { display: flex; height: 30px; gap: 3px; border-radius: 9px; overflow: hidden; }
 .mbar i { flex: var(--w); background: var(--paper); transform-origin: left; transform: scaleX(0); transition: transform 1s var(--ease); }

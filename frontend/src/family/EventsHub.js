@@ -779,13 +779,16 @@ export default function EventsHub({ notify }) {
   useEffect(() => { load(); }, [load]);
   useEffect(() => { expenseAPI.categories().then(r => setCats((r.data || r || []).filter(c => !c.is_deleted))).catch(() => {}); }, []);
   const go = (t) => { setTab(t); try { sessionStorage.setItem('eh-tab', t); } catch { /* ignore */ } };
+  // SMS groups and rules are made for you; they sit under Advanced (K-136: the page is about what's due)
+  const [adv, setAdv] = useState(() => tab !== 'events');
+  const ADV = [['groups', 'SMS groups'], ['rules', 'SMS rules'], ['found', 'Repeating in SMS']];
   const action = events ? events.filter(e => e.status === 'active' && (e.state === 'due' || e.state === 'overdue')).length : 0;
   return (
     <div className="eh">
       <header className="eh-head">
         <div>
-          <h1>Events & SMS rules</h1>
-          <p>Everything that repeats, when it is due, and the SMS that settles it.</p>
+          <h1>What's due</h1>
+          <p>EMIs, bills, subscriptions, SIPs and premiums for the family. Each one is marked paid when its bank SMS arrives.</p>
         </div>
         {events && (
           <div className="eh-stats" aria-label="Summary">
@@ -797,9 +800,13 @@ export default function EventsHub({ notify }) {
       </header>
       <HowItWorks />
       <nav className="eh-tabs" role="tablist" aria-label="Sections">
-        {[['events', 'Events'], ['groups', 'SMS groups'], ['rules', 'SMS rules'], ['found', 'Repeating in SMS']].map(([k, l]) => (
-          <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? 'on' : ''} onClick={() => go(k)}>{l}</button>
+        <button type="button" role="tab" aria-selected={tab === 'events'} className={tab === 'events' ? 'on' : ''} onClick={() => go('events')}>Events</button>
+        {adv && ADV.map(([k, l]) => (
+          <button key={k} type="button" role="tab" aria-selected={tab === k} className={`adv${tab === k ? ' on' : ''}`} onClick={() => go(k)}>{l}</button>
         ))}
+        <button type="button" className="eh-adv" aria-expanded={adv} onClick={() => { if (adv && tab !== 'events') go('events'); setAdv(!adv); }}>
+          {adv ? 'Hide advanced' : 'Advanced: SMS groups & rules'}
+        </button>
       </nav>
       {events === null ? <LogoLoader label="Reading your events…" /> : (
         <>

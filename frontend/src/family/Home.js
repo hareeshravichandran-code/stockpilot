@@ -5,6 +5,7 @@ import { PersonForm } from './People';
 import { Avatar, Faces, MODULE, inr, fmtDay, urgency, shortName, relLabel, ageFrom, errMsg, parseDate } from './shared';
 
 import LogoLoader from '../components/LogoLoader';
+import { FEATURES } from '../lib/features';
 const GO = { insurance: 'insurance', documents: 'documents', family: 'calendar', money: 'calendar', goals: 'calendar', loans: 'calendar' };
 
 export default function FamilyHome({ members, reloadMembers, notify, go }) {
@@ -60,9 +61,11 @@ export default function FamilyHome({ members, reloadMembers, notify, go }) {
         <button type="button" className="fo-tile mulberry" onClick={() => go('documents')}>
           <span className="fo-tile-v">{c.documents || 0}</span><span className="fo-tile-k">{c.overdue ? `documents, ${c.overdue} overdue` : 'documents and renewals'}</span>
         </button>
-        <button type="button" className="fo-tile moss" onClick={() => nav('/dashboard?tab=retirement')}>
-          <span className="fo-tile-v">Plan</span><span className="fo-tile-k">retirement, goals and money</span>
-        </button>
+        {FEATURES.retirement && (
+          <button type="button" className="fo-tile moss" onClick={() => nav('/dashboard?tab=retirement')}>
+            <span className="fo-tile-v">Plan</span><span className="fo-tile-k">retirement, goals and money</span>
+          </button>
+        )}
       </div>
 
       <div className="fo-home-grid">

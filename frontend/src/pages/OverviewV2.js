@@ -9,6 +9,7 @@ import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'rec
 import { inr, GoalsSnapshot, FamilyStrip } from './DashboardOverview';
 import useCountUp from '../hooks/useCountUp';
 import MoneyStrip from './MoneyStrip';
+import { FEATURES } from '../lib/features';
 import './OverviewV2.css';
 
 const n = (v) => { const x = parseFloat(v); return Number.isFinite(x) ? x : 0; };
@@ -117,11 +118,11 @@ export default function OverviewV2({
       )}
 
       {/* ── Row 3: where the money sits + goals ── */}
-      <div className="o3-row r3">
+      <div className={`o3-row r3${FEATURES.blueprint ? '' : ' solo'}`}>
         <section className="o3-card" aria-label="Where your money sits">
           <header className="o3-head"><div><h3>Where your money sits</h3><p>Tap one to open it</p></div></header>
           <div className="o3-bento">
-            {[...shown, { name: 'Retirement plan', value: null, tab: 'retirement' }].map((p, i) => (
+            {[...shown, ...(FEATURES.retirement ? [{ name: 'Retirement plan', value: null, tab: 'retirement' }] : [])].map((p, i) => (
               <button key={p.name} type="button" className={`o3-tile${i === 0 ? ' big' : ''}`} style={{ '--i': i }}
                 onClick={() => (p.tab ? onTab(p.tab) : tabOf[p.name] ? onTab(tabOf[p.name]) : onUpdateBalances())}>
                 <small>{p.name}</small>
@@ -132,7 +133,7 @@ export default function OverviewV2({
             ))}
           </div>
         </section>
-        <GoalsSnapshot hideValues={hideValues} onOpen={() => onNav('/blueprint')} />
+        {FEATURES.blueprint && <GoalsSnapshot hideValues={hideValues} onOpen={() => onNav('/blueprint')} />}
       </div>
 
       {/* ── Row 4: history + sectors ── */}

@@ -206,3 +206,6 @@
 .eh-check input { width: 18px; height: 18px; min-height: 0; accent-color: var(--fo-ink); }
 @media (max-width: 760px) { .eh-grp { grid-template-columns: minmax(0, 1fr); } }
 .eh-dl-note { display: block; font-size: 11.5px; color: var(--fo-ink-3); font-weight: 400; }
+.eh-tabs .eh-adv { margin-left: auto; border: 0; background: none; font: inherit; font-size: 13px; color: var(--fo-ink-3); cursor: pointer; padding: 10px 4px; white-space: nowrap; }
+.eh-tabs .eh-adv:hover { color: var(--fo-ink); }
+.eh-tabs button.adv { font-weight: 500; font-size: 14px; }

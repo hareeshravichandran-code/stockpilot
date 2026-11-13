@@ -19,7 +19,7 @@
   // Where each one goes, top to bottom. a = anchor on the target [x 0..1, y 0..1], d = nudge in px, hop = jump arc.
   var ROUTES = {
     arjun: [
-      { s: '.b.retire', a: [0.82, 0], d: [0, 2] },
+      { s: '.b.documents', a: [0.82, 0], d: [0, 2] },
       { s: '#see .window', a: [0.1, 0], d: [0, 2] },
       { s: '.cipher', a: [0.08, 0], d: [0, 2] },
       { s: '.motto', a: [0.12, 0], d: [0, 2] }
@@ -38,8 +38,6 @@
     ],
     nila: [
       { s: '.b.money', a: [0.18, 0], d: [0, 2], hop: 1 },
-      { s: '.b.goals', a: [0.5, 0], d: [0, 2], hop: 1 },
-      { s: '.b.retire', a: [0.3, 0], d: [0, 2], hop: 1 },
       { s: '.b.calendar', a: [0.5, 0], d: [0, 2], hop: 1, poke: '.month span.on' },
       { s: '#flow .dst li:last-child', a: [0.5, 0], d: [0, 2], hop: 1 },
       { s: '.june .line li:first-child', a: [0, 0.5], d: [-2, 2] },

@@ -19,7 +19,7 @@
     { id: 'loan', m: 'loans', who: ['arjun', 'meera'], t: 'Home loan', n: '₹28L left', x: 76, y: 8 },
     { id: 'term', m: 'insurance', who: ['arjun'], t: 'Term cover', n: '₹1.5Cr', x: 24, y: 8 },
     { id: 'sip', m: 'money', who: ['arjun', 'meera'], t: 'SIPs', n: '₹35K / mo', x: 93, y: 28 },
-    { id: 'ret', m: 'goals', who: ['arjun', 'meera'], t: 'Retirement', n: 'On track', x: 93, y: 72 },
+    { id: 'nw', m: 'money', who: ['arjun', 'meera'], t: 'Family net worth', n: '₹1.2Cr', x: 93, y: 72 },
     { id: 'pass', m: 'documents', who: ['meera'], t: 'Passport', n: 'Feb 2027', x: 76, y: 92 },
     { id: 'fees', m: 'calendar', who: ['nila'], t: 'School fees', n: '10 June', x: 50, y: 96 },
     { id: 'ssy', m: 'money', who: ['nila'], t: 'Sukanya', n: '₹3.2L', x: 24, y: 92 },

@@ -1,4 +1,5 @@
 import React from 'react';
+import { FEATURES, TAGLINE } from '../lib/features';
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
@@ -40,8 +41,8 @@ const NAV_SECTIONS = [
     { id: 'dashboard', icon: '◈', label: 'Overview' },
     { id: 'calendar', icon: '▦', label: 'Family calendar', hint: 'Dues, income, dividends, birthdays and renewals' },
     { id: 'cashflow', icon: '⇅', label: 'Money flow', hint: 'Spending by month, categories, recent spends and a report' },
-    { to: '/blueprint', icon: '◇', label: 'Blueprint', hint: 'Goals on a visual plan' },
-    { id: 'retirement', icon: '◐', label: 'Retirement' },
+    { to: '/blueprint', icon: '◇', label: 'Blueprint', hint: 'Goals on a visual plan', feature: 'blueprint' },
+    { id: 'retirement', icon: '◐', label: 'Retirement', feature: 'retirement' },
   ]],
   ['Masters', [
     { id: 'm-bank_account', icon: '⌂', label: 'Bank accounts' },
@@ -49,7 +50,7 @@ const NAV_SECTIONS = [
     { id: 'm-loan', icon: '⊟', label: 'Loans' },
     { id: 'm-insurance', icon: '☂', label: 'Insurance' },
     { id: 'm-subscription', icon: '↻', label: 'Subscriptions' },
-    { id: 'm-events', icon: '◷', label: 'Events' },
+    { id: 'm-events', icon: '◷', label: "What's due", hint: 'EMIs, bills, subscriptions and their SMS rules' },
     { id: 'm-people', icon: '☺', label: 'People' },
     { id: 'm-documents', icon: '▤', label: 'Documents' },
     { id: 'm-all', icon: '≡', label: 'All masters', hint: 'Salary, SIPs, rent and every other master' },
@@ -816,6 +817,7 @@ export default function Dashboard() {
   };
 
   const loadTab = async (t0) => {
+    if (t0 === 'retirement' && !FEATURES.retirement) t0 = 'dashboard';     // switched off for now (lib/features.js)
     let t = OLD_TAB[t0] && !['income', 'expenses'].includes(t0) ? OLD_TAB[t0] : t0;
     if (t0 === 'dividends') setStockView('dividends');
     if (t0 === 'income' || t0 === 'expenses') { setCfView('flow'); t = 'cashflow'; }
@@ -1150,7 +1152,7 @@ export default function Dashboard() {
       <aside className={`db-sidebar ${sidebarOpen ? 'open' : 'closed'}`}>
         <div className="db-logo">
           <img className="db-logo-img" src="/logo.svg" alt="Kanalyst" />
-          {sidebarOpen && <div className="db-logo-sub">Own your finance story</div>}
+          {sidebarOpen && <div className="db-logo-sub">{TAGLINE}</div>}
           <button className="db-collapse-btn" onClick={() => { setSidebarOpen(o => !o); setShowProfileDropdown(false); }} title={sidebarOpen ? 'Collapse' : 'Expand'}>
             {sidebarOpen ? '‹' : '›'}
           </button>
@@ -1160,7 +1162,7 @@ export default function Dashboard() {
           {NAV_SECTIONS.map(([section, items], si) => (
             <div key={section} className="db-nav-sec">
               <div className="db-nav-label" style={si ? { marginTop: 14 } : undefined}>{section}</div>
-              {items.filter(it => !it.admin || user?.is_admin).map((it, ii) => (
+              {items.filter(it => (!it.admin || user?.is_admin) && (!it.feature || FEATURES[it.feature])).map((it, ii) => (
                 <div key={it.id || it.to} className={`db-nav-item ${it.id && navTab === it.id ? 'active' : ''}`} style={{ animationDelay: `${(si * 4 + ii) * 22}ms` }}
                   onClick={() => (it.to ? nav(it.to) : loadTab(it.id))} title={it.hint || it.label}>
                   <span className="nav-icon">{it.icon}</span>
