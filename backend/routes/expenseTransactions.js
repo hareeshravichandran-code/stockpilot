@@ -126,7 +126,7 @@ router.post('/transactions', authMiddleware, async (req, res) => {
     const put = (r) => supabase.from('expense_transactions').insert(r).select().single();
     let { data, error } = await put(row);
     // A category the server does not know yet: keep the payment, leave it unsorted
-    if (error && /category_id_fkey/.test(error.message || '')) ({ data, error } = await put({ ...row, category_id: null }));
+    if (error && /category_id_fkey/.test(error.message || '')) { console.warn('[expense/transactions POST] unknown category, saved unsorted:', row.category_id); ({ data, error } = await put({ ...row, category_id: null })); }
     // Already uploaded (phone retry): answer with the saved row, not an error
     if (error && /duplicate key/.test(error.message || '')) {
       let q = supabase.from('expense_transactions').select('*').eq('user_id', req.userId);
