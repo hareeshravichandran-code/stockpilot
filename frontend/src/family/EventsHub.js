@@ -69,7 +69,7 @@ const amountText = (e) => {
   return `About ${inr(e.amount)}`;
 };
 function stateLine(e) {
-  if (e.status !== 'active') return [e.status === 'paused' ? 'Paused' : 'Closed', 'mute'];
+  if (e.status !== 'active') return [e.status === 'paused' ? 'Paused' : 'Not tracked', 'mute'];
   const d = e.focus_date;
   if (e.state === 'overdue') return [`Overdue · was due ${fmt(d)}`, 'bad'];
   if (e.state === 'due') { const n = days(d); return [n > 0 ? `Due in ${n} day${n > 1 ? 's' : ''} · ${fmt(d)}` : n === 0 ? 'Due today' : `Due · ${fmt(d)} (in buffer)`, 'warn']; }
@@ -385,8 +385,12 @@ function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify }) {
     } catch (e) { notify(errMsg(e)); } finally { setBusy(false); }
   };
   const setStatus = async (s) => {
-    try { await eventsAPI.status(id, s); notify(s === 'active' ? 'Resumed' : s === 'paused' ? 'Paused · no alerts until you resume' : 'Closed'); await load(); onChanged(); }
+    try { await eventsAPI.status(id, s); notify(s === 'active' ? 'Resumed' : s === 'paused' ? 'Paused · no alerts until you resume' : 'Stopped tracking'); await load(); onChanged(); }
     catch (e) { notify(errMsg(e)); }
+  };
+  const stopTracking = () => {
+    if (!window.confirm('Stop tracking this event? No more due dates or alerts. You can resume it any time.')) return;
+    setStatus('closed');
   };
   const del = async () => {
     if (!window.confirm('Delete this event, its due dates and its SMS rules? Payments stay in your expenses.')) return;
@@ -416,7 +420,8 @@ function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify }) {
             : <button type="button" className="fo-btn sm ghost" onClick={() => setStatus('active')}>Resume</button>}
           {e.source === 'manual'
             ? <button type="button" className="fo-btn sm ghost danger" onClick={del}>Delete</button>
-            : e.status !== 'closed' && <button type="button" className="fo-btn sm ghost danger" onClick={() => setStatus('closed')}>Close</button>}
+            : e.status !== 'closed' && <button type="button" className="fo-btn sm ghost danger" onClick={stopTracking}>Stop tracking</button>}
+          <button type="button" className="eh-x" onClick={onClose} aria-label="Close panel" title="Close panel">×</button>
         </div>
       </header>
 
@@ -441,7 +446,7 @@ function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify }) {
           <div><dt>Paid by</dt><dd>{e.pay_mode === 'manual' ? 'You, by hand' : 'Auto-debit'}</dd></div>
           <div><dt>Alerts</dt><dd>{LEVELS.find(l => l[0] === e.level)?.[1]}{e.remind_days != null ? ` · from ${e.remind_days} days before` : ''}</dd></div>
           <div><dt>Created from</dt><dd>{e.master ? `${e.master.title || e.master.institution || 'Master'} (master)` : 'Added by you'}<small className="eh-dl-note">SMS reach it only through its rules</small></dd></div>
-          {e.status !== 'active' && <div><dt>Status</dt><dd>{e.status === 'paused' ? 'Paused' : 'Closed'}</dd></div>}
+          {e.status !== 'active' && <div><dt>Status</dt><dd>{e.status === 'paused' ? 'Paused' : 'Not tracked (stopped)'}</dd></div>}
         </dl>
       </section>
 
@@ -489,7 +494,7 @@ function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify }) {
 }
 
 // ── Events tab ───────────────────────────────────────────────────────────────
-const FILTERS = [['all', 'All'], ['action', 'Needs action'], ['done', 'Done'], ['upcoming', 'Upcoming'], ['nocat', 'No category'], ['inactive', 'Paused / closed']];
+const FILTERS = [['all', 'All'], ['action', 'Needs action'], ['done', 'Done'], ['upcoming', 'Upcoming'], ['nocat', 'No category'], ['inactive', 'Paused / stopped']];
 function EventsTab({ events, cats, reload, notify, selected, setSelected }) {
   const [filter, setFilter] = useState('all');
   const [q, setQ] = useState('');

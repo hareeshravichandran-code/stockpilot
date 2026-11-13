@@ -209,3 +209,6 @@
 .eh-tabs .eh-adv { margin-left: auto; border: 0; background: none; font: inherit; font-size: 13px; color: var(--fo-ink-3); cursor: pointer; padding: 10px 4px; white-space: nowrap; }
 .eh-tabs .eh-adv:hover { color: var(--fo-ink); }
 .eh-tabs button.adv { font-weight: 500; font-size: 14px; }
+
+.eh-x { width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--line, #E8DFD6); background: transparent; color: inherit; font-size: 20px; line-height: 1; cursor: pointer; margin-left: 4px; }
+.eh-x:hover { background: rgba(217, 84, 30, .08); }

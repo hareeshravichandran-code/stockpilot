@@ -39,6 +39,7 @@ router.get('/sms-rules', authMiddleware, async (req, res) => {
 router.post('/sms-rules', authMiddleware, async (req, res) => {
   try {
     const { id, merchant_pattern, category_id, match_count, user_confirmed } = req.body;
+    if (!category_id || !merchant_pattern) return res.status(400).json({ error: 'merchant_pattern and category_id are required' });
     const { data, error } = await supabase
       .from('user_sms_rules')
       .upsert({

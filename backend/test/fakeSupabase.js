@@ -20,7 +20,7 @@ const SCHEMA = {
     defaults: { id: () => uuid(), status: 'active', buffer_days: 2, remind_days: 3, pay_mode: 'auto', amount_mode: 'about', rules_seeded: false, direction: 'out', source: 'manual', created_at: () => new Date().toISOString() },
     notNull: ['owner_id', 'master_table', 'master_id', 'title', 'remind_days'],
   },
-  expense_transactions: { defaults: { id: () => uuid(), is_deleted: false }, notNull: ['user_id', 'amount', 'type', 'date_time'] },
+  expense_transactions: { defaults: { id: () => uuid(), is_deleted: false }, notNull: ['user_id', 'amount', 'type', 'date_time'], unique: [['user_id', 'reference_no']] },
   money_masters: { defaults: { id: () => uuid(), status: 'active', created_at: () => new Date().toISOString() }, notNull: ['owner_id', 'kind'] },
   sms_groups: { defaults: { id: () => uuid(), status: 'open', count: 0 }, notNull: ['owner_id', 'key'], unique: [['owner_id', 'key']] },
 };

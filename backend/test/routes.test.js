@@ -9,7 +9,7 @@ const { db, uid, txn, ist, istToday } = H;
 const rows = (name) => db._tables[name] || [];
 let api;
 
-before(async () => { api = await H.server([['/api/events', 'events.js'], ['/api/expense', 'expenseTransactions.js'], ['/api/moneyflow', 'moneyflow.js'], ['/api/expense', 'expenseSync.js']]); });
+before(async () => { api = await H.server([['/api/events', 'events.js'], ['/api/expense', 'expenseTransactions.js'], ['/api/moneyflow', 'moneyflow.js'], ['/api/expense', 'expenseSync.js'], ['/api/expense', 'expenseSmsRules.js']]); });
 after(async () => { await api.close(); });
 beforeEach(() => H.reset());
 
@@ -66,6 +66,19 @@ describe('a payment opened on the phone', () => {
     assert.equal(after.category_id, 'food_beverages');
     assert.equal(after.amount, 250, 'amount untouched');
     assert.equal((await api.call('GET', '/api/expense/transactions/00000000-0000-0000-0000-000000000000')).status, 404);
+  });
+});
+
+describe('phone upload', () => {
+  test('the same payment uploaded twice answers 200 with the saved row, not a 500', async () => {
+    const body = { amount: 499, type: 'DEBIT', date_time: ist(istToday()), reference_no: 'UTR123', category_id: 'food_dining' };
+    assert.equal((await api.call('POST', '/api/expense/transactions', body)).status, 201);
+    const again = await api.call('POST', '/api/expense/transactions', body);
+    assert.equal(again.status, 200, JSON.stringify(again.body));
+    assert.equal(rows('expense_transactions').length, 1);
+  });
+  test('an SMS rule without a category is refused with 400', async () => {
+    assert.equal((await api.call('POST', '/api/expense/sms-rules', { merchant_pattern: 'swiggy' })).status, 400);
   });
 });
 

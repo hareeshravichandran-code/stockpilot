@@ -103,9 +103,7 @@ router.post('/transactions', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'amount, type and date_time are required' });
     }
 
-    const { data, error } = await supabase
-      .from('expense_transactions')
-      .insert({
+    const row = {
         user_id:      req.userId,
         amount:       parseFloat(amount),
         type,
@@ -124,10 +122,18 @@ router.post('/transactions', authMiddleware, async (req, res) => {
         is_deleted:   false,
         created_at:   Date.now(),
         updated_at:   Date.now()
-      })
-      .select()
-      .single();
-
+      };
+    const put = (r) => supabase.from('expense_transactions').insert(r).select().single();
+    let { data, error } = await put(row);
+    // A category the server does not know yet: keep the payment, leave it unsorted
+    if (error && /category_id_fkey/.test(error.message || '')) ({ data, error } = await put({ ...row, category_id: null }));
+    // Already uploaded (phone retry): answer with the saved row, not an error
+    if (error && /duplicate key/.test(error.message || '')) {
+      let q = supabase.from('expense_transactions').select('*').eq('user_id', req.userId);
+      q = reference_no ? q.eq('reference_no', reference_no) : q.eq('date_time', row.date_time).eq('amount', row.amount);
+      const { data: had } = await q.limit(1);
+      if (had && had[0]) return res.status(200).json({ ...had[0], duplicate: true });
+    }
     if (error) throw error;
     res.status(201).json(data);
   } catch (err) {
