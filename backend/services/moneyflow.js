@@ -46,7 +46,7 @@ async function loadCategories(uid) {
 async function loadRules(uid) {
   const [u, g] = await Promise.all([
     supabase.from('user_sms_rules').select('merchant_pattern, category_id, pattern_tok').eq('user_id', uid),
-    supabase.from('universal_merchant_rules').select('merchant_pattern, category_id').gte('confidence_score', 0.6).limit(3000),
+    require('./allRows').allRows(() => supabase.from('universal_merchant_rules').select('merchant_pattern, category_id').gte('confidence_score', 0.6).order('merchant_pattern'), 3000).then(data => ({ data })),
   ]);
   const norm = (s) => String(s || '').toLowerCase().trim();
   const { isEnc, ruleMatches } = require('./privacy');
@@ -126,9 +126,10 @@ async function monthFlow(uid, month, opts = {}) {
   const months = Array.from({ length: 7 }, (_, i) => addMonths(month, i - 6));       // 6 before + this month
   const from = monthStartMs(months[0]);
   const to = monthStartMs(addMonths(month, 1));
-  const [{ data: txns }, cats, ruleCat, { data: ms }, { data: me }] = await Promise.all([
-    supabase.from('expense_transactions').select('id, amount, type, category_id, merchant, date_time, sms_sender, payment_type, reference_no, account_last4, master_id, signals, merchant_tok, merchant_key')
-      .eq('user_id', uid).eq('is_deleted', false).gte('date_time', from - 2 * 864e5).lt('date_time', to + 2 * 864e5).limit(20000),
+  const [txns, cats, ruleCat, { data: ms }, { data: me }] = await Promise.all([
+    // 7 months can pass Supabase's 1000-row cap: page through all of them
+    require('./allRows').allRows(() => supabase.from('expense_transactions').select('id, amount, type, category_id, merchant, date_time, sms_sender, payment_type, reference_no, account_last4, master_id, signals, merchant_tok, merchant_key')
+      .eq('user_id', uid).eq('is_deleted', false).gte('date_time', from - 2 * 864e5).lt('date_time', to + 2 * 864e5).order('date_time').order('id'), 20000),
     loadCategories(uid),
     loadRules(uid),
     supabase.from('money_masters').select('id, kind, subtype, title, institution, amount, frequency, due_day, status').eq('owner_id', uid),

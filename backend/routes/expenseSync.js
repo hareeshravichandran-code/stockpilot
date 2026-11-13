@@ -53,8 +53,9 @@ router.get('/sync/pull', auth, async (req, res) => {
     const lastSyncAt = parseInt(req.query.last_sync_at || '0');
 
     const [txnRes, catRes, budgetRes, rulesRes, fieldsRes, sheetsRes] = await Promise.all([
-      supabase.from('expense_transactions').select('*')
-        .eq('user_id', uid).gt('updated_at', lastSyncAt),
+      // A first sync (or a long gap) can pass Supabase's 1000-row cap: page through, oldest change first
+      require('../services/allRows').allRows(() => supabase.from('expense_transactions').select('*')
+        .eq('user_id', uid).gt('updated_at', lastSyncAt).order('updated_at').order('id'), 50000).then(data => ({ data, error: null })),
       supabase.from('expense_categories').select('*')
         .or(`user_id.eq.${uid},is_system.eq.true`)
         .gt('updated_at', lastSyncAt).eq('is_deleted', false),

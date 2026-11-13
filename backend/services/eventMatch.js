@@ -167,6 +167,7 @@ async function seedRules(uid, events, rules, txns, pays) {
         rows.push({ merchant_pattern: word, pattern_tok: null, sender_key: k, amount_min: Math.floor(lo * 0.95), amount_max: Math.ceil(hi * 1.05), source: 'from_payments', label: null });
       }
     }
+    let failed = 0;
     for (const r of rows) {
       const row = { ...r, user_id: uid, event_id: e.id, category_id, user_confirmed: true, is_deleted: false, match_count: 1, updated_at: Date.now(), created_at: Date.now() };
       if (row.merchant_pattern) {
@@ -179,10 +180,11 @@ async function seedRules(uid, events, rules, txns, pays) {
           continue;
         }
       }
-      const { data } = await supabase.from('user_sms_rules').insert(row).select('*').single();
+      const { data, error } = await supabase.from('user_sms_rules').insert(row).select('*').single();
       if (data) made.push(data);
+      if (error) { failed++; console.error('[events] rule not saved for event', e.id, error.message); }
     }
-    if (!category_id) continue;                                   // made once the user picks a category
+    if (!category_id || failed) continue;                         // try again next run (never mark done on a failed save)                                   // made once the user picks a category
     await supabase.from('recurring_events').update({ rules_seeded: true }).eq('id', e.id);
     e.rules_seeded = true;
     if (category_id) e.category_id = category_id;

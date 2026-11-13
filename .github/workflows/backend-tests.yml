@@ -1,0 +1,22 @@
+# Backend tests: the main loop (SMS -> rule -> event done), month totals, >1000 rows, sync, category assign.
+# Runs on every push and pull request. In Railway, turn on "Wait for CI" so a red run never deploys.
+name: Backend tests
+on:
+  push:
+    branches: [main, feature/blueprint]
+    paths: ['backend/**', '.github/workflows/backend-tests.yml']
+  pull_request:
+    paths: ['backend/**']
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - run: npm test

@@ -124,8 +124,8 @@ router.get('/', requireAuth, async (req, res) => {
     const folios = (f.data || []).map(h => ({ id: String(h.id), fund_name: h.fund_name, folio_number: h.folio_number, current_value: num(h.current_value) }));
     // Actuals per master for the cards: last payment, 12-month total and a 6-month trail
     const since = Date.now() - 366 * 864e5;
-    const { data: tx } = await supabase.from('expense_transactions').select('master_id, amount, date_time, type')
-      .eq('user_id', uid).eq('is_deleted', false).not('master_id', 'is', null).gte('date_time', since);
+    const tx = await allRows(() => supabase.from('expense_transactions').select('id, master_id, amount, date_time, type')
+      .eq('user_id', uid).eq('is_deleted', false).not('master_id', 'is', null).gte('date_time', since).order('id'));
     const stats = {};
     const monthOf = (ms) => new Date(Number(ms) + 5.5 * 3600e3).toISOString().slice(0, 7);
     const months = [...Array(6)].map((_, i) => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - (5 - i)); return d.toISOString().slice(0, 7); });

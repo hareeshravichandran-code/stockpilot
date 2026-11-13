@@ -70,13 +70,11 @@ router.get('/transactions/summary', authMiddleware, async (req, res) => {
     const start = new Date(year, mon, 1).getTime();
     const end   = new Date(year, mon + 1, 0, 23, 59, 59).getTime();
 
-    const { data, error } = await supabase
-      .from('expense_transactions')
-      .select('amount, type')
-      .eq('user_id', req.userId)
-      .eq('is_deleted', false)
-      .gte('date_time', start)
-      .lte('date_time', end);
+    let data, error = null;
+    try {
+      data = await require('../services/allRows').allRows(() => supabase.from('expense_transactions').select('id, amount, type')
+        .eq('user_id', req.userId).eq('is_deleted', false).gte('date_time', start).lte('date_time', end).order('id'));
+    } catch (e) { error = e; }
 
     if (error) throw error;
 
