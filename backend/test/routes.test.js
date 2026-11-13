@@ -53,6 +53,28 @@ describe('events and SMS rules API', () => {
   });
 });
 
+describe('Sort tab: repeating payments', () => {
+  test('Track as due makes an event + rule; Not a bill and Undo work; the list reply has event null for open groups', async () => {
+    db._seed('sms_groups', [{ owner_id: uid, key: 'netflix', name: 'Netflix', count: 6, avg_amount: 649, min_amount: 649, max_amount: 649, cadence: 'monthly', due_day: 12, sender_key: 'HDFCBK' },
+                            { owner_id: uid, key: 'zerodha', name: 'Zerodha', count: 6, avg_amount: 5000, cadence: 'monthly', due_day: 5 }]);
+    const list = await api.call('GET', '/api/events/groups');
+    assert.equal(list.status, 200);
+    assert.equal(list.body.groups[0].event, null, 'open groups come with event: null (the phone must handle it)');
+    const [net, zer] = rows('sms_groups');
+    const t = await api.call('POST', `/api/events/groups/${net.id}`, { action: 'event', kind: 'subscription', category_id: 'p_membership', due_day: 12, frequency: 'monthly' });
+    assert.equal(t.status, 200, JSON.stringify(t.body));
+    assert.equal(rows('sms_groups').find(g => g.id === net.id).status, 'event');
+    assert.ok(rows('recurring_events').some(e => e.id === t.body.event_id && e.due_day === 12));
+    assert.ok(rows('user_sms_rules').some(r => r.event_id === t.body.event_id));
+    assert.equal((await api.call('POST', `/api/events/groups/${zer.id}`, { action: 'ignore' })).status, 200);
+    assert.equal(rows('sms_groups').find(g => g.id === zer.id).status, 'ignored');
+    assert.equal((await api.call('POST', `/api/events/groups/${zer.id}`, { action: 'reopen' })).status, 200);
+    assert.equal(rows('sms_groups').find(g => g.id === zer.id).status, 'open');
+    const after = await api.call('GET', '/api/events/groups');
+    assert.equal(after.body.groups.find(g => g.id === net.id).event.title, 'Netflix');
+  });
+});
+
 describe('a payment opened on the phone', () => {
   test('GET by id returns it; assigning a category saves it and leaves the rest alone', async () => {
     db._seed('expense_transactions', [txn({ amount: 250, merchant: 'Chai Point', date_time: ist(istToday()) })]);
