@@ -77,6 +77,14 @@ describe('phone upload', () => {
     assert.equal(again.status, 200, JSON.stringify(again.body));
     assert.equal(rows('expense_transactions').length, 1);
   });
+  test('a rule re-sent with the same id and new words updates that rule', async () => {
+    const a = await api.call('POST', '/api/expense/sms-rules', { id: 'r-1', merchant_pattern: 'swiggy', category_id: 'food_online' });
+    assert.equal(a.status, 201, JSON.stringify(a.body));
+    const b = await api.call('POST', '/api/expense/sms-rules', { id: 'r-1', merchant_pattern: 'swiggy instamart', category_id: 'grocery_online' });
+    assert.equal(b.status, 200, JSON.stringify(b.body));
+    assert.equal(rows('user_sms_rules').length, 1);
+    assert.equal(rows('user_sms_rules')[0].merchant_pattern, 'swiggy instamart');
+  });
   test('an SMS rule without a category is refused with 400', async () => {
     assert.equal((await api.call('POST', '/api/expense/sms-rules', { merchant_pattern: 'swiggy' })).status, 400);
   });

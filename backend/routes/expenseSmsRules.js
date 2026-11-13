@@ -40,6 +40,20 @@ router.post('/sms-rules', authMiddleware, async (req, res) => {
   try {
     const { id, merchant_pattern, category_id, match_count, user_confirmed } = req.body;
     if (!category_id || !merchant_pattern) return res.status(400).json({ error: 'merchant_pattern and category_id are required' });
+    // Same rule id with edited words: update that rule (an upsert on the words would clash on the id)
+    if (id) {
+      const { data: had } = await supabase.from('user_sms_rules').select('id, user_id').eq('id', id).maybeSingle();
+      if (had && had.user_id !== req.userId) return res.status(409).json({ error: 'rule id in use' });
+      if (had) {
+        const { data, error } = await supabase.from('user_sms_rules').update({
+          merchant_pattern, category_id, match_count: match_count || 1, user_confirmed: user_confirmed || false, is_deleted: false,
+          ...(Array.isArray(req.body.pattern_tok) ? { pattern_tok: req.body.pattern_tok.slice(0, 20) } : {}), updated_at: Date.now(),
+        }).eq('id', id).eq('user_id', req.userId).select().single();
+        if (error && !/duplicate key/.test(error.message || '')) throw error;
+        if (!error) return res.status(200).json(data);
+        // the words already belong to another rule of this user: fall through to the upsert on the words
+      }
+    }
     const { data, error } = await supabase
       .from('user_sms_rules')
       .upsert({

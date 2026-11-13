@@ -13,7 +13,7 @@ const SCHEMA = {
   user_sms_rules: {
     defaults: { id: () => uuid(), is_deleted: false, source: 'manual', match_count: 1, user_confirmed: false, created_at: now, updated_at: now },
     notNull: ['id', 'user_id', 'category_id'],
-    unique: [['user_id', 'merchant_pattern']],
+    unique: [['id'], ['user_id', 'merchant_pattern']],
   },
   event_payments: { defaults: { id: () => uuid(), created_at: () => new Date().toISOString() }, notNull: ['event_id', 'period', 'status'], unique: [['event_id', 'period']] },
   recurring_events: {
