@@ -9,7 +9,7 @@ const { db, uid, txn, ist, istToday } = H;
 const rows = (name) => db._tables[name] || [];
 let api;
 
-before(async () => { api = await H.server([['/api/events', 'events.js'], ['/api/expense', 'expenseTransactions.js'], ['/api/moneyflow', 'moneyflow.js'], ['/api/expense', 'expenseSync.js'], ['/api/expense', 'expenseSmsRules.js']]); });
+before(async () => { api = await H.server([['/api/events', 'events.js'], ['/api/expense', 'expenseTransactions.js'], ['/api/moneyflow', 'moneyflow.js'], ['/api/expense', 'expenseSync.js'], ['/api/expense', 'expenseSmsRules.js'], ['/api', 'appReports.js']]); });
 after(async () => { await api.close(); });
 beforeEach(() => H.reset());
 
@@ -72,6 +72,18 @@ describe('Sort tab: repeating payments', () => {
     assert.equal(rows('sms_groups').find(g => g.id === zer.id).status, 'open');
     const after = await api.call('GET', '/api/events/groups');
     assert.equal(after.body.groups.find(g => g.id === net.id).event.title, 'Netflix');
+  });
+});
+
+describe('crash reports from the app', () => {
+  test('saved with numbers masked; works without login', async () => {
+    const r = await api.call('POST', '/api/app-reports', { reports: [{ kind: 'crash', app_version: '1.13.3', version_code: 27, screen: 'sort',
+      error: 'ClassCastException at amount 1982.40 for 9876543210', stack: 'at com.kanalyst.app.ui.screens.manage.SmsGroupsViewModel.load(SmsGroups.kt:97)' }] });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const row = rows('app_reports')[0];
+    assert.equal(row.kind, 'crash');
+    assert.ok(!/9876543210|1982/.test(row.error), row.error);
+    assert.ok(row.stack.includes('SmsGroupsViewModel'));
   });
 });
 

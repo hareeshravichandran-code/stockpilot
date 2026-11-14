@@ -85,7 +85,8 @@ app.use('/api/masters', mastersRoutes);
 app.use('/api/moneyflow', require('./routes/moneyflow'));
 app.use('/api/setup', require('./routes/setup'));
 app.use('/api', require('./routes/testAccount'));   // private test account: link login, reset, dummy data
-app.use('/api', require('./routes/support'));       // support chat + diagnostics uploads
+app.use('/api', require('./routes/support'));
+app.use('/api', require('./routes/appReports'));   // crash / error reports from the Android app       // support chat + diagnostics uploads
 app.use('/api', require('./routes/smsIssues'));     // SMS reading issues (Help improve SMS reading + admin)
 app.use('/api', require('./routes/privacy'));       // end-to-end encryption keys and migration
 
