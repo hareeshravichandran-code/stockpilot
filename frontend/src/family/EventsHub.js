@@ -5,6 +5,7 @@ import { kindOf, KindIcon } from '../money/kinds';
 import LogoLoader from '../components/LogoLoader';
 import Recurring from './Recurring';
 import './EventsHub.css';
+import { catGlyph } from '../lib/features';
 
 /*
  * Events and SMS rules, managed in one place.
@@ -99,7 +100,7 @@ function CatChip({ id, cats, ignored }) {
   if (ignored) return <span className="eh-cat none">Ignore this SMS</span>;
   if (!id) return <span className="eh-cat none">No category</span>;
   const c = cats.find(x => x.id === id);
-  return <span className="eh-cat">{c?.icon ? <i aria-hidden="true">{c.icon}</i> : null}{c?.name || CAT_NAMES[id] || id}</span>;
+  return <span className="eh-cat">{catGlyph(c?.icon) ? <i aria-hidden="true">{catGlyph(c.icon)}</i> : null}{c?.name || CAT_NAMES[id] || id}</span>;
 }
 function CategorySelect({ value, onChange, cats, required }) {
   const list = useMemo(() => [...cats].sort((a, b) => String(a.name).localeCompare(String(b.name))), [cats]);

@@ -7,6 +7,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } fr
 import { mastersAPI, expenseAPI } from '../lib/api';
 import { kindOf, KindIcon } from '../money/kinds';
 import { inr } from './DashboardOverview';
+import { catGlyph } from '../lib/features';
 
 const n = (v) => { const x = parseFloat(v); return Number.isFinite(x) ? x : 0; };
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -139,7 +140,7 @@ export default function MoneyStrip({ hidden, onOpenCalendar, onOpenEvents }) {
               return (
                 <li key={'f' + i} className="ms-fl">
                   <span className="ms-ic flow" style={{ '--c': kindOf(f.kind).c }}><KindIcon kind={f.kind} size={15} /></span>
-                  <span className="ms-t"><b>{title}</b><small className={!c && f.dir !== 'in' ? 'unsorted' : ''}>{c ? `${c.icon || ''} ${c.name}` : f.dir === 'in' ? kindOf(f.kind).label : 'Not sorted'}{f.master_title ? ' · matched' : ''}</small>
+                  <span className="ms-t"><b>{title}</b><small className={!c && f.dir !== 'in' ? 'unsorted' : ''}>{c ? `${catGlyph(c.icon)} ${c.name}`.trim() : f.dir === 'in' ? kindOf(f.kind).label : 'Not sorted'}{f.master_title ? ' · matched' : ''}</small>
                     {body && body !== title && <span className="ms-sms">{body}</span>}</span>
                   <span className={`ms-a ${f.dir === 'in' ? 'in' : ''}`}>{f.dir === 'in' ? '+' : '−'}{money(f.amount)}</span>
                 </li>

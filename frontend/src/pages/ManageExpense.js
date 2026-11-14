@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { expenseAPI } from '../lib/api';
 
 import LogoLoader from '../components/LogoLoader';
+import { catGlyph } from '../lib/features';
 /* ─────────────────────── helpers ─────────────────────────── */
 const CAT_ICONS = ['🏷️','🍕','🛍️','🚗','🏠','💊','📚','✈️','🎮','💆','⚡','💰','🎁','🏋️','🍎','☕','🏦','📊','🎯','🌿','💎','🔥','🛡️','🥦','🥜'];
 const CAT_COLORS = ['#111111','#9E2B25','#2F6B45','#5A564F','#A39B8B','#3A3833','#6F6A61','#2F6B45','#8C8270','#85817A'];
@@ -557,7 +558,7 @@ function BudgetTab({ parentCats }) {
   };
 
   const catName = (id) => parentCats.find(c=>c.id===id)?.name || id;
-  const catIcon = (id) => parentCats.find(c=>c.id===id)?.icon || '💳';
+  const catIcon = (id) => catGlyph(parentCats.find(c=>c.id===id)?.icon) || '💳';
 
   const displayMonth = () => {
     const y = parseInt(month.slice(0,4)), m = parseInt(month.slice(4,6))-1;

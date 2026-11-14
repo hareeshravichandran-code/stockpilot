@@ -10,3 +10,6 @@ export const FEATURES = {
 
 export const TAGLINE = "Your family's money, in one place";
 export const PROMISE = "What you own, what you owe, what's due.";
+
+/** A category's symbol for display: emoji only. Old rows hold icon names like "more_horiz", which must never show as text. */
+export const catGlyph = (icon) => (icon && /[^\x00-\x7F]/.test(icon) ? icon : '');

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { moneyflowAPI, mastersAPI, expenseAPI } from '../lib/api';
 import { inrShort, kindOf, KindIcon } from '../money/kinds';
 import './MoneyFlow.css';
+import { catGlyph } from '../lib/features';
 
 const SECTIONS = [
   ['income', 'Came in', '#4d6a16'],
@@ -95,7 +96,7 @@ function RecentSpends({ month, cats, onReport }) {
             <li key={f.id || i} style={{ '--i': i }}>
               <span className="mf-ric" style={{ '--c': kindOf(f.kind).c }}><KindIcon kind={f.kind} size={15} /></span>
               <span className="mf-rt"><b>{title}</b>
-                <small className={c ? '' : 'unc'}>{fmtDay(f.date)} · {c ? `${c.icon || ''} ${c.name}` : 'Not sorted'}</small>
+                <small className={c ? '' : 'unc'}>{fmtDay(f.date)} · {c ? `${catGlyph(c.icon)} ${c.name}`.trim() : 'Not sorted'}</small>
                 {body && body !== title && <em>{body}</em>}</span>
               <span className="mf-ra">−{inrShort(f.amount)}</span>
             </li>
