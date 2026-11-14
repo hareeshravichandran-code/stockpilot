@@ -11,8 +11,9 @@ const uuid = () => crypto.randomUUID();
 // Mirrors the live tables (see backend/migrations). Keep in step when the schema changes.
 const SCHEMA = {
   user_sms_rules: {
-    defaults: { id: () => uuid(), is_deleted: false, source: 'manual', match_count: 1, user_confirmed: false, created_at: now, updated_at: now },
-    notNull: ['id', 'user_id', 'category_id'],
+    defaults: { id: () => uuid(), is_deleted: false, is_ignored: false, source: 'manual', match_count: 1, user_confirmed: false, created_at: now, updated_at: now },
+    notNull: ['id', 'user_id'],
+    check: (r) => (r.category_id != null || r.is_ignored ? null : 'new row violates check constraint "user_sms_rules_cat_or_ignore"'),
     unique: [['id'], ['user_id', 'merchant_pattern']],
   },
   event_payments: { defaults: { id: () => uuid(), created_at: () => new Date().toISOString() }, notNull: ['event_id', 'period', 'status'], unique: [['event_id', 'period']] },
@@ -78,6 +79,7 @@ function makeDb() {
     check(row, ignoreId) {
       const s = SCHEMA[this.table] || {};
       for (const c of s.notNull || []) if (row[c] == null) return `null value in column "${c}" of relation "${this.table}" violates not-null constraint`;
+      if (s.check) { const e = s.check(row); if (e) return e; }
       for (const key of s.unique || []) {
         if (key.some(c => row[c] == null)) continue;           // NULLs are distinct
         if (t(this.table).some(o => o !== ignoreId && key.every(c => String(o[c]) === String(row[c])))) return `duplicate key value violates unique constraint (${key.join(',')})`;

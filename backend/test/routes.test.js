@@ -107,6 +107,13 @@ describe('phone upload', () => {
     assert.equal(rows('user_sms_rules').length, 1);
     assert.equal(rows('user_sms_rules')[0].merchant_pattern, 'swiggy instamart');
   });
+  test('an Ignore rule from the phone (no category) is stored and listed for the web', async () => {
+    const r = await api.call('POST', '/api/expense/sms-rules', { id: 'ig-1', merchant_pattern: 'otp', is_ignored: true });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(rows('user_sms_rules')[0].is_ignored, true);
+    const list = await api.call('GET', '/api/events/rules');
+    assert.equal(list.body.rules.find(x => x.id === 'ig-1').is_ignored, true);
+  });
   test('an SMS rule without a category is refused with 400', async () => {
     assert.equal((await api.call('POST', '/api/expense/sms-rules', { merchant_pattern: 'swiggy' })).status, 400);
   });

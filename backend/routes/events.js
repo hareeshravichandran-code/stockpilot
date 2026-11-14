@@ -150,7 +150,7 @@ router.get('/rules', requireAuth, async (req, res) => {
     const evById = Object.fromEntries((evs || []).map(e => [e.id, e]));
     const out = (rules || []).map(r => {
       const caught = txns.filter(t => EM.ruleScore(r, t) > 0);
-      return { id: r.id, category_id: r.category_id, event_id: r.event_id || null, event: r.event_id && evById[r.event_id] ? { id: r.event_id, title: evById[r.event_id].title, kind: evById[r.event_id].kind, status: evById[r.event_id].status } : null,
+      return { id: r.id, category_id: r.category_id, is_ignored: !!r.is_ignored, event_id: r.event_id || null, event: r.event_id && evById[r.event_id] ? { id: r.event_id, title: evById[r.event_id].title, kind: evById[r.event_id].kind, status: evById[r.event_id].status } : null,
         merchant_pattern: r.merchant_pattern || null, has_words: !!r.merchant_pattern || (Array.isArray(r.pattern_tok) && r.pattern_tok.length > 0),
         label: r.label || null, sender_key: r.sender_key || null, amount_min: r.amount_min == null ? null : num(r.amount_min), amount_max: r.amount_max == null ? null : num(r.amount_max),
         source: r.source || 'manual', from_phone: !r.source || r.source === 'manual' ? !r.user_confirmed : false, confirmed: !!r.user_confirmed,
@@ -197,7 +197,7 @@ router.put('/rules/:id', requireAuth, async (req, res) => {
     const bad = await checkRule(uid, merged);
     if (bad) return res.status(400).json({ error: bad });
     if (patch.event_id === undefined) delete patch.event_id;
-    const { data, error } = await supabase.from('user_sms_rules').update({ ...patch, category_id: merged.category_id, user_confirmed: true, updated_at: Date.now() })
+    const { data, error } = await supabase.from('user_sms_rules').update({ ...patch, category_id: merged.category_id, ...(merged.category_id ? { is_ignored: false } : {}), user_confirmed: true, updated_at: Date.now() })
       .eq('id', cur.id).eq('user_id', uid).select().single();
     if (error) throw error;
     require('./masters').linkActuals(uid, { force: true }).catch(() => {});

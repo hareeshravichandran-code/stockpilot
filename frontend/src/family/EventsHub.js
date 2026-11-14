@@ -95,7 +95,8 @@ function Pill({ tone, children }) { return <span className={`eh-pill ${tone}`}>{
 const CAT_NAMES = { cc_bill: 'Credit card bill', p_insurance: 'Insurance', p_transfer: 'Transfer', p_emi: 'EMI', p_education: 'Education', subscriptions: 'Subscriptions' };
 export const RULE_SOURCE = { event_map: 'made from a payment you picked', from_master: "made from the master's keywords", from_payments: 'made from earlier payments',
   group: 'made from an SMS group', web: 'added on the web', manual: 'from the phone' };
-function CatChip({ id, cats }) {
+function CatChip({ id, cats, ignored }) {
+  if (ignored) return <span className="eh-cat none">Ignore this SMS</span>;
   if (!id) return <span className="eh-cat none">No category</span>;
   const c = cats.find(x => x.id === id);
   return <span className="eh-cat">{c?.icon ? <i aria-hidden="true">{c.icon}</i> : null}{c?.name || CAT_NAMES[id] || id}</span>;
@@ -462,7 +463,7 @@ function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify }) {
             {d.rules.map(r => (
               <li key={r.id}>
                 <div className="eh-when">{ruleWhen(r).map(([a, b]) => <span key={a}><em>{a}</em>{b}</span>)}</div>
-                <div className="eh-then"><CatChip id={r.category_id} cats={cats} /><span className="eh-dim">{r.caught} SMS · {RULE_SOURCE[r.source] || 'rule'}</span></div>
+                <div className="eh-then"><CatChip id={r.category_id} cats={cats} ignored={r.is_ignored} /><span className="eh-dim">{r.caught} SMS · {RULE_SOURCE[r.source] || 'rule'}</span></div>
                 <div className="eh-r-acts">
                   <button type="button" className="eh-link" onClick={() => setRuleEdit({ rule: { ...r, event_id: e.id } })}>Edit</button>
                   <button type="button" className="eh-link danger" onClick={() => delRule(r)}>Remove</button>
@@ -595,9 +596,9 @@ function RulesTab({ cats, events, notify, onChanged }) {
   };
   if (!rules) return <LogoLoader size={30} inline label="Reading rules" />;
   const catName = (id) => cats.find(c => c.id === id)?.name || id || '';
-  const list = rules.filter(r => (filter === 'all' || (filter === 'event' ? !!r.event_id : !r.event_id))
+  const list = rules.filter(r => (filter === 'all' || (filter === 'event' ? !!r.event_id : filter === 'ignore' ? !!r.is_ignored : !r.event_id && !r.is_ignored))
     && (!q || [r.merchant_pattern, r.label, r.sender_key, catName(r.category_id), r.event?.title].some(x => x && clean(x).toLowerCase().includes(q.toLowerCase()))));
-  const n = { all: rules.length, event: rules.filter(r => r.event_id).length, cat: rules.filter(r => !r.event_id).length };
+  const n = { all: rules.length, event: rules.filter(r => r.event_id).length, cat: rules.filter(r => !r.event_id && !r.is_ignored).length, ignore: rules.filter(r => r.is_ignored).length };
   return (
     <div className="eh-rulestab">
       <div className="eh-tools">
@@ -605,7 +606,7 @@ function RulesTab({ cats, events, notify, onChanged }) {
         <button type="button" className="fo-btn" onClick={() => setEdit({})}>+ New rule</button>
       </div>
       <div className="eh-filters" role="tablist" aria-label="Filter rules">
-        {[['all', 'All rules'], ['event', 'Settle an event'], ['cat', 'Category only']].map(([k, l]) => (
+        {[['all', 'All rules'], ['event', 'Settle an event'], ['cat', 'Category only'], ['ignore', 'Ignore']].filter(([k]) => k !== 'ignore' || n.ignore).map(([k, l]) => (
           <button key={k} type="button" role="tab" aria-selected={filter === k} className={filter === k ? 'on' : ''} onClick={() => setFilter(k)}>{l}<span>{n[k]}</span></button>
         ))}
       </div>
@@ -618,7 +619,7 @@ function RulesTab({ cats, events, notify, onChanged }) {
             <div key={r.id} className="eh-tr" role="row" style={{ '--i': Math.min(i, 12) }}>
               <span className="eh-when" role="cell">{ruleWhen(r).map(([a, b]) => <span key={a}><em>{a}</em>{b}</span>)}</span>
               <span className="eh-then" role="cell">
-                <CatChip id={r.category_id} cats={cats} />
+                <CatChip id={r.category_id} cats={cats} ignored={r.is_ignored} />
                 {r.event ? <span className="eh-evchip">settles <b>{clean(r.event.title)}</b></span> : null}
               </span>
               <span className="eh-caught" role="cell"><b>{r.caught}</b><small>{r.last_caught ? `last ${fmt(r.last_caught)}` : 'none in 6 months'}</small>

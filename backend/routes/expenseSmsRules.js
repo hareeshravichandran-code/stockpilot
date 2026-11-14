@@ -38,15 +38,19 @@ router.get('/sms-rules', authMiddleware, async (req, res) => {
 // POST /api/expense/sms-rules — upsert a rule
 router.post('/sms-rules', authMiddleware, async (req, res) => {
   try {
-    const { id, merchant_pattern, category_id, match_count, user_confirmed } = req.body;
-    if (!category_id || !merchant_pattern) return res.status(400).json({ error: 'merchant_pattern and category_id are required' });
+    const { id, merchant_pattern, match_count, user_confirmed } = req.body;
+    // "Ignore this SMS" rules from the phone carry no category
+    const is_ignored = req.body.is_ignored === true;
+    const category_id = is_ignored ? (req.body.category_id || null) : req.body.category_id;
+    if (!merchant_pattern) return res.status(400).json({ error: 'merchant_pattern is required' });
+    if (!category_id && !is_ignored) return res.status(400).json({ error: 'category_id is required (or is_ignored)' });
     // Same rule id with edited words: update that rule (an upsert on the words would clash on the id)
     if (id) {
       const { data: had } = await supabase.from('user_sms_rules').select('id, user_id').eq('id', id).maybeSingle();
       if (had && had.user_id !== req.userId) return res.status(409).json({ error: 'rule id in use' });
       if (had) {
         const { data, error } = await supabase.from('user_sms_rules').update({
-          merchant_pattern, category_id, match_count: match_count || 1, user_confirmed: user_confirmed || false, is_deleted: false,
+          merchant_pattern, category_id, is_ignored, match_count: match_count || 1, user_confirmed: user_confirmed || false, is_deleted: false,
           ...(Array.isArray(req.body.pattern_tok) ? { pattern_tok: req.body.pattern_tok.slice(0, 20) } : {}), updated_at: Date.now(),
         }).eq('id', id).eq('user_id', req.userId).select().single();
         if (error && !/duplicate key/.test(error.message || '')) throw error;
@@ -61,6 +65,8 @@ router.post('/sms-rules', authMiddleware, async (req, res) => {
         user_id:          req.userId,
         merchant_pattern: merchant_pattern,
         category_id:      category_id,
+        is_ignored:       is_ignored,
+        is_deleted:       false,
         match_count:      match_count || 1,
         user_confirmed:   user_confirmed || false,
         ...(Array.isArray(req.body.pattern_tok) ? { pattern_tok: req.body.pattern_tok.slice(0, 20) } : {}),
@@ -82,7 +88,7 @@ router.put('/sms-rules/:id', authMiddleware, async (req, res) => {
     const b = req.body || {};
     const patch = { updated_at: Date.now(), user_confirmed: true };
     if (typeof b.merchant_pattern === 'string' && b.merchant_pattern.trim()) patch.merchant_pattern = b.merchant_pattern.trim().slice(0, 8000);
-    if (typeof b.category_id === 'string' && b.category_id) patch.category_id = b.category_id.slice(0, 80);
+    if (typeof b.category_id === 'string' && b.category_id) { patch.category_id = b.category_id.slice(0, 80); patch.is_ignored = false; }
     if (Array.isArray(b.pattern_tok)) patch.pattern_tok = b.pattern_tok.filter(x => typeof x === 'string').slice(0, 20);
     const { data, error } = await supabase.from('user_sms_rules').update(patch).eq('id', req.params.id).eq('user_id', req.userId).select().maybeSingle();
     if (error) throw error;

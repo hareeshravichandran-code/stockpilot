@@ -386,7 +386,7 @@ function RulesTab() {
               <div style={{...S.row, gap:8}}>
                 <code style={{background:'var(--border)',padding:'2px 8px',borderRadius:4,fontSize:13,color:'var(--peach)'}}>{rule.merchant_pattern}</code>
                 <span style={{color:'var(--text-3)'}}>→</span>
-                <span style={S.badge('var(--lime)')}>{catName(rule.category_id)}</span>
+                <span style={S.badge('var(--lime)')}>{rule.is_ignored ? 'Ignore' : catName(rule.category_id)}</span>
               </div>
               {rule.match_count > 0 && <div style={{fontSize:11,color:'var(--text-3)',marginTop:4}}>Matched {rule.match_count} transactions</div>}
             </div>
