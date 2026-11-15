@@ -1,3 +1,4 @@
+import { useNavigate } from 'react-router-dom';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { mastersAPI } from '../lib/api';
 import { Modal, Field, Empty, errMsg, fmtDate } from './shared';
@@ -215,6 +216,7 @@ function MasterForm({ master, kind0, folios = [], onClose, onSaved, notify }) {
 }
 
 function MasterDetail({ id, folios = [], onClose, onEdit, notify, onChanged }) {
+  const nav = useNavigate();
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
   const load = useCallback(async () => {
@@ -241,7 +243,12 @@ function MasterDetail({ id, folios = [], onClose, onEdit, notify, onChanged }) {
           {d.next_due && <div className="fm-d-next"><small>Next expected</small><b>{fmtDate(d.next_due)}</b></div>}
         </div>
         {m.kind === 'sip' && <div className="fm-none">{m.linked_id ? <>Buys into <b>{folios.find(f => f.id === String(m.linked_id))?.fund_name || 'a linked folio'}</b>. Its monthly amount shows on the Blueprint goal that holds this folio.</> : 'Not tied to a folio yet. Edit to pick one.'}</div>}
-        <div className="fm-sec">Event · last 12 months</div>
+        {d.event ? (
+          <button type="button" className="fm-evlink" onClick={() => { onClose(); nav(`/dashboard?tab=m-events&event=${d.event.id}`); }}>
+            <span><small>Tracked as an event</small><b>Due dates, payments and the SMS rules that mark it paid</b></span><em>Open event</em>
+          </button>
+        ) : <div className="fm-none">Not tracked as an event, so no reminders. Edit it and set when it's due.</div>}
+        <div className="fm-sec">Last 12 months</div>
         <div className="fm-months">{months.map(x => {
           const key = `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}`;
           return <span key={key} className={paid.has(key) ? 'paid' : ''} title={paid.has(key) ? 'Seen' : 'Not seen'}>{MONTHS[x.getMonth()][0]}</span>;

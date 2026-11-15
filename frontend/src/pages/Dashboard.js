@@ -49,7 +49,7 @@ const NAV_SECTIONS = [
     { id: 'm-loan', icon: '⊟', label: 'Loans' },
     { id: 'm-insurance', icon: '☂', label: 'Insurance' },
     { id: 'm-subscription', icon: '↻', label: 'Subscriptions' },
-    { id: 'm-events', icon: '◷', label: "What's due", hint: 'EMIs, bills, subscriptions and their SMS rules' },
+    { id: 'm-events', icon: '◷', label: 'Events', hint: 'EMIs, card bills, subscriptions, SIPs: due dates and SMS rules' },
     { id: 'm-people', icon: '☺', label: 'People' },
     { id: 'm-documents', icon: '▤', label: 'Documents' },
     { id: 'm-all', icon: '≡', label: 'All masters', hint: 'Salary, SIPs, rent and every other master' },

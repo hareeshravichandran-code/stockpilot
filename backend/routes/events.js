@@ -58,6 +58,33 @@ function currentOf(e, payOf, today) {
   return { cycle_done: !!(lastDue && !owed.length && (lastDue.state === 'done' || lastDue.state === 'skipped')), now: owed[0] || null, next: next || null, last_done: last ? { period: last.period, paid_on: last.pay?.paid_on || null, amount: num(last.pay?.amount), timing: last.timing } : null };
 }
 
+/**
+ * What each event belongs to, so the web can link both ways: a subscription / card / SIP master,
+ * a loan (Blueprint EMI), an insurance policy or an RD. Manual events have no link.
+ */
+async function linksFor(uid, evs) {
+  const want = (t) => [...new Set((evs || []).filter(e => e.master_table === t).map(e => String(e.master_id)))];
+  const mm = want('money_masters').filter(isUuid), bk = want('bp_buckets'), pol = want('insurance_policies'), rd = want('recurring_deposits');
+  const none = Promise.resolve({ data: [] });
+  const [a, b, c, d] = await Promise.all([
+    mm.length ? supabase.from('money_masters').select('id, kind, title, institution, ref_key').in('id', mm) : none,
+    bk.length ? supabase.from('bp_buckets').select('id, name').eq('user_id', uid).in('id', bk) : none,
+    pol.length ? supabase.from('insurance_policies').select('id, plan_name, insurer').in('id', pol) : none,
+    rd.length ? supabase.from('recurring_deposits').select('rd_id, nickname, institution_name').in('rd_id', rd) : none,
+  ]);
+  const by = (rows, k = 'id') => Object.fromEntries((rows || []).map(r => [String(r[k]), r]));
+  const M = by(a.data), B = by(b.data), P = by(c.data), R = by(d.data, 'rd_id');
+  const out = {};
+  for (const e of evs || []) {
+    const id = String(e.master_id);
+    if (e.master_table === 'money_masters' && M[id]) { const m = M[id]; out[e.id] = { kind: m.kind, id, title: m.title, institution: m.institution || null, ref: m.ref_key ? String(m.ref_key).replace(/\D/g, '').slice(-4) || null : null, tab: 'm-' + m.kind }; }
+    else if (e.master_table === 'bp_buckets') out[e.id] = { kind: 'loan', id, title: B[id]?.name || null, to: '/blueprint' };
+    else if (e.master_table === 'insurance_policies') out[e.id] = { kind: 'insurance', id, title: P[id]?.plan_name || P[id]?.insurer || null, tab: 'm-insurance' };
+    else if (e.master_table === 'recurring_deposits') out[e.id] = { kind: 'rd', id, title: R[id]?.nickname || R[id]?.institution_name || null, tab: 'rd' };
+  }
+  return out;
+}
+
 // ── List ─────────────────────────────────────────────────────────────────────
 router.get('/', requireAuth, async (req, res) => {
   try {
@@ -76,6 +103,7 @@ router.get('/', requireAuth, async (req, res) => {
     const ruleCount = {}; for (const r of rules || []) ruleCount[r.event_id] = (ruleCount[r.event_id] || 0) + 1;
     const mById = Object.fromEntries((ms || []).map(m => [m.id, m]));
     const today = EM.todayStr();
+    const links = await linksFor(uid, evs).catch(() => ({}));
     const out = (evs || []).map(e => {
       const cur = e.status === 'active' ? currentOf(e, payOf, today) : { now: null, next: null, last_done: null };
       const m = e.master_table === 'money_masters' ? mById[e.master_id] : null;
@@ -85,7 +113,7 @@ router.get('/', requireAuth, async (req, res) => {
         ...schedule(e), buffer_days: EM.bufferOf(e), remind_days: e.remind_days, alert_level: e.alert_level, level: levelOf(e.kind, e.alert_level),
         pay_mode: e.pay_mode || 'auto', category_id: e.category_id || null, status: e.status, notes: e.notes || null,
         source: e.master_table === 'manual' ? 'manual' : e.master_table, master: m ? { id: m.id, kind: m.kind, title: m.title, institution: m.institution } : null,
-        rules: ruleCount[e.id] || 0,
+        rules: ruleCount[e.id] || 0, link: links[e.id] || null,
         state: cur.now ? cur.now.state : (focus ? focus.state : null), focus_date: focus ? focus.period : null, alert: !!(cur.now && cur.now.alert),
         next_due: cur.next ? cur.next.period : null, last_done: cur.last_done, cycle_done: !!cur.cycle_done,
       };
@@ -360,7 +388,7 @@ router.get('/:id', requireAuth, async (req, res) => {
       event: { id: e.id, title: e.title, kind: e.kind, direction: e.direction, amount: amt, amount_mode: e.amount_mode || 'about', ...schedule(e),
         buffer_days: EM.bufferOf(e), remind_days: e.remind_days, alert_level: e.alert_level, level: levelOf(e.kind, e.alert_level), pay_mode: e.pay_mode || 'auto',
         category_id: e.category_id || null, status: e.status, notes: e.notes || null, source: e.master_table === 'manual' ? 'manual' : e.master_table,
-        master: master || null, created_at: e.created_at },
+        master: master || null, link: (await linksFor(uid, [e]).catch(() => ({})))[e.id] || null, created_at: e.created_at },
       rules: (rules || []).map(r => ({ id: r.id, category_id: r.category_id, merchant_pattern: r.merchant_pattern || null, label: r.label || null,
         has_words: !!r.merchant_pattern || (Array.isArray(r.pattern_tok) && r.pattern_tok.length > 0), sender_key: r.sender_key || null,
         amount_min: r.amount_min == null ? null : num(r.amount_min), amount_max: r.amount_max == null ? null : num(r.amount_max), source: r.source || 'manual',

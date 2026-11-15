@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { eventsAPI, expenseAPI } from '../lib/api';
 import { Modal, Field, Seg, errMsg } from './shared';
 import { kindOf, KindIcon } from '../money/kinds';
@@ -93,6 +94,50 @@ function ruleWhen(r) {
 }
 
 function Pill({ tone, children }) { return <span className={`eh-pill ${tone}`}>{children}</span>; }
+
+// What an event belongs to (from the server's link): the master you can open from here
+const LINK_NAME = { subscription: 'Subscription', card: 'Credit card', loan: 'Loan', sip: 'SIP', rd: 'Recurring deposit', insurance: 'Insurance policy',
+  income: 'Income', bank_account: 'Bank account', expense: 'Regular expense' };
+const linkName = (l) => LINK_NAME[l?.kind] || 'Master';
+const linkTitle = (l) => [clean(l?.title) || '', l?.ref ? `••${l.ref}` : ''].filter(Boolean).join(' ');
+// Groups for the list, by what kind of thing the event is
+const GROUPS = [['all', 'Everything'], ['loan', 'Loans & EMIs'], ['card', 'Credit cards'], ['subscription', 'Subscriptions'], ['invest', 'SIPs & RDs'],
+  ['insurance', 'Insurance'], ['income', 'Money in'], ['bill', 'Bills & other']];
+const groupOf = (e) => ({ emi: 'loan', card_due: 'card', subscription: 'subscription', sip: 'invest', rd_instalment: 'invest', premium: 'insurance',
+  salary: 'income', income: 'income', dividend: 'income' }[e.kind] || 'bill');
+
+/** The chain an event sits in: the master it came from -> the event -> its SMS rules -> the last payment. Each link opens its part. */
+function LinkChain({ e, rules, lastPaid, onOpenMaster, onRules, onEdit }) {
+  const l = e.link;
+  const lk = kindOf(l?.kind === 'loan' ? 'emi' : l?.kind || e.kind);
+  return (
+    <ol className="eh-chain" aria-label="How this event is connected">
+      <li className={l ? '' : 'none'}>
+        {l ? (
+          <button type="button" onClick={onOpenMaster} title={`Open this ${linkName(l).toLowerCase()}`}>
+            <span className="eh-chain-ic" style={{ '--k': lk.c }}><KindIcon kind={l.kind === 'loan' ? 'emi' : l.kind} size={15} /></span>
+            <span><small>{linkName(l)}</small><b>{linkTitle(l) || clean(e.title)}</b><em>Open</em></span>
+          </button>
+        ) : (
+          <button type="button" onClick={onEdit}><span><small>Added by you</small><b>Not tied to a master</b><em>Edit event</em></span></button>
+        )}
+      </li>
+      <li>
+        <button type="button" onClick={onEdit}>
+          <span><small>Event</small><b>{scheduleText(e)}</b><em>{amountText(e)}</em></span>
+        </button>
+      </li>
+      <li className={rules ? '' : 'warn'}>
+        <button type="button" onClick={onRules}>
+          <span><small>SMS rules</small><b>{rules ? `${rules} rule${rules > 1 ? 's' : ''}` : 'None yet'}</b><em>{rules ? 'Edit' : 'Add one'}</em></span>
+        </button>
+      </li>
+      <li className={lastPaid ? 'ok' : ''}>
+        <span className="eh-chain-end"><small>Last paid</small><b>{lastPaid ? fmt(lastPaid) : 'Not seen yet'}</b></span>
+      </li>
+    </ol>
+  );
+}
 // Categories the phone has that the web list may not
 const CAT_NAMES = { cc_bill: 'Credit card bill', p_insurance: 'Insurance', p_transfer: 'Transfer', p_emi: 'EMI', p_education: 'Education', subscriptions: 'Subscriptions' };
 export const RULE_SOURCE = { event_map: 'made from a payment you picked', from_master: "made from the master's keywords", from_payments: 'made from earlier payments',
@@ -383,6 +428,8 @@ function Occurrence({ o, ev, onAct, busy, i }) {
 }
 
 function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify }) {
+  const nav = useNavigate();
+  const rulesRef = useRef(null);
   const [d, setD] = useState(null);
   const [busy, setBusy] = useState(false);
   const [ruleEdit, setRuleEdit] = useState(null);
@@ -443,6 +490,12 @@ function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify }) {
         </div>
       </header>
 
+      <LinkChain e={e} rules={d.rules.length}
+        lastPaid={(d.occurrences.find(o => o.state === 'done') || {}).period}
+        onOpenMaster={() => { const l = e.link; if (!l) return; if (l.to) nav(l.to); else nav(`/dashboard?tab=${l.tab}`); }}
+        onRules={() => { if (!d.rules.length) setRuleEdit({ preset: { event_id: e.id, category_id: e.category_id } }); else rulesRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
+        onEdit={() => onEdit(e)} />
+
       {!e.category_id && (
         <div className="eh-callout warn"><b>Pick a category for this event.</b> Its payments and SMS rules are filed there. <button type="button" className="eh-link" onClick={() => onEdit(e)}>Pick one</button></div>
       )}
@@ -465,28 +518,9 @@ function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify }) {
           </details>
         )}
       </section>
-      <section className="eh-sec">
-        <h3>Details</h3>
-        <dl className="eh-dl">
-          <div><dt>Type</dt><dd>{TYPE_NAME[e.kind] || k.label}</dd></div>
-          <div><dt>Category</dt><dd><CatChip id={e.category_id} cats={cats} /></dd></div>
-          <div><dt>Schedule</dt><dd>{scheduleText(e)}</dd></div>
-          <div><dt>Amount</dt><dd>{amountText(e)}</dd></div>
-          {e.status !== 'active' && <div><dt>Status</dt><dd>{e.status === 'paused' ? 'Paused' : 'Not tracked (stopped)'}</dd></div>}
-        </dl>
-      </section>
-
-      <details className="eh-sec eh-adv">
-        <summary>Advanced: matching and SMS rules <span className="eh-dim">{d.rules.length} rule{d.rules.length === 1 ? '' : 's'}</span></summary>
-        <dl className="eh-dl">
-          <div><dt>Buffer</dt><dd>± {e.buffer_days} day{e.buffer_days === 1 ? '' : 's'}</dd></div>
-          <div><dt>Paid by</dt><dd>{e.pay_mode === 'manual' ? 'You, by hand' : 'Auto-debit'}</dd></div>
-          <div><dt>Alerts</dt><dd>{LEVELS.find(l => l[0] === e.level)?.[1]}{e.remind_days != null ? ` · from ${e.remind_days} days before` : ''}</dd></div>
-          <div><dt>Created from</dt><dd>{e.master ? `${e.master.title || e.master.institution || 'Master'} (master)` : 'Added by you'}<small className="eh-dl-note">SMS reach it only through its rules</small></dd></div>
-        </dl>
-      <section className="eh-sec eh-sec-in">
+      <section className="eh-sec eh-rules-sec" ref={rulesRef}>
         <div className="eh-sec-head">
-          <h3>SMS rules <span className="eh-count">{d.rules.length}</span></h3>
+          <h3>SMS that settle it <span className="eh-count">{d.rules.length}</span></h3>
           <button type="button" className="fo-btn sm ghost" onClick={() => setRuleEdit({ preset: { event_id: e.id, category_id: e.category_id } })}>+ Add rule</button>
         </div>
         {!d.rules.length ? (
@@ -506,6 +540,25 @@ function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify }) {
           </ul>
         )}
       </section>
+      <section className="eh-sec">
+        <h3>Details</h3>
+        <dl className="eh-dl">
+          <div><dt>Type</dt><dd>{TYPE_NAME[e.kind] || k.label}</dd></div>
+          <div><dt>Category</dt><dd><CatChip id={e.category_id} cats={cats} /></dd></div>
+          <div><dt>Schedule</dt><dd>{scheduleText(e)}</dd></div>
+          <div><dt>Amount</dt><dd>{amountText(e)}</dd></div>
+          {e.status !== 'active' && <div><dt>Status</dt><dd>{e.status === 'paused' ? 'Paused' : 'Not tracked (stopped)'}</dd></div>}
+        </dl>
+      </section>
+
+      <details className="eh-sec eh-adv">
+        <summary>Advanced: matching window and alerts</summary>
+        <dl className="eh-dl">
+          <div><dt>Buffer</dt><dd>± {e.buffer_days} day{e.buffer_days === 1 ? '' : 's'}</dd></div>
+          <div><dt>Paid by</dt><dd>{e.pay_mode === 'manual' ? 'You, by hand' : 'Auto-debit'}</dd></div>
+          <div><dt>Alerts</dt><dd>{LEVELS.find(l => l[0] === e.level)?.[1]}{e.remind_days != null ? ` · from ${e.remind_days} days before` : ''}</dd></div>
+          <div><dt>Created from</dt><dd>{e.master ? `${e.master.title || e.master.institution || 'Master'} (master)` : 'Added by you'}<small className="eh-dl-note">SMS reach it only through its rules</small></dd></div>
+        </dl>
 
       </details>
       {ruleEdit && (
@@ -520,6 +573,8 @@ function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify }) {
 const FILTERS = [['all', 'All'], ['action', 'Needs action'], ['done', 'Done'], ['upcoming', 'Upcoming'], ['nocat', 'No category'], ['inactive', 'Paused / stopped']];
 function EventsTab({ events, cats, reload, notify, selected, setSelected }) {
   const [filter, setFilter] = useState('all');
+  const [group, setGroup] = useState('all');
+  const groupCount = useMemo(() => events.filter(e => e.status !== 'closed').reduce((m, e) => { const g = groupOf(e); m[g] = (m[g] || 0) + 1; m.all = (m.all || 0) + 1; return m; }, {}), [events]);
   const [q, setQ] = useState('');
   const [form, setForm] = useState(null);           // {} new | event
   const counts = useMemo(() => ({
@@ -531,6 +586,7 @@ function EventsTab({ events, cats, reload, notify, selected, setSelected }) {
     inactive: events.filter(e => e.status !== 'active').length,
   }), [events]);
   const list = useMemo(() => events.filter(e => {
+    if (group !== 'all' && groupOf(e) !== group) return false;
     if (q && !clean(e.title).toLowerCase().includes(q.toLowerCase()) && !(TYPE_NAME[e.kind] || '').toLowerCase().includes(q.toLowerCase())) return false;
     const tone = stateLine(e)[1];
     switch (filter) {
@@ -541,13 +597,21 @@ function EventsTab({ events, cats, reload, notify, selected, setSelected }) {
       case 'inactive': return e.status !== 'active';
       default: return e.status === 'active';
     }
-  }), [events, filter, q]);
+  }), [events, filter, q, group]);
   return (
     <div className={`eh-split ${selected ? 'has-detail' : ''}`}>
       <div className="eh-listpane">
         <div className="eh-tools">
           <input className="eh-search" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search events" aria-label="Search events" />
           <button type="button" className="fo-btn" onClick={() => setForm({})}>+ New event</button>
+        </div>
+        <div className="eh-groups" role="tablist" aria-label="Kind of event">
+          {GROUPS.filter(([k]) => k === 'all' || groupCount[k]).map(([k, l]) => (
+            <button key={k} type="button" role="tab" aria-selected={group === k} className={group === k ? 'on' : ''} onClick={() => setGroup(k)}>
+              {k !== 'all' && <KindIcon kind={{ loan: 'emi', card: 'card', subscription: 'subscription', invest: 'sip', insurance: 'premium', income: 'salary', bill: 'bill' }[k]} size={14} />}
+              {l}<span>{groupCount[k] || 0}</span>
+            </button>
+          ))}
         </div>
         <div className="eh-filters" role="tablist" aria-label="Filter events">
           {FILTERS.map(([k, l]) => (
@@ -572,8 +636,8 @@ function EventsTab({ events, cats, reload, notify, selected, setSelected }) {
                     <span className="eh-ico" style={{ '--k': k.c }}><KindIcon kind={e.kind} size={18} /></span>
                     <span className="eh-row-main">
                       <b>{clean(e.title)}</b>
-                      <small>{TYPE_NAME[e.kind] || k.label} · {scheduleText(e)}</small>
-                      <span className="eh-row-tags"><CatChip id={e.category_id} cats={cats} />{e.rules ? <span className="eh-tag">{e.rules} rule{e.rules > 1 ? 's' : ''}</span> : null}</span>
+                      <small>{e.link ? <span className="eh-linkchip">{linkName(e.link)}{linkTitle(e.link) && linkTitle(e.link) !== clean(e.title) ? `: ${linkTitle(e.link)}` : ''}</span> : <span className="eh-linkchip own">Your own</span>} {scheduleText(e)}</small>
+                      <span className="eh-row-tags"><CatChip id={e.category_id} cats={cats} />{e.rules ? <span className="eh-tag">{e.rules} SMS rule{e.rules > 1 ? 's' : ''}</span> : <span className="eh-tag warn">No SMS rule</span>}</span>
                     </span>
                     <span className="eh-row-side">
                       <span className="eh-amt">{Number(e.amount) ? inr(e.amount) : ''}</span>
@@ -795,10 +859,10 @@ function GroupsTab({ cats, notify, onChanged }) {
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 export default function EventsHub({ notify }) {
-  const [tab, setTab] = useState(() => { try { return sessionStorage.getItem('eh-tab') || 'events'; } catch { return 'events'; } });
+  const [tab, setTab] = useState(() => { try { if (new URLSearchParams(window.location.search).get('event')) return 'events'; return sessionStorage.getItem('eh-tab') || 'events'; } catch { return 'events'; } });
   const [events, setEvents] = useState(null);
   const [cats, setCats] = useState([]);
-  const [selected, setSelected] = useState(null);
+  const [selected, setSelected] = useState(() => { try { return new URLSearchParams(window.location.search).get('event'); } catch { return null; } });
   const [ruleCount, setRuleCount] = useState(null);
   const load = useCallback(async () => {
     try { const r = await eventsAPI.list(); setEvents(r.data.events || []); } catch (e) { notify(errMsg(e)); setEvents([]); }
@@ -815,8 +879,8 @@ export default function EventsHub({ notify }) {
     <div className="eh">
       <header className="eh-head">
         <div>
-          <h1>What's due</h1>
-          <p>EMIs, bills, subscriptions, SIPs and premiums for the family. Each one is marked paid when its bank SMS arrives.</p>
+          <h1>Events</h1>
+          <p>Every EMI, card bill, subscription, SIP and premium, with the master it belongs to and the SMS rules that mark it paid.</p>
         </div>
         {events && (
           <div className="eh-stats" aria-label="Summary">
