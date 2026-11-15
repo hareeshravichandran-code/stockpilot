@@ -275,3 +275,51 @@
   .eh-chain li { padding: 0; }
 }
 @media (prefers-reduced-motion: reduce) { .eh-chain button, .eh-groups button { transition: none; } }
+
+/* Events list: a table, filters on top; double-click opens the event */
+.eh-tfilters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0 4px; }
+.eh-tfilters .eh-search { flex: 1 1 220px; }
+.eh-tfilters select { padding: 8px 12px; border: 1px solid var(--fo-line-2); border-radius: 999px; background: var(--fo-paper); font: inherit; font-size: 14px; color: var(--fo-ink); }
+.eh-tfilters .eh-filters { margin: 0; flex-basis: 100%; order: 3; }
+.eh-new { margin-left: auto; }
+.eh-thint { font-size: 12.5px; color: var(--fo-ink-3); margin: 8px 2px; }
+.eh-tscroll { overflow-x: auto; background: var(--fo-paper); border: 1px solid var(--fo-line); border-radius: 16px; }
+.eh-evtable { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+.eh-evtable th { text-align: left; padding: 0; border-bottom: 1px solid var(--fo-line); background: #F6F1E6; position: sticky; top: 0; }
+.eh-evtable th button { width: 100%; text-align: inherit; background: none; border: 0; padding: 10px 12px; font: 600 12.5px Outfit, sans-serif; color: var(--fo-ink-2); cursor: pointer; white-space: nowrap; }
+.eh-evtable th:not(:has(button)) { padding: 10px 12px; font: 600 12.5px Outfit, sans-serif; color: var(--fo-ink-2); }
+.eh-evtable th.num, .eh-evtable td.num { text-align: right; }
+.eh-evtable td { padding: 10px 12px; border-bottom: 1px solid var(--fo-line); white-space: nowrap; vertical-align: middle; }
+.eh-evtable tbody tr { cursor: default; user-select: none; transition: background .12s; }
+.eh-evtable tbody tr:hover { background: #F4EEE2; }
+.eh-evtable tbody tr.on { background: #EFE3D4; box-shadow: inset 3px 0 0 #D9541E; }
+.eh-evtable tbody tr:focus-visible { outline: 2px solid #D9541E; outline-offset: -2px; }
+.eh-evtable td.t { display: flex; align-items: center; gap: 10px; }
+.eh-evtable td.t b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+.eh-ico.sm { width: 28px; height: 28px; border-radius: 8px; }
+.eh-type { display: inline-block; font-size: 12.5px; font-weight: 600; padding: 2px 9px; border-radius: 999px; background: #EFE9DC; color: #5A4334; }
+.eh-type.t-loan { background: #F1E1D6; color: #8A3A14; } .eh-type.t-card { background: #E4ECF2; color: #1F5D7E; }
+.eh-type.t-subscription { background: #EDE5F2; color: #5D3B78; } .eh-type.t-invest { background: #E1EDE3; color: #2F6B45; }
+.eh-type.t-insurance { background: #F2EAD6; color: #7A5A12; }
+.eh-page { display: flex; flex-direction: column; gap: 12px; }
+.eh-detail.full { max-width: 980px; }
+
+/* Event page: the linked master's facts, by type */
+.eh-facts { background: linear-gradient(140deg, #3E2B21, #2E211A); color: #FAF7F0; border-radius: 18px; padding: 16px 18px; margin: 4px 0 14px; }
+.eh-facts h3 { margin: 0 0 10px; font: 600 13px Outfit, sans-serif; color: rgba(250,247,240,.7); display: flex; gap: 8px; align-items: baseline; }
+.eh-facts h3 span { font: 400 20px 'DM Serif Display', serif; color: #FAF7F0; }
+.eh-facts dl { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px 18px; }
+.eh-facts dt { font-size: 12px; color: rgba(250,247,240,.65); }
+.eh-facts dd { margin: 2px 0 0; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* A rule's latest SMS */
+.eh-sms { margin: 8px 0 2px; grid-column: 1 / -1; }
+.eh-sms figcaption { font-size: 12px; color: var(--fo-ink-3); margin-bottom: 4px; }
+.eh-sms blockquote { margin: 0; padding: 10px 12px; background: #fff; border: 1px solid var(--fo-line); border-left: 3px solid #D9541E; border-radius: 4px 12px 12px 4px;
+  font-size: 13.5px; line-height: 1.5; color: var(--fo-ink); white-space: pre-wrap; word-break: break-word; }
+.eh-sms-none { grid-column: 1 / -1; margin: 6px 0 0; font-size: 12.5px; }
+@media (max-width: 760px) { .eh-new { margin-left: 0; } .eh-evtable td.t b { max-width: 150px; } }
+.eh-tscroll .eh-evtable { width: 100%; min-width: 860px; table-layout: auto; }
+.eh .eh-facts h3 { color: rgba(250,247,240,.7); font: 600 13px Outfit, sans-serif; text-transform: none; letter-spacing: 0; display: flex; flex-direction: column; gap: 2px; }
+.eh .eh-facts h3 span { font: 400 22px 'DM Serif Display', serif; color: #FAF7F0; }
+.eh-backall { align-self: flex-start; border: 0; background: none; font: 600 14px Outfit, sans-serif; color: #B8441A; cursor: pointer; padding: 4px 0; }

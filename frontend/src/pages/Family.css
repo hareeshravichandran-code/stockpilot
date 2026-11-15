@@ -1,8 +1,8 @@
 /* Kanalyst — Family (warm cream base, one solid colour per module) */
 .fo {
-  --fo-cream: #F3EEE3; --fo-paper: #FAF7F0; --fo-well: #EFE9DC; --fo-line: rgba(17,17,17,.09); --fo-line-2: rgba(17,17,17,.16);
-  --fo-ink: #111111; --fo-ink-2: #4A4741; --fo-ink-3: #85817A;
-  --fo-moss: #2F6B45; --fo-aubergine: #111111; --fo-prussian: #3A3833; --fo-terracotta: #8C8270; --fo-pop: #D9541E;
+  --fo-cream: #F3EEE3; --fo-paper: #FAF7F0; --fo-well: #EFE9DC; --fo-line: rgba(43,33,28,.10); --fo-line-2: rgba(43,33,28,.18);
+  --fo-ink: #2B211C; --fo-ink-2: #4A4741; --fo-ink-3: #85817A;
+  --fo-moss: #2F6B45; --fo-aubergine: #3E2B21; --fo-prussian: #3A3833; --fo-terracotta: #8C8270; --fo-pop: #D9541E;
   --fo-mulberry: #6F6A61; --fo-marigold: #D9541E; --fo-teal: #5A564F; --fo-coral: #9E2B25;
   --fo-ease: cubic-bezier(.32,.72,0,1);
   min-height: 100vh; background: var(--fo-cream); color: var(--fo-ink); font-family: 'Outfit', sans-serif; font-size: 15px; line-height: 1.5;

@@ -115,7 +115,7 @@ function LinkChain({ e, rules, lastPaid, onOpenMaster, onRules, onEdit }) {
       <li className={l ? '' : 'none'}>
         {l ? (
           <button type="button" onClick={onOpenMaster} title={`Open this ${linkName(l).toLowerCase()}`}>
-            <span className="eh-chain-ic" style={{ '--k': lk.c }}><KindIcon kind={l.kind === 'loan' ? 'emi' : l.kind} size={15} /></span>
+            <span className="eh-chain-ic" style={{ '--k': lk.c }}><KindIcon kind={l.kind === 'loan' ? 'emi' : l.kind} size={15} color="#FAF7F0" /></span>
             <span><small>{linkName(l)}</small><b>{linkTitle(l) || clean(e.title)}</b><em>Open</em></span>
           </button>
         ) : (
@@ -427,7 +427,28 @@ function Occurrence({ o, ev, onAct, busy, i }) {
   );
 }
 
-function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify }) {
+/** The linked master's own facts, chosen by its type (loan, card, subscription, insurance, SIP...). */
+function FactsCard({ e }) {
+  const d = e.details; if (!d) return null;
+  const day = (n) => (n ? `${n}${[, 'st', 'nd', 'rd'][n % 10 > 3 || Math.floor(n / 10) === 1 ? 0 : n % 10] || 'th'} of the month` : null);
+  const F = {
+    loan: [['EMI', d.emi && inr(d.emi)], ['EMI date', day(d.due_day)], ['Ends', d.ends && fmtY(d.ends)], ['Notes', d.notes && clean(d.notes)]],
+    card: [['Bank', d.institution], ['Card', d.last4 && `••${d.last4}`], ['Bill due', day(d.due_day)], ['Limit', d.limit && inr(d.limit)], ['Outstanding', d.outstanding && inr(d.outstanding)]],
+    insurance: [['Insurer', d.insurer], ['Plan', d.title], ['Premium', d.premium && inr(d.premium)], ['Cover', d.sum_assured && inr(d.sum_assured)], ['Paid', d.frequency], ['Renews', d.renewal && fmtY(d.renewal)]],
+    subscription: [['Service', d.title], ['Price', d.amount && inr(d.amount)], ['Billed', FREQ_NAME[d.frequency] || d.frequency], ['Bill date', day(d.due_day)], ['Plan', d.plan], ['Since', d.since && fmtY(String(d.since).slice(0, 10))]],
+  }[d.type] || [['Name', d.title], ['Bank / provider', d.institution], ['Account', d.last4 && `••${d.last4}`], ['Amount', d.amount && inr(d.amount)], ['Schedule', FREQ_NAME[d.frequency] || d.frequency], ['Day', day(d.due_day)]];
+  const rows = F.filter(([, v]) => v);
+  if (!rows.length) return null;
+  const title = { loan: 'Loan', card: 'Credit card', insurance: 'Insurance policy', subscription: 'Subscription', sip: 'SIP', income: 'Income' }[d.type] || 'Linked master';
+  return (
+    <section className={`eh-facts f-${d.type}`}>
+      <h3>{title}{d.title && d.type !== 'insurance' ? <span>{clean(d.title)}</span> : null}</h3>
+      <dl>{rows.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl>
+    </section>
+  );
+}
+
+function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify, full }) {
   const nav = useNavigate();
   const rulesRef = useRef(null);
   const [d, setD] = useState(null);
@@ -470,7 +491,7 @@ function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify }) {
   const k = kindOf(e.kind);
   const now = d.occurrences.find(o => o.state === 'overdue' || o.state === 'due');
   return (
-    <div className="eh-detail">
+    <div className={`eh-detail${full ? " full" : ""}`}>
       <header className="eh-d-head">
         <button type="button" className="eh-back" onClick={onClose} aria-label="Back to events">‹</button>
         <span className="eh-ico" style={{ '--k': k.c }}><KindIcon kind={e.kind} size={20} /></span>
@@ -490,6 +511,7 @@ function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify }) {
         </div>
       </header>
 
+      <FactsCard e={e} />
       <LinkChain e={e} rules={d.rules.length}
         lastPaid={(d.occurrences.find(o => o.state === 'done') || {}).period}
         onOpenMaster={() => { const l = e.link; if (!l) return; if (l.to) nav(l.to); else nav(`/dashboard?tab=${l.tab}`); }}
@@ -531,6 +553,12 @@ function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify }) {
               <li key={r.id}>
                 <div className="eh-when">{ruleWhen(r).map(([a, b]) => <span key={a}><em>{a}</em>{b}</span>)}</div>
                 <div className="eh-then"><CatChip id={r.category_id} cats={cats} ignored={r.is_ignored} /><span className="eh-dim">{r.caught} SMS · {RULE_SOURCE[r.source] || 'rule'}</span></div>
+                {r.sample ? (
+                  <figure className="eh-sms">
+                    <figcaption>Latest SMS it caught · {fmtY(r.sample.date)}{r.sample.sender ? ` · from ${r.sample.sender}` : ''}{r.sample.amount ? ` · ${inr(r.sample.amount)}` : ''}</figcaption>
+                    <blockquote>{clean(r.sample.body) || clean(r.sample.payee) || 'No SMS text saved for this payment.'}</blockquote>
+                  </figure>
+                ) : <p className="eh-dim eh-sms-none">No SMS has matched this rule yet.</p>}
                 <div className="eh-r-acts">
                   <button type="button" className="eh-link" onClick={() => setRuleEdit({ rule: { ...r, event_id: e.id } })}>Edit</button>
                   <button type="button" className="eh-link danger" onClick={() => delRule(r)}>Remove</button>
@@ -571,97 +599,111 @@ function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify }) {
 
 // ── Events tab ───────────────────────────────────────────────────────────────
 const FILTERS = [['all', 'All'], ['action', 'Needs action'], ['done', 'Done'], ['upcoming', 'Upcoming'], ['nocat', 'No category'], ['inactive', 'Paused / stopped']];
+const FREQ_NAME = Object.fromEntries(FREQS);
+const typeOf = (e) => (e.link ? linkName(e.link) : e.source === 'manual' || !e.source ? 'Manual' : TYPE_NAME[e.kind] || 'Other');
+const dueText = (e) => e.next_due ? fmt(e.next_due) : e.focus_date ? fmt(e.focus_date) : '—';
+const COLS = [['title', 'Event'], ['type', 'Type'], ['freq', 'Frequency'], ['due', 'Next due'], ['last', 'Last paid'], ['amount', 'Amount'], ['state', 'Status']];
 function EventsTab({ events, cats, reload, notify, selected, setSelected }) {
   const [filter, setFilter] = useState('all');
   const [group, setGroup] = useState('all');
-  const groupCount = useMemo(() => events.filter(e => e.status !== 'closed').reduce((m, e) => { const g = groupOf(e); m[g] = (m[g] || 0) + 1; m.all = (m.all || 0) + 1; return m; }, {}), [events]);
+  const [freq, setFreq] = useState('');
   const [q, setQ] = useState('');
-  const [form, setForm] = useState(null);           // {} new | event
-  const counts = useMemo(() => ({
+  const [sort, setSort] = useState(['due', 1]);
+  const [focus, setFocus] = useState(null);           // the row picked with one click
+  const [form, setForm] = useState(null);             // {} new | event
+  const list = useMemo(() => {
+    const rows = events.filter(e => {
+      if (group !== 'all' && groupOf(e) !== group) return false;
+      if (freq && e.frequency !== freq) return false;
+      if (q) { const t = `${clean(e.title)} ${typeOf(e)} ${TYPE_NAME[e.kind] || ''} ${linkTitle(e.link)}`.toLowerCase(); if (!t.includes(q.toLowerCase())) return false; }
+      const tone = stateLine(e)[1];
+      switch (filter) {
+        case 'action': return e.status === 'active' && (e.state === 'due' || e.state === 'overdue');
+        case 'done': return e.status === 'active' && tone === 'ok';
+        case 'upcoming': return e.status === 'active' && tone === 'calm';
+        case 'norule': return e.status === 'active' && !e.rules;
+        case 'inactive': return e.status !== 'active';
+        default: return e.status === 'active';
+      }
+    });
+    const [k, dir] = sort;
+    const val = (e) => ({ title: clean(e.title).toLowerCase(), type: typeOf(e), freq: e.frequency || '', due: e.next_due || e.focus_date || '9999', last: e.last_done || '', amount: Number(e.amount) || 0,
+      state: { overdue: 0, due: 1, upcoming: 2, done: 3 }[e.state] ?? 4 }[k]);
+    return rows.sort((x, y) => (val(x) > val(y) ? 1 : val(x) < val(y) ? -1 : 0) * dir);
+  }, [events, filter, group, freq, q, sort]);
+  const counts = {
     all: events.filter(e => e.status === 'active').length,
     action: events.filter(e => e.status === 'active' && (e.state === 'due' || e.state === 'overdue')).length,
     done: events.filter(e => e.status === 'active' && stateLine(e)[1] === 'ok').length,
     upcoming: events.filter(e => e.status === 'active' && stateLine(e)[1] === 'calm').length,
-    nocat: events.filter(e => e.status !== 'closed' && !e.category_id).length,
+    norule: events.filter(e => e.status === 'active' && !e.rules).length,
     inactive: events.filter(e => e.status !== 'active').length,
-  }), [events]);
-  const list = useMemo(() => events.filter(e => {
-    if (group !== 'all' && groupOf(e) !== group) return false;
-    if (q && !clean(e.title).toLowerCase().includes(q.toLowerCase()) && !(TYPE_NAME[e.kind] || '').toLowerCase().includes(q.toLowerCase())) return false;
-    const tone = stateLine(e)[1];
-    switch (filter) {
-      case 'action': return e.status === 'active' && (e.state === 'due' || e.state === 'overdue');
-      case 'done': return e.status === 'active' && tone === 'ok';
-      case 'upcoming': return e.status === 'active' && tone === 'calm';
-      case 'nocat': return e.status !== 'closed' && !e.category_id;
-      case 'inactive': return e.status !== 'active';
-      default: return e.status === 'active';
-    }
-  }), [events, filter, q, group]);
+  };
+  const open = (id) => { setSelected(id); window.scrollTo?.({ top: 0, behavior: 'smooth' }); };
+  if (selected) {
+    return (
+      <div className="eh-page">
+        <button type="button" className="eh-backall" onClick={() => setSelected(null)}>‹ All events</button>
+        <EventDetail key={selected} id={selected} cats={cats} events={events} notify={notify} full
+          onEdit={(e) => setForm(e)} onChanged={reload} onClose={() => setSelected(null)} />
+        {form && <EventForm initial={form.id ? form : null} cats={cats} notify={notify} onClose={() => setForm(null)} onSaved={(id) => { setForm(null); reload(); if (id) setSelected(id); }} />}
+      </div>
+    );
+  }
+  const head = (k, l) => (
+    <th key={k} scope="col" aria-sort={sort[0] === k ? (sort[1] > 0 ? 'ascending' : 'descending') : 'none'} className={k === 'amount' ? 'num' : ''}>
+      <button type="button" onClick={() => setSort(([s, d]) => [k, s === k ? -d : 1])}>{l}{sort[0] === k && <span aria-hidden="true">{sort[1] > 0 ? ' ↑' : ' ↓'}</span>}</button>
+    </th>
+  );
   return (
-    <div className={`eh-split ${selected ? 'has-detail' : ''}`}>
-      <div className="eh-listpane">
-        <div className="eh-tools">
-          <input className="eh-search" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search events" aria-label="Search events" />
-          <button type="button" className="fo-btn" onClick={() => setForm({})}>+ New event</button>
-        </div>
-        <div className="eh-groups" role="tablist" aria-label="Kind of event">
-          {GROUPS.filter(([k]) => k === 'all' || groupCount[k]).map(([k, l]) => (
-            <button key={k} type="button" role="tab" aria-selected={group === k} className={group === k ? 'on' : ''} onClick={() => setGroup(k)}>
-              {k !== 'all' && <KindIcon kind={{ loan: 'emi', card: 'card', subscription: 'subscription', invest: 'sip', insurance: 'premium', income: 'salary', bill: 'bill' }[k]} size={14} />}
-              {l}<span>{groupCount[k] || 0}</span>
-            </button>
+    <div className="eh-tablewrap">
+      <div className="eh-tfilters">
+        <input className="eh-search" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search events" aria-label="Search events" />
+        <select value={group} onChange={(e) => setGroup(e.target.value)} aria-label="Type">
+          {GROUPS.map(([k, l]) => <option key={k} value={k}>{k === 'all' ? 'All types' : l}</option>)}
+        </select>
+        <select value={freq} onChange={(e) => setFreq(e.target.value)} aria-label="Frequency">
+          <option value="">Any frequency</option>{FREQS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        </select>
+        <div className="eh-filters" role="tablist" aria-label="Status">
+          {[['all', 'Active'], ['action', 'Needs action'], ['upcoming', 'Upcoming'], ['done', 'Paid'], ['norule', 'No SMS rule'], ['inactive', 'Paused / stopped']].map(([k, l]) => (
+            <button key={k} type="button" role="tab" aria-selected={filter === k} className={`${filter === k ? 'on' : ''} ${k === 'action' && counts.action ? 'hot' : ''}`} onClick={() => setFilter(k)}>{l}<span>{counts[k]}</span></button>
           ))}
         </div>
-        <div className="eh-filters" role="tablist" aria-label="Filter events">
-          {FILTERS.map(([k, l]) => (
-            <button key={k} type="button" role="tab" aria-selected={filter === k} className={`${filter === k ? 'on' : ''} ${k === 'action' && counts.action ? 'hot' : ''}`} onClick={() => setFilter(k)}>
-              {l}<span>{counts[k]}</span>
-            </button>
-          ))}
-        </div>
-        {!list.length ? (
-          <div className="eh-empty">
-            <b>{filter === 'action' ? 'Nothing needs you right now.' : events.length ? 'No events here.' : 'No events yet.'}</b>
-            <p>{events.length ? 'Try another filter.' : 'Add your EMIs, subscriptions, SIPs and taxes, or add them from “Found in SMS”.'}</p>
+        <button type="button" className="fo-btn eh-new" onClick={() => setForm({})}>+ New event</button>
+      </div>
+      {!list.length ? (
+        <div className="eh-empty"><b>{events.length ? 'No events match these filters.' : 'No events yet.'}</b><p>{events.length ? 'Clear a filter to see more.' : 'Add your EMIs, subscriptions, SIPs and bills with “New event”.'}</p></div>
+      ) : (
+        <>
+          <p className="eh-thint">{list.length} event{list.length === 1 ? '' : 's'}. Double-click a row (or press Enter) to see and edit it.</p>
+          <div className="eh-tscroll">
+            <table className="eh-evtable">
+              <thead><tr>{COLS.map(([k, l]) => head(k, l))}<th scope="col">SMS rules</th></tr></thead>
+              <tbody>
+                {list.map(e => {
+                  const k = kindOf(e.kind); const [line, tone] = stateLine(e);
+                  return (
+                    <tr key={e.id} tabIndex={0} className={focus === e.id ? 'on' : ''} aria-label={`${clean(e.title)}, ${line}`}
+                      onClick={() => { setFocus(e.id); if (window.matchMedia?.('(pointer: coarse)').matches) open(e.id); }}
+                      onDoubleClick={() => open(e.id)} onKeyDown={(ev) => { if (ev.key === 'Enter') open(e.id); }}>
+                      <td className="t"><span className="eh-ico sm" style={{ '--k': k.c }}><KindIcon kind={e.kind} size={15} /></span><b>{clean(e.title)}</b></td>
+                      <td><span className={`eh-type t-${groupOf(e)}`}>{typeOf(e)}</span>{e.link?.ref && <small className="eh-dim"> ••{e.link.ref}</small>}</td>
+                      <td>{FREQ_NAME[e.frequency] || '—'}{e.due_day && e.frequency === 'monthly' ? <small className="eh-dim"> · day {e.due_day}</small> : null}</td>
+                      <td>{dueText(e)}</td>
+                      <td>{e.last_done ? fmt(e.last_done) : <span className="eh-dim">Not seen</span>}</td>
+                      <td className="num">{Number(e.amount) ? inr(e.amount) : <span className="eh-dim">varies</span>}</td>
+                      <td><Pill tone={tone}>{line}</Pill></td>
+                      <td>{e.rules ? <span className="eh-tag">{e.rules}</span> : <span className="eh-tag warn">None</span>}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
-        ) : (
-          <ul className="eh-list">
-            {list.map((e, i) => {
-              const k = kindOf(e.kind);
-              const [line, tone] = stateLine(e);
-              return (
-                <li key={e.id} style={{ '--i': Math.min(i, 12) }}>
-                  <button type="button" className={`eh-row ${selected === e.id ? 'on' : ''}`} onClick={() => setSelected(e.id)}>
-                    <span className="eh-ico" style={{ '--k': k.c }}><KindIcon kind={e.kind} size={18} /></span>
-                    <span className="eh-row-main">
-                      <b>{clean(e.title)}</b>
-                      <small>{e.link ? <span className="eh-linkchip">{linkName(e.link)}{linkTitle(e.link) && linkTitle(e.link) !== clean(e.title) ? `: ${linkTitle(e.link)}` : ''}</span> : <span className="eh-linkchip own">Your own</span>} {scheduleText(e)}</small>
-                      <span className="eh-row-tags"><CatChip id={e.category_id} cats={cats} />{e.rules ? <span className="eh-tag">{e.rules} SMS rule{e.rules > 1 ? 's' : ''}</span> : <span className="eh-tag warn">No SMS rule</span>}</span>
-                    </span>
-                    <span className="eh-row-side">
-                      <span className="eh-amt">{Number(e.amount) ? inr(e.amount) : ''}</span>
-                      <Pill tone={tone}>{line}</Pill>
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </div>
-      <div className="eh-detailpane">
-        {selected ? (
-          <EventDetail key={selected} id={selected} cats={cats} events={events} notify={notify}
-            onEdit={(e) => setForm(e)} onChanged={reload} onClose={() => setSelected(null)} />
-        ) : (
-          <div className="eh-placeholder"><b>Pick an event</b><p>See its due dates, the payment that settled each one, and its SMS rules.</p></div>
-        )}
-      </div>
-      {form && (
-        <EventForm initial={form.id ? form : null} cats={cats} notify={notify} onClose={() => setForm(null)}
-          onSaved={(id) => { setForm(null); reload(); if (id) setSelected(id); }} />
+        </>
       )}
+      {form && <EventForm initial={form.id ? form : null} cats={cats} notify={notify} onClose={() => setForm(null)} onSaved={(id) => { setForm(null); reload(); if (id) open(id); }} />}
     </div>
   );
 }

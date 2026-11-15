@@ -276,7 +276,7 @@ export const eventsAPI = {
 };
 
 export const moneyflowAPI = {
-  get: (month) => api.get('/api/moneyflow', { params: { month }, timeout: 45000 }),
+  get: (month, opts = {}) => api.get('/api/moneyflow', { params: { month, ...opts }, timeout: 45000 }),
 };
 
 export const blueprintAPI = {
