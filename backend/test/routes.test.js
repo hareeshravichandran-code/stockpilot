@@ -153,6 +153,24 @@ describe('month totals (Overview "This month", Money flow)', () => {
   });
 });
 
+describe('Money flow sheet and list', () => {
+  test('12 months, items and a category x month grid', async () => {
+    const month = istToday().slice(0, 7);
+    db._seed('expense_transactions', [
+      txn({ amount: 500, category_id: 'food_dining', merchant: 'Lunch', date_time: ist(`${month}-01`, '13:00') }),
+      txn({ amount: 700, category_id: 'food_dining', merchant: 'Dinner', date_time: ist(`${month}-01`, '20:00') - 40 * 864e5 }),
+    ]);
+    const r = await api.call('GET', `/api/moneyflow?month=${month}&span=12&items=1&grid=1`);
+    assert.equal(r.status, 200, JSON.stringify(r.body).slice(0, 300));
+    assert.equal(r.body.months.length, 12);
+    assert.ok(r.body.items.some(i => i.amount === 500));
+    const exp = r.body.grid.find(g => g.section === 'expense');
+    const food = exp.rows.find(x => x.values[month] === 500);
+    assert.ok(food, 'food row has this month');
+    assert.equal(Object.values(food.values).reduce((a, b) => a + b, 0), 1200);
+  });
+});
+
 describe('phone sync', () => {
   test('a first pull brings every transaction, not just the first 1000', async () => {
     db._seed('expense_transactions', Array.from({ length: 1500 }, (_, i) => txn({ amount: i + 1, date_time: ist(istToday()) - i * 60000, updated_at: 1000 + i })));

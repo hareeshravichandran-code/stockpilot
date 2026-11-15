@@ -85,6 +85,32 @@ async function linksFor(uid, evs) {
   return out;
 }
 
+/** The linked master's own facts for the event page (shown by type: loan, card, subscription, policy). */
+async function detailsFor(uid, e) {
+  const id = String(e.master_id || '');
+  if (e.master_table === 'money_masters' && isUuid(id)) {
+    const { data: m } = await supabase.from('money_masters').select('*').eq('id', id).eq('owner_id', uid).maybeSingle();
+    if (!m) return null;
+    const meta = m.meta && typeof m.meta === 'object' ? m.meta : {};
+    const pick = (k) => (meta[k] == null || meta[k] === '' ? undefined : meta[k]);
+    return { type: m.kind, title: m.title, institution: m.institution || null, last4: m.ref_key ? String(m.ref_key).replace(/\D/g, '').slice(-4) || null : null,
+      amount: num(m.amount) || null, frequency: m.frequency || null, due_day: m.due_day || null, status: m.status, since: m.created_at || null,
+      limit: pick('credit_limit') ?? pick('limit'), balance: pick('balance'), balance_at: pick('balance_at'), plan: pick('plan'), outstanding: pick('outstanding'), rate: pick('rate') };
+  }
+  if (e.master_table === 'bp_buckets') {
+    const { data: b } = await supabase.from('bp_buckets').select('*').eq('id', id).eq('user_id', uid).maybeSingle();
+    if (!b) return null;
+    return { type: 'loan', title: b.name, emi: num(b.target_amount) || null, due_day: b.recurrence_day || null, ends: b.target_date || null, status: b.status, notes: b.notes || null, since: b.created_at || null };
+  }
+  if (e.master_table === 'insurance_policies') {
+    const { data: p } = await supabase.from('insurance_policies').select('*').eq('id', id).maybeSingle();
+    if (!p) return null;
+    return { type: 'insurance', title: p.plan_name || p.insurer || null, insurer: p.insurer || null, kind: p.kind || null, premium: num(p.premium) || null,
+      sum_assured: num(p.sum_assured) || null, frequency: p.premium_frequency || p.frequency || null, renewal: p.renewal_date || p.next_due || null };
+  }
+  return null;
+}
+
 // ── List ─────────────────────────────────────────────────────────────────────
 router.get('/', requireAuth, async (req, res) => {
   try {
@@ -388,12 +414,15 @@ router.get('/:id', requireAuth, async (req, res) => {
       event: { id: e.id, title: e.title, kind: e.kind, direction: e.direction, amount: amt, amount_mode: e.amount_mode || 'about', ...schedule(e),
         buffer_days: EM.bufferOf(e), remind_days: e.remind_days, alert_level: e.alert_level, level: levelOf(e.kind, e.alert_level), pay_mode: e.pay_mode || 'auto',
         category_id: e.category_id || null, status: e.status, notes: e.notes || null, source: e.master_table === 'manual' ? 'manual' : e.master_table,
-        master: master || null, link: (await linksFor(uid, [e]).catch(() => ({})))[e.id] || null, created_at: e.created_at },
+        master: master || null, link: (await linksFor(uid, [e]).catch(() => ({})))[e.id] || null, details: await detailsFor(uid, e).catch(() => null), created_at: e.created_at },
       rules: (rules || []).map(r => ({ id: r.id, category_id: r.category_id, merchant_pattern: r.merchant_pattern || null, label: r.label || null,
         has_words: !!r.merchant_pattern || (Array.isArray(r.pattern_tok) && r.pattern_tok.length > 0), sender_key: r.sender_key || null,
         amount_min: r.amount_min == null ? null : num(r.amount_min), amount_max: r.amount_max == null ? null : num(r.amount_max), source: r.source || 'manual',
         account_ref: r.account_ref || null, ref_kind: r.ref_kind || null,
-        caught: ruleTx.filter(t => EM.ruleScore(r, t) > 0).length })),
+        caught: ruleTx.filter(t => EM.ruleScore(r, t) > 0).length,
+        // The latest SMS this rule caught: sender and text, so you can see what it reacts to
+        sample: (() => { const t = ruleTx.filter(x => EM.ruleScore(r, x) > 0).sort((a, b) => Number(b.date_time) - Number(a.date_time))[0] || (tied || [])[0];
+          return t ? { date: EM.istDay(t.date_time), sender: t.sms_sender || null, bank: t.bank_name || null, body: t.sms_body || t.description || null, amount: num(t.amount), payee: t.merchant || null } : null; })() })),
       occurrences: occ, other_payments: extra, today,
     });
   } catch (err) { res.status(500).json({ error: err.message }); }

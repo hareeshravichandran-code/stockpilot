@@ -123,7 +123,8 @@ function classify(t, cats, ruleCat, masterKind) {
  * subscriptions found, and what was left out.
  */
 async function monthFlow(uid, month, opts = {}) {
-  const months = Array.from({ length: 7 }, (_, i) => addMonths(month, i - 6));       // 6 before + this month
+  const N = Math.min(13, Math.max(7, Number(opts.span) || 7));                        // months shown: N-1 before + this month
+  const months = Array.from({ length: N }, (_, i) => addMonths(month, i - (N - 1)));
   const from = monthStartMs(months[0]);
   const to = monthStartMs(addMonths(month, 1));
   const [txns, cats, ruleCat, { data: ms }, { data: me }] = await Promise.all([
@@ -161,7 +162,7 @@ async function monthFlow(uid, month, opts = {}) {
       items.push({ id: t.id, date: dayOf(t.date_time), merchant: t.merchant || null, signals: t.signals || null, amount: Math.round(num(t.amount)), key: g.key, group: g.name, color: g.color });
   }
 
-  const prev = months.slice(3, 6);                                                 // the 3 months before this one
+  const prev = months.slice(N - 4, N - 1);                                         // the 3 months before this one
   // Average only over months that have any data (a new user's first months are not "zero spend")
   const active = prev.filter(mo => per[mo] && Object.values(per[mo]).some(sec => Object.keys(sec).length));
   const denom = Math.max(1, active.length);
@@ -195,13 +196,13 @@ async function monthFlow(uid, month, opts = {}) {
       (byMerchant[k] = byMerchant[k] || []).push(t);
     }
     for (const list of Object.values(byMerchant)) {
-      const ms6 = new Set(list.map(t => monthOf(t.date_time)).filter(mo => mo >= months[1]));
+      const ms6 = new Set(list.map(t => monthOf(t.date_time)).filter(mo => mo >= months[N - 6]));
       if (ms6.size < 3) continue;
       const amts = list.map(t => num(t.amount)).sort((a, b) => a - b);
       const median = amts[Math.floor(amts.length / 2)];
       const steady = list.filter(t => Math.abs(num(t.amount) - median) <= Math.max(10, median * 0.1)).length >= ms6.size;
       const isSubCat = list.some(t => SUB_CATS.has(t.category_id));
-      const recent = list.filter(t => monthOf(t.date_time) >= months[1]);
+      const recent = list.filter(t => monthOf(t.date_time) >= months[N - 6]);
       const perMonth = recent.length / ms6.size;
       const everyday = list.some(t => /^(p_food|food_|grocery|p_grocery|p_fuel|petrol|cab|auto|p_travel)/.test(t.category_id || '') || (Array.isArray(t.signals) && t.signals.includes('everyday')) || /swiggy|zomato|blinkit|zepto|bigbasket|instamart|uber|ola|rapido|petrol|fuel/i.test(require('./privacy').plain(t.merchant)));
       if (!isSubCat && (!steady || perMonth > 1.4 || everyday)) continue;
@@ -228,6 +229,13 @@ async function monthFlow(uid, month, opts = {}) {
     uncategorised: (exp.groups.find(g => g.key === 'u_out') || {}).actual || 0,
     subscriptions,
     items: opts.items ? items.sort((a, b) => b.date.localeCompare(a.date)) : undefined,
+    // Sheet: every category by month (rows = categories of a section, columns = months)
+    grid: opts.grid ? ['expense', 'investment', 'income'].map(sec => {
+      const keys = {};
+      for (const mo of months) for (const [k, g] of Object.entries(per[mo]?.[sec] || {})) keys[k] = keys[k] || { key: k, name: g.name, color: g.color, values: {} };
+      for (const mo of months) for (const [k, g] of Object.entries(per[mo]?.[sec] || {})) keys[k].values[mo] = Math.round(g.actual);
+      return { section: sec, rows: Object.values(keys).sort((a, b) => Object.values(b.values).reduce((s, v) => s + v, 0) - Object.values(a.values).reduce((s, v) => s + v, 0)) };
+    }) : undefined,
     expected_basis: active.length ? `Average of ${active.length === 1 ? active[0] : `${active[0]} to ${active[active.length - 1]}`}` : 'No earlier months yet',
   };
 }
