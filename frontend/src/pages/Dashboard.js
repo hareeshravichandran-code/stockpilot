@@ -9,7 +9,6 @@ import Dividends from './Dividends';
 import ManageExpense from './ManageExpense';
 import RetirementPlanner from './RetirementPlanner';
 import HistoricalSyncPanel from './HistoricalSyncPanel';
-import MoneyCalendar from '../money/MoneyCalendar';
 import FamilyPanel from '../components/FamilyPanel';
 import MoneyFlow from './MoneyFlow';
 import Epfo from './Epfo';
@@ -1947,8 +1946,7 @@ export default function Dashboard() {
           {/* FAMILY CALENDAR: money (with dividends) and family dates */}
           {tab === 'calendar' && (
             <div className="fade-in k-stack">
-              <MoneyCalendar hideValues={hideValues} onOpenMasters={() => loadTab('m-all')} onOpenEvents={() => loadTab('m-events')} />
-              <FamilyPanel panel="calendar" />
+              <FamilyPanel panel="calendar" money hideValues={hideValues} />
             </div>
           )}
           {/* MASTERS */}

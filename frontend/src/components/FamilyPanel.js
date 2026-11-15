@@ -14,7 +14,7 @@ import '../pages/Family.css';
 // Family and Masters screens inside the main app (same side menu everywhere).
 export const PANEL_TAB = { people: 'm-people', insurance: 'm-insurance', documents: 'm-documents', calendar: 'calendar', masters: 'm-all', events: 'm-events', home: 'dashboard' };
 
-export default function FamilyPanel({ panel, kind }) {
+export default function FamilyPanel({ panel, kind, money = false, hideValues = false }) {
   const nav = useNavigate();
   const [members, setMembers] = useState(null);
   const [err, setErr] = useState('');
@@ -36,7 +36,7 @@ export default function FamilyPanel({ panel, kind }) {
           {panel === 'people' && <People {...shared} />}
           {panel === 'insurance' && <Insurance {...shared} />}
           {panel === 'documents' && <Documents {...shared} />}
-          {panel === 'calendar' && <CalendarView {...shared} />}
+          {panel === 'calendar' && <CalendarView {...shared} money={money} hideValues={hideValues} />}
           {panel === 'masters' && <Masters {...shared} kind={kind} />}
           {panel === 'events' && <EventsHub {...shared} />}
         </>

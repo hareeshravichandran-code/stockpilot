@@ -4,7 +4,7 @@
  * Figures come from the Dashboard page; only the strip and goals fetch their own data.
  */
 import { useEffect, useState } from 'react';
-import { moneyflowAPI } from '../lib/api';
+import { moneyflowAPI, mastersAPI } from '../lib/api';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { inr, GoalsSnapshot, FamilyStrip } from './DashboardOverview';
 import useCountUp from '../hooks/useCountUp';
@@ -35,7 +35,9 @@ export default function OverviewV2({
   const [mf, setMf] = useState(null);
   useEffect(() => {
     let live = true;
-    moneyflowAPI.get().then(r => { if (live) setMf(r.data?.totals || null); }).catch(() => {});
+    // Fallback: the month's bank SMS totals from the calendar data, so the box never shows ₹0 when Money flow fails
+    const fallback = () => mastersAPI.month().then(r => { const t = r.data?.totals; if (live && t) setMf({ income: { actual: t.income }, expense: { actual: t.expense } }); }).catch(() => {});
+    moneyflowAPI.get().then(r => { if (!live) return; if (r.data?.totals) setMf(r.data.totals); else fallback(); }).catch(fallback);
     return () => { live = false; };
   }, []);
   if (mf) { income = n(mf.income?.actual); spent = n(mf.expense?.actual); }

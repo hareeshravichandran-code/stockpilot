@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { householdAPI } from '../lib/api';
+import { householdAPI, mastersAPI } from '../lib/api';
 import { Modal, Field, Avatar, Faces, MemberPicker, Seg, MODULE, inr, fmtDate, todayStr, ymd, parseDate, shortName, errMsg } from './shared';
 
 import LogoLoader from '../components/LogoLoader';
@@ -37,7 +37,11 @@ function EventForm({ ev, date, members, onClose, onSaved, notify }) {
   );
 }
 
-export default function CalendarView({ members, notify }) {
+// Compact amount for a day cell: 950, 18K, 1.2L
+const tiny = (v) => { const x = Math.abs(+v || 0); return x >= 1e7 ? (Math.round(x / 1e6) / 10) + 'Cr' : x >= 1e5 ? (Math.round(x / 1e4) / 10) + 'L' : x >= 1e3 ? Math.round(x / 1e3) + 'K' : String(Math.round(x)); };
+const hotKey = (date, title) => `${date}|${String(title || '').toLowerCase().trim()}`;
+
+export default function CalendarView({ members, notify, money = false, hideValues = false }) {
   const [month, setMonth] = useState(() => { const t = new Date(); return new Date(t.getFullYear(), t.getMonth(), 1); });
   const [items, setItems] = useState(null);
   const [sel, setSel] = useState(todayStr());
@@ -45,6 +49,7 @@ export default function CalendarView({ members, notify }) {
   const [mods, setMods] = useState(() => Object.keys(MODULE));
   const [form, setForm] = useState(null);
   const [events, setEvents] = useState([]);
+  const [flow, setFlow] = useState(null);            // money that actually moved this month (bank SMS), when money=true
 
   // Grid: Monday-first weeks covering the month
   const grid = useMemo(() => {
@@ -65,12 +70,35 @@ export default function CalendarView({ members, notify }) {
   }, [grid.from, grid.to, notify]);
   useEffect(() => { load(); }, [load]);
 
+  const monthKey = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, '0')}`;
+  useEffect(() => {
+    if (!money) return undefined;
+    let live = true; setFlow(null);
+    mastersAPI.month(monthKey).then(r => { if (live) setFlow(r.data); }).catch(() => { if (live) setFlow({ flow: [], events: [] }); });
+    return () => { live = false; };
+  }, [money, monthKey]);
+  // Per day: money out (spend), money in (income), dividends credited; and which events need attention (they blink)
+  const moneyByDay = useMemo(() => {
+    const out = {};
+    for (const f of flow?.flow || []) {
+      const d = (out[f.date] = out[f.date] || { out: 0, inn: 0, div: 0, list: [] });
+      if (f.dir === 'out') d.out += f.amount || 0; else if (f.kind === 'dividend') d.div += f.amount || 0; else if (f.kind !== 'refund') d.inn += f.amount || 0;
+      d.list.push(f);
+    }
+    return out;
+  }, [flow]);
+  const hot = useMemo(() => new Set((flow?.events || []).filter(e => e.blink || e.urgent || e.status === 'overdue' || e.status === 'due_soon').map(e => hotKey(e.date, e.title))), [flow]);
+  const declared = useMemo(() => (flow?.events || []).filter(e => e.declared), [flow]);
+  const isHot = (i) => !i.paid && (i.overdue || hot.has(hotKey(i.date, i.title)));
+  const amt = (v) => (hideValues ? '•••' : tiny(v));
+
   const shown = (items || []).filter(i => mods.includes(i.module) && (who === 'all' || (i.member_ids || []).includes(who)));
   const byDay = shown.reduce((m, i) => { (m[i.date] = m[i.date] || []).push(i); return m; }, {});
   const t = todayStr();
-  const monthKey = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, '0')}`;
   const selItems = byDay[sel] || [];
   const monthItems = shown.filter(i => i.date.startsWith(monthKey));
+  const mIn = Object.values(moneyByDay).reduce((s, d) => s + d.inn + d.div, 0);
+  const mOut = Object.values(moneyByDay).reduce((s, d) => s + d.out, 0);
   const outflow = monthItems.reduce((s, i) => s + (['premium', 'emi', 'due', 'instalment', 'payment', 'goal_due'].includes(i.kind) ? (+i.amount || 0) : 0), 0);
   const shift = (k) => setMonth(m => new Date(m.getFullYear(), m.getMonth() + k, 1));
   const openItem = (i) => {
@@ -94,7 +122,9 @@ export default function CalendarView({ members, notify }) {
           <button type="button" className="fo-icon-btn" onClick={() => shift(1)} aria-label="Next month">›</button>
           <button type="button" className="fo-btn sm ghost" onClick={() => { const n = new Date(); setMonth(new Date(n.getFullYear(), n.getMonth(), 1)); setSel(t); }}>Today</button>
         </div>
-        <div className="fo-cal-sum"><b>{monthItems.length}</b> dates{outflow > 0 && <>, <b>{inr(outflow)}</b> going out</>}</div>
+        {money && flow ? (
+          <div className="fo-cal-sum"><span className="fo-cal-in">In <b>{hideValues ? '•••' : inr(mIn)}</b></span> <span className="fo-cal-out">Out <b>{hideValues ? '•••' : inr(mOut)}</b></span> <span><b>{monthItems.length}</b> dates</span></div>
+        ) : <div className="fo-cal-sum"><b>{monthItems.length}</b> dates{outflow > 0 && <>, <b>{inr(outflow)}</b> going out</>}</div>}
       </div>
       <div className="fo-filter">
         <button type="button" className={who === 'all' ? 'on' : ''} onClick={() => setWho('all')}>Everyone</button>
@@ -111,14 +141,24 @@ export default function CalendarView({ members, notify }) {
           {WEEK.map(w => <div key={w} className="fo-cal-wd" role="columnheader">{w}</div>)}
           {grid.days.map(day => {
             const list = byDay[day] || [];
+            const mo = moneyByDay[day];
+            const dv = declared.filter(e => e.date === day);
             const inMonth = day.startsWith(monthKey);
             return (
               <button key={day} type="button" role="gridcell" aria-selected={sel === day}
                 className={`fo-cal-day ${inMonth ? '' : 'out'} ${day === t ? 'today' : ''} ${sel === day ? 'sel' : ''}`}
                 onClick={() => setSel(day)} aria-label={`${fmtDate(day)}, ${list.length} items`}>
                 <span className="fo-cal-n">{parseDate(day).getDate()}</span>
+                {mo && inMonth && (
+                  <span className="fo-cal-money">
+                    {mo.out > 0 && <span className="o">−{amt(mo.out)}</span>}
+                    {mo.inn > 0 && <span className="i">+{amt(mo.inn)}</span>}
+                    {mo.div > 0 && <span className="d">Div +{amt(mo.div)}</span>}
+                  </span>
+                )}
                 <span className="fo-cal-chips">
-                  {list.slice(0, 3).map(i => <span key={i.id} className={`fo-cal-chip ${i.overdue ? 'over' : ''}`} style={{ '--c': MODULE[i.module]?.color }}>{i.title}</span>)}
+                  {list.slice(0, 3).map(i => <span key={i.id} className={`fo-cal-chip ${i.overdue ? 'over' : ''} ${isHot(i) ? 'blink' : ''} ${i.paid ? 'paid' : ''}`} style={{ '--c': MODULE[i.module]?.color }}>{i.paid ? '✓ ' : ''}{i.title}</span>)}
+                  {inMonth && dv.map((e, j) => <span key={'dv' + j} className="fo-cal-chip div" title={e.sub}>{e.title}</span>)}
                   {list.length > 3 && <span className="fo-cal-more">+{list.length - 3} more</span>}
                 </span>
                 <span className="fo-cal-dots" aria-hidden="true">{list.slice(0, 5).map(i => <i key={i.id} style={{ background: MODULE[i.module]?.color }} />)}</span>
@@ -144,6 +184,19 @@ export default function CalendarView({ members, notify }) {
                 </li>
               ))}
             </ul>
+          )}
+          {money && moneyByDay[sel] && (
+            <>
+              <h3 className="fo-cal-next">Money on this day</h3>
+              <ul className="fo-cal-flow">
+                {moneyByDay[sel].list.map(f => (
+                  <li key={f.id} className={f.dir}>
+                    <span>{f.master_title || (f.title && !/^e[vp]1:/.test(f.title) ? f.title : (f.kind === 'dividend' ? 'Dividend' : f.dir === 'in' ? 'Money in' : 'Payment'))}</span>
+                    <b>{hideValues ? '•••' : (f.dir === 'in' ? '+' : '−') + inr(f.amount)}</b>
+                  </li>
+                ))}
+              </ul>
+            </>
           )}
           <h3 className="fo-cal-next">Next in {month.toLocaleDateString('en-IN', { month: 'long' })}</h3>
           <ul className="fo-agenda compact">
