@@ -12,7 +12,7 @@ router.get('/', requireAuth, async (req, res) => {
     const month = /^\d{4}-\d{2}$/.test(req.query.month || '') ? req.query.month : now;
     res.json(await monthFlow(req.user.id, month));
   } catch (err) {
-    console.error(JSON.stringify({ event: 'MONEYFLOW_ERROR', error: err.message }));
+    console.error('[moneyflow] ' + String(err && err.stack || err).split('\n').slice(0, 6).join(' | '));
     res.status(500).json({ error: err.message });
   }
 });
