@@ -226,7 +226,7 @@ export default function MoneyFlow({ embedded = false, onManage }) {
     <div className={`mf${embedded ? ' mf-embed' : ''}`}>
       <header className="mf-top">
         {!embedded && <button type="button" className="mf-back" onClick={() => nav('/dashboard')} aria-label="Back">‹</button>}
-        <div className="mf-brand"><h1>Money flow</h1><small>Spending month by month, this month, by category, recent spends and a report</small></div>
+        <div className="mf-brand"><h1>Spending</h1><small>Month by month, this month, by category, every payment and a report</small></div>
         <div className="mf-month">
           <button type="button" onClick={() => setMonth(m => addMonths(m, -1))} aria-label="Previous month">‹</button>
           <b>{monthLabel(month)}</b>

@@ -85,7 +85,7 @@ export function SpecialSection({ bucket, onReload, notify }) {
         <span className="bp-special-ico" aria-hidden="true">{SPECIAL_ICON[sp.kind] || '★'}</span>
         <div>
           <div className="bp-special-tag">Special card · {sp.tag}</div>
-          <div className="bp-special-src">{sp.master ? <>From <b>{sp.master.title}</b> <i>({KIND_LABEL[sp.master.kind] || 'master'})</i></> : sp.kind === 'monthly_expense' ? 'From the Money flow module' : sp.kind === 'emergency' ? 'Built from your salary' : sp.kind === 'retirement' ? 'From the Retirement plan' : 'Not linked to a master yet'}</div>
+          <div className="bp-special-src">{sp.master ? <>From <b>{sp.master.title}</b> <i>({KIND_LABEL[sp.master.kind] || 'master'})</i></> : sp.kind === 'monthly_expense' ? 'From Spending' : sp.kind === 'emergency' ? 'Built from your salary' : sp.kind === 'retirement' ? 'From the Retirement plan' : 'Not linked to a master yet'}</div>
         </div>
       </div>
       {sp.kind === 'salary' && (
@@ -182,7 +182,7 @@ function ExpenseDetail() {
           {d.items.slice(0, 15).map(t => (
             <li key={t.id}><i style={{ background: t.color }} /><span className="m">{t.merchant || t.group}<em>{t.group} · {dShort(t.date)}</em></span><b>{fmtINR(t.amount, { compact: false })}</b></li>))}
         </ul>)}
-      <a className="bp-btn" href="/money-flow">Open Money flow →</a>
+      <a className="bp-btn" href="/money-flow">Open Spending →</a>
     </div>
   );
 }

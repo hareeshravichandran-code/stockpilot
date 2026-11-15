@@ -37,10 +37,12 @@ const NAV_SECTIONS = [
     { id: 'rd', icon: '▤', label: 'Recurring deposits' },
     { id: 'epfo', icon: '◍', label: 'EPFO', hint: 'Provident fund: passbook and SMS' },
   ]],
-  ['Dashboards', [
-    { id: 'dashboard', icon: '◈', label: 'Overview' },
-    { id: 'calendar', icon: '▦', label: 'Family calendar', hint: 'Dues, income, dividends, birthdays and renewals' },
-    { id: 'cashflow', icon: '⇅', label: 'Money flow', hint: 'Spending by month, categories, recent spends and a report' },
+  // K-137: one home per question, same names as the app (Home, What's due, Spending)
+  ['Your money', [
+    { id: 'dashboard', icon: '◈', label: 'Home', hint: 'This month, balances, family net worth and what is coming' },
+    { id: 'm-events', icon: '◷', label: "What's due", hint: 'EMIs, card bills, subscriptions, SIPs and premiums' },
+    { id: 'calendar', icon: '▦', label: 'Calendar', hint: 'Dues, income, dividends, birthdays and renewals by date' },
+    { id: 'cashflow', icon: '⇅', label: 'Spending', hint: 'Spending by month, categories, every payment and a report' },
     { to: '/blueprint', icon: '◇', label: 'Blueprint', hint: 'Goals on a visual plan', feature: 'blueprint' },
     { id: 'retirement', icon: '◐', label: 'Retirement', feature: 'retirement' },
   ]],
@@ -50,7 +52,6 @@ const NAV_SECTIONS = [
     { id: 'm-loan', icon: '⊟', label: 'Loans' },
     { id: 'm-insurance', icon: '☂', label: 'Insurance' },
     { id: 'm-subscription', icon: '↻', label: 'Subscriptions' },
-    { id: 'm-events', icon: '◷', label: "What's due", hint: 'EMIs, bills, subscriptions and their SMS rules' },
     { id: 'm-people', icon: '☺', label: 'People' },
     { id: 'm-documents', icon: '▤', label: 'Documents' },
     { id: 'm-all', icon: '≡', label: 'All masters', hint: 'Salary, SIPs, rent and every other master' },
@@ -1208,11 +1209,11 @@ export default function Dashboard() {
         <div className="db-topbar">
           <div>
             <h1 className="db-page-title">
-              {{ dashboard:'Overview', holdings:'Stocks', dividends:'Stocks', tax:'Tax summary', mutualfunds:'Mutual funds',
-                 bankdeposits: depView === 'rd' ? 'Recurring deposits' : 'Fixed deposits', nps:'NPS', epfo:'EPFO', calendar:'Family calendar',
-                 cashflow:'Money flow', retirement:'Retirement', admin:'Sync logs', reports:'Reports',
+              {{ dashboard:'Home', holdings:'Stocks', dividends:'Stocks', tax:'Tax summary', mutualfunds:'Mutual funds',
+                 bankdeposits: depView === 'rd' ? 'Recurring deposits' : 'Fixed deposits', nps:'NPS', epfo:'EPFO', calendar:'Calendar',
+                 cashflow:'Spending', retirement:'Retirement', admin:'Sync logs', reports:'Reports',
                  'm-bank_account':'Bank accounts', 'm-card':'Credit cards', 'm-loan':'Loans', 'm-subscription':'Subscriptions', 'm-all':'All masters',
-                 'm-insurance':'Insurance', 'm-events':'Events', 'm-people':'People', 'm-documents':'Documents' }[tab]}
+                 'm-insurance':'Insurance', 'm-events':"What's due", 'm-people':'People', 'm-documents':'Documents' }[tab]}
             </h1>
             <p className="db-page-sub">
               {emailStatus.length > 0

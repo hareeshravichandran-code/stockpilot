@@ -81,7 +81,7 @@ export default function CalendarView({ members, notify }) {
     <div className="fo-page">
       <div className="fo-page-head">
         <div>
-          <h1>Family calendar</h1>
+          <h1>Calendar</h1>
           <p>Birthdays, premiums, renewals, fees, EMIs, RD instalments, FD maturities and goal dates from every part of Kanalyst.</p>
         </div>
         <button type="button" className="fo-btn" onClick={() => setForm({ date: sel })}>Add a date</button>

@@ -104,7 +104,7 @@ export default function OverviewV2({
             </div>
           </div>
           <div className="o3-div"><small>Dividends this FY</small><b>{hideValues ? '••••' : inr(dividends)}</b>{yieldPct ? <em>{yieldPct}% yield</em> : null}</div>
-          <button type="button" className="o3-cta" onClick={() => onTab('cashflow')}>Money flow ›</button>
+          <button type="button" className="o3-cta" onClick={() => onTab('cashflow')}>Spending ›</button>
         </section>
       </div>
 
