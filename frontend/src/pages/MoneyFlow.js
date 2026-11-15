@@ -199,7 +199,113 @@ function rangeOf(p, month, from, to) {
   return [from, to];
 }
 
-/** A simple report like the phone's: pick the period, money in or out, a category; totals and every payment by day. */
+/** A small dialog (Escape or the backdrop closes it). */
+function Dialog({ title, children, onClose, actions }) {
+  useEffect(() => { const k = (e) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose]);
+  return (
+    <div className="mf2-dlg-back" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="mf2-dlg" role="dialog" aria-modal="true" aria-label={title}>
+        <h3>{title}</h3>
+        <div className="mf2-dlg-body">{children}</div>
+        <div className="mf2-dlg-acts">{actions}</div>
+      </div>
+    </div>
+  );
+}
+
+const payeeOf = (r) => clean(r.merchant_name) || '';
+const timeOf = (ms) => new Date(Number(ms)).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' });
+
+/** Pick a category for a payment; optionally always for this payee (SMS rule) and for its other payments in the list. */
+function CategoryDialog({ row, cats, others, onClose, onDone }) {
+  const [q, setQ] = useState('');
+  const [pick, setPick] = useState(row.category_id && row.category_id !== 'other' ? row.category_id : '');
+  const payee = payeeOf(row);
+  const [rule, setRule] = useState(!!payee);
+  const [all, setAll] = useState(others.length > 0);
+  const [busy, setBusy] = useState(false); const [err, setErr] = useState('');
+  const parents = cats.filter(c => !c.parent_id && c.type !== 'INCOME');
+  const kids = (id) => cats.filter(c => c.parent_id === id);
+  const hit = (c) => !q || c.name.toLowerCase().includes(q.toLowerCase());
+  const save = async () => {
+    if (!pick) { setErr('Pick a category.'); return; }
+    setBusy(true); setErr('');
+    try {
+      await expenseAPI.updateTxn(row.id, { category_id: pick });
+      if (all && others.length) await expenseAPI.bulkCategorize(others.map(o => o.id), pick);
+      if (rule && payee) await expenseAPI.createSmsRule({ merchant_pattern: payee.toLowerCase(), category_id: pick, user_confirmed: true });
+      onDone(rule && payee ? `Saved. Future SMS from ${payee} will be filed there too.` : 'Category saved.');
+    } catch (e) { setErr(e?.response?.data?.error || 'Could not save. Try again.'); setBusy(false); }
+  };
+  return (
+    <Dialog title={`Category for ${payee || 'this payment'}`} onClose={onClose}
+      actions={<><button type="button" className="mf2-ghost" onClick={onClose}>Cancel</button><button type="button" className="mf2-primary" disabled={busy || !pick} onClick={save}>{busy ? 'Saving…' : 'Save category'}</button></>}>
+      <input className="mf2-in" type="search" autoFocus placeholder="Search categories" value={q} onChange={e => setQ(e.target.value)} />
+      <div className="mf2-catpick">
+        {parents.filter(p => hit(p) || kids(p.id).some(hit)).map(p => (
+          <div key={p.id} className="mf2-catgrp">
+            <button type="button" className={pick === p.id ? 'on' : ''} onClick={() => setPick(p.id)}>{p.icon ? `${p.icon} ` : ''}{p.name}</button>
+            {kids(p.id).filter(k => hit(k) || hit(p)).map(k => <button key={k.id} type="button" className={`sub${pick === k.id ? ' on' : ''}`} onClick={() => setPick(k.id)}>{k.icon ? `${k.icon} ` : ''}{k.name}</button>)}
+          </div>
+        ))}
+      </div>
+      {payee && <label className="mf2-check"><input type="checkbox" checked={rule} onChange={e => setRule(e.target.checked)} /> Always use this for <b>{payee}</b> (saves an SMS rule)</label>}
+      {others.length > 0 && <label className="mf2-check"><input type="checkbox" checked={all} onChange={e => setAll(e.target.checked)} /> Also set it on {others.length} other payment{others.length > 1 ? 's' : ''} from {payee} in this report</label>}
+      {err && <p className="mf2-err" role="alert">{err}</p>}
+    </Dialog>
+  );
+}
+
+function EditDialog({ row, onClose, onDone }) {
+  const [name, setName] = useState(payeeOf(row));
+  const [note, setNote] = useState(clean(row.comments));
+  const [busy, setBusy] = useState(false); const [err, setErr] = useState('');
+  const save = async () => {
+    setBusy(true); setErr('');
+    try { await expenseAPI.updateTxn(row.id, { merchant: name.trim() || null, note: note.trim() || null }); onDone('Payment updated.'); }
+    catch (e) { setErr(e?.response?.data?.error || 'Could not save. Try again.'); setBusy(false); }
+  };
+  return (
+    <Dialog title="Edit payment" onClose={onClose}
+      actions={<><button type="button" className="mf2-ghost" onClick={onClose}>Cancel</button><button type="button" className="mf2-primary" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save changes'}</button></>}>
+      <label className="mf2-field">Paid to<input className="mf2-in" value={name} onChange={e => setName(e.target.value)} maxLength={80} /></label>
+      <label className="mf2-field">Comment<input className="mf2-in" value={note} onChange={e => setNote(e.target.value)} maxLength={200} placeholder="e.g. Dinner with family" /></label>
+      {row.sms_body && <p className="mf2-smsbody"><small>Bank SMS</small>{clean(row.sms_body)}</p>}
+      {err && <p className="mf2-err" role="alert">{err}</p>}
+    </Dialog>
+  );
+}
+
+/** Delete one payment; optionally ignore this payee's SMS from now on (and delete its other payments here). */
+function DeleteDialog({ row, others, onClose, onDone }) {
+  const payee = payeeOf(row);
+  const [ignore, setIgnore] = useState(false);
+  const [busy, setBusy] = useState(false); const [err, setErr] = useState('');
+  const go = async () => {
+    setBusy(true); setErr('');
+    try {
+      await expenseAPI.deleteTxn(row.id);
+      if (ignore && payee) {
+        await expenseAPI.createSmsRule({ merchant_pattern: payee.toLowerCase(), is_ignored: true, user_confirmed: true });
+        for (const o of others) await expenseAPI.deleteTxn(o.id);
+      }
+      onDone(ignore && payee ? `Deleted. SMS from ${payee} will be ignored from now on.` : 'Payment deleted.');
+    } catch (e) { setErr(e?.response?.data?.error || 'Could not delete. Try again.'); setBusy(false); }
+  };
+  return (
+    <Dialog title="Delete this payment?" onClose={onClose}
+      actions={<><button type="button" className="mf2-ghost" onClick={onClose}>Cancel</button><button type="button" className="mf2-danger" disabled={busy} onClick={go}>{busy ? 'Deleting…' : ignore ? `Delete and ignore ${payee}` : 'Delete payment'}</button></>}>
+      <p className="mf2-dlg-p"><b>{payee || 'Bank payment'}</b>, {inr(row.amount)} on {fmtDay(ymdIst(row.date_time))}. It is removed from your totals; the bank SMS stays on your phone.</p>
+      {payee && (
+        <label className="mf2-check"><input type="checkbox" checked={ignore} onChange={e => setIgnore(e.target.checked)} />
+          Also ignore future SMS from <b>{payee}</b> (saves an ignore rule){others.length ? `, and delete its ${others.length} other payment${others.length > 1 ? 's' : ''} in this report` : ''}</label>
+      )}
+      {err && <p className="mf2-err" role="alert">{err}</p>}
+    </Dialog>
+  );
+}
+
+/** The report: one row per payment (paid to, category, subcategory, comment, amount, date and time) with category, edit and delete. */
 function Report({ month, cats }) {
   const [preset, setPreset] = useState('month');
   const [from, setFrom] = useState(''); const [to, setTo] = useState('');
@@ -207,6 +313,9 @@ function Report({ month, cats }) {
   const [cat, setCat] = useState('');
   const [q, setQ] = useState('');
   const [rows, setRows] = useState(null);
+  const [act, setAct] = useState(null);                 // { kind: 'cat'|'edit'|'del', row }
+  const [toast, setToast] = useState('');
+  const [tick, setTick] = useState(0);
   const [lo, hi] = rangeOf(preset, month, from, to);
   useEffect(() => {
     if (!lo || !hi) return undefined;
@@ -214,17 +323,22 @@ function Report({ month, cats }) {
     expenseAPI.getEntries({ from: lo, to: hi, ...(type ? { type } : {}), ...(cat ? { category: cat } : {}), limit: 5000 })
       .then(r => { if (live) setRows(r.data || []); }).catch(() => { if (live) setRows([]); });
     return () => { live = false; };
-  }, [lo, hi, type, cat]);
-  const catName = (id) => cats.find(c => c.id === id)?.name || id || 'Not sorted';
-  const shown = (rows || []).filter(r => !q || [r.merchant_name, r.comments, r.sms_body, catName(r.category_id)].some(x => x && String(x).toLowerCase().includes(q.toLowerCase())));
+  }, [lo, hi, type, cat, tick]);
+  useEffect(() => { if (!toast) return undefined; const t = setTimeout(() => setToast(''), 3500); return () => clearTimeout(t); }, [toast]);
+  const byId = useMemo(() => Object.fromEntries(cats.map(c => [c.id, c])), [cats]);
+  const catOf = (id) => { const c = byId[id]; if (!c || id === 'other') return [null, null]; const p = c.parent_id ? byId[c.parent_id] : null; return p ? [p, c] : [c, null]; };
+  const shown = (rows || []).filter(r => {
+    if (!q) return true; const [c, s] = catOf(r.category_id);
+    return [r.merchant_name, r.comments, r.sms_body, c?.name, s?.name].some(x => x && String(x).toLowerCase().includes(q.toLowerCase()));
+  });
   const out = shown.filter(r => r.type !== 'CREDIT').reduce((s, r) => s + r.amount, 0);
   const inn = shown.filter(r => r.type === 'CREDIT').reduce((s, r) => s + r.amount, 0);
-  const byDay = {};
-  for (const r of shown) (byDay[ymdIst(r.date_time)] = byDay[ymdIst(r.date_time)] || []).push(r);
+  const othersOf = (row) => { const p = payeeOf(row).toLowerCase(); return p ? (rows || []).filter(r => r.id !== row.id && payeeOf(r).toLowerCase() === p) : []; };
+  const done = (msg) => { setAct(null); setToast(msg); setTick(t => t + 1); };
   const csv = () => {
     const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const lines = [['Date', 'Type', 'Amount', 'Payee', 'Category', 'SMS'].join(',')]
-      .concat(shown.map(r => [ymdIst(r.date_time), r.type === 'CREDIT' ? 'In' : 'Out', r.amount, esc(clean(r.merchant_name)), esc(catName(r.category_id)), esc(clean(r.sms_body))].join(',')));
+    const lines = [['Date', 'Time', 'Type', 'Paid to', 'Category', 'Subcategory', 'Comment', 'Amount', 'SMS'].join(',')]
+      .concat(shown.map(r => { const [c, s] = catOf(r.category_id); return [ymdIst(r.date_time), esc(timeOf(r.date_time)), r.type === 'CREDIT' ? 'In' : 'Out', esc(payeeOf(r)), esc(c?.name || 'Not sorted'), esc(s?.name || ''), esc(clean(r.comments)), r.amount, esc(clean(r.sms_body))].join(','); }));
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv' }));
     a.download = `kanalyst-report-${lo}-to-${hi}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
@@ -237,37 +351,53 @@ function Report({ month, cats }) {
         {preset === 'custom' && <span className="mf-dates"><input type="date" value={from} onChange={e => setFrom(e.target.value)} aria-label="From" /> – <input type="date" value={to} onChange={e => setTo(e.target.value)} aria-label="To" /></span>}
         <div className="mf-chips">{[['DEBIT', 'Spent'], ['CREDIT', 'Came in'], ['', 'Both']].map(([k, l]) => <button key={k || 'all'} type="button" className={type === k ? 'on' : ''} onClick={() => setType(k)}>{l}</button>)}</div>
         <select value={cat} onChange={e => setCat(e.target.value)} aria-label="Category"><option value="">All categories</option>{sortedCats.map(c => <option key={c.id} value={c.id}>{c.icon ? `${c.icon} ` : ''}{c.name}</option>)}</select>
-        <input type="search" value={q} onChange={e => setQ(e.target.value)} placeholder="Search payee or SMS" aria-label="Search" />
+        <input type="search" value={q} onChange={e => setQ(e.target.value)} placeholder="Search payee, category, comment or SMS" aria-label="Search" />
       </div>
       {rows === null ? <div className="mf-skel sm" /> : (
         <>
-          <div className="mf-rtotals">
+          <div className="mf2-rsum">
             <span><small>{fmtDay(lo)} – {fmtDay(hi)}</small><b>{shown.length} payments</b></span>
-            {type !== 'CREDIT' && <span><small>Spent</small><b className="out">{inrShort(out)}</b></span>}
-            {type !== 'DEBIT' && <span><small>Came in</small><b className="in">{inrShort(inn)}</b></span>}
-            <button type="button" className="mf-linkbtn" onClick={csv} disabled={!shown.length}>Download CSV</button>
+            {type !== 'CREDIT' && <span><small>Spent</small><b className="out">{inr(out)}</b></span>}
+            {type !== 'DEBIT' && <span><small>Came in</small><b className="in">{inr(inn)}</b></span>}
+            <span className="mf2-unsorted"><small>Not sorted</small><b>{shown.filter(r => !r.category_id || r.category_id === 'other').length}</b></span>
+            <button type="button" className="mf2-ghost" onClick={csv} disabled={!shown.length}>Download CSV</button>
           </div>
-          {!shown.length ? <div className="mf-none">No payments for these filters.</div> : (
-            <div className="mf-rdays">
-              {Object.keys(byDay).sort().reverse().slice(0, 120).map(d => (
-                <div key={d} className="mf-rday">
-                  <div className="mf-rday-h"><b>{fmtDay(d)}</b><span>{inrShort(byDay[d].reduce((s, r) => s + (r.type === 'CREDIT' ? 0 : r.amount), 0))}</span></div>
-                  {byDay[d].map(r => (
-                    <div key={r.id} className="mf-rrow">
-                      <span className="mf-rt"><b>{clean(r.merchant_name) || clean(r.sms_body).slice(0, 48) || 'Bank payment'}</b><small className={r.category_id && r.category_id !== 'other' ? '' : 'unc'}>{catName(r.category_id)}</small></span>
-                      <span className={`mf-ra ${r.type === 'CREDIT' ? 'in' : ''}`}>{r.type === 'CREDIT' ? '+' : '−'}{inrShort(r.amount)}</span>
-                    </div>
-                  ))}
-                </div>
-              ))}
+          {!shown.length ? <p className="mf2-empty">No payments for these filters.</p> : (
+            <div className="mf2-rscroll">
+              <table className="mf2-rtable">
+                <thead><tr><th>Date</th><th>Paid to</th><th>Category</th><th>Subcategory</th><th>Comment</th><th className="num">Amount</th><th><span className="mf2-sr-only">Actions</span></th></tr></thead>
+                <tbody>
+                  {shown.slice(0, 500).map(r => {
+                    const [c, s] = catOf(r.category_id);
+                    return (
+                      <tr key={r.id}>
+                        <td className="when"><b>{fmtDay(ymdIst(r.date_time))}</b><small>{timeOf(r.date_time)}</small></td>
+                        <td className="who" title={clean(r.sms_body)}>{payeeOf(r) || <span className="mf2-dim">Bank payment</span>}</td>
+                        <td><button type="button" className={`mf2-catbtn${c ? '' : ' none'}`} onClick={() => setAct({ kind: 'cat', row: r })}>{c ? `${c.icon ? c.icon + ' ' : ''}${c.name}` : 'Pick category'}</button></td>
+                        <td className="sub">{s ? s.name : <span className="mf2-dim">—</span>}</td>
+                        <td className="note">{clean(r.comments) || <span className="mf2-dim">—</span>}</td>
+                        <td className={`num ${r.type === 'CREDIT' ? 'in' : ''}`}>{r.type === 'CREDIT' ? '+' : '−'}{inr(r.amount)}</td>
+                        <td className="acts">
+                          <button type="button" onClick={() => setAct({ kind: 'edit', row: r })} aria-label={`Edit ${payeeOf(r)}`}>Edit</button>
+                          <button type="button" className="del" onClick={() => setAct({ kind: 'del', row: r })} aria-label={`Delete ${payeeOf(r)}`}>Delete</button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              {shown.length > 500 && <p className="mf2-empty">Showing the latest 500. Narrow the period to see the rest, or download the CSV.</p>}
             </div>
           )}
         </>
       )}
+      {act?.kind === 'cat' && <CategoryDialog row={act.row} cats={cats} others={othersOf(act.row).filter(o => o.category_id !== act.row.category_id || !o.category_id)} onClose={() => setAct(null)} onDone={done} />}
+      {act?.kind === 'edit' && <EditDialog row={act.row} onClose={() => setAct(null)} onDone={done} />}
+      {act?.kind === 'del' && <DeleteDialog row={act.row} others={othersOf(act.row)} onClose={() => setAct(null)} onDone={done} />}
+      {toast && <div className="mf2-toast" role="status">{toast}</div>}
     </div>
   );
 }
-
 
 const VIEWS = [['overview', 'Overview'], ['report', 'Report'], ['sheet', 'Sheet']];
 export default function MoneyFlow({ embedded = false, onManage }) {

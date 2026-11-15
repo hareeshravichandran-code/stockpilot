@@ -168,10 +168,8 @@ router.delete('/entries/:id', requireAuth, async (req, res) => {
 });
 
 // GET /api/expense/categories  — list categories for dropdowns
-router.get('/categories', requireAuth, async (_req, res) => {
-  const cats = Object.entries(CAT_ID_TO_TEXT).map(([id, name]) => ({ id, name }));
-  res.json(cats);
-});
+// GET /api/expense/categories is served by expenseCategories.js (real categories with parents, icons and the user's own)
+
 
 // GET /api/expense/summary  — totals by category for the current month
 router.get('/summary', requireAuth, async (req, res) => {
