@@ -46,7 +46,7 @@ async function loadCategories(uid) {
 async function loadRules(uid) {
   const [u, g] = await Promise.all([
     supabase.from('user_sms_rules').select('merchant_pattern, category_id, pattern_tok').eq('user_id', uid),
-    require('./allRows').allRows(() => supabase.from('universal_merchant_rules').select('merchant_pattern, category_id').gte('confidence_score', 0.6).order('merchant_pattern'), 3000).then(data => ({ data })),
+    require('./allRows').allRows(() => supabase.from('universal_merchant_rules').select('merchant_pattern, category_id').gte('confidence_score', 60).order('merchant_pattern'), 3000).then(data => ({ data })),
   ]);
   const norm = (s) => String(s || '').toLowerCase().trim();
   const { isEnc, ruleMatches } = require('./privacy');
