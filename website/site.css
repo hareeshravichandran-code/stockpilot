@@ -494,3 +494,6 @@ html.family-hidden .stage.away .person { opacity: 1 !important; filter: none; }
 .end-family.in .ef:nth-child(2) { transition-delay: .08s; } .end-family.in .ef:nth-child(3) { transition-delay: .16s; } .end-family.in .ef:nth-child(4) { transition-delay: .24s; }
 html.family-hidden .end-family { display: none; }
 @media (max-width: 720px) { .end-family { order: 2; margin-right: -22px; position: relative; z-index: 1; } .end .btn { order: 3; } }
+
+/* The family stands beside Start free (no walking): a little larger on wide screens */
+@media (min-width: 721px) { .ef { width: 60px; } .ef .rig { width: 60px; } .ef.kid .rig { width: 50px; } .end-family { gap: 12px; margin-left: auto; margin-right: 8px; } }

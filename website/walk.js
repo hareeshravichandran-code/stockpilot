@@ -1,12 +1,14 @@
-/* Kanalyst — the family walks the page.
+/* Kanalyst — the family at the end of the page.
+ * Now: they stand beside Start free and point at it (no scroll animation). The walking code below is kept
+ * but not started.
+ * Before: the family walked the page.
  * Arjun, Meera, Paati and Nila leave the map in the hero and follow the visitor down the page, each to
  * the rooms that are theirs; Nila hops across the card tops. At the end they line up beside Start free.
  * Built on GSAP ScrollTrigger (scrub) + MotionPathPlugin. Desktop with a mouse only, never under reduced
  * motion; phones get the closing line-up. Uses transforms only. */
 (function () {
   'use strict';
-  if (!window.gsap || !window.ScrollTrigger || !window.KPEOPLE) return;
-  gsap.registerPlugin(ScrollTrigger, MotionPathPlugin);
+  if (!window.KPEOPLE) return;
 
   var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   var desktop = window.matchMedia('(min-width: 1080px) and (hover: hover) and (pointer: fine)');
@@ -252,12 +254,8 @@
     } else row.classList.add('in');
   }
 
-  function start() {
-    document.documentElement.classList.toggle('family-hidden', hidden);
-    if (reduce || !desktop.matches) { staticEnd(); return; }
-    makeLayer(); makeSwitch(); build();
-    var t; window.addEventListener('resize', function () { clearTimeout(t); t = setTimeout(function () { if (desktop.matches) { build(); ScrollTrigger.refresh(); } }, 250); });
-  }
+  // The family no longer walks the page: they only stand beside Start free and point at it (everywhere).
+  function start() { staticEnd(); }
   // Wait for fonts and layout so the anchors are where they will stay
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { requestAnimationFrame(start); });
   else window.addEventListener('load', start);
