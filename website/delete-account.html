@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Delete your account · Kanalyst</title>
+<meta name="description" content="How to delete your Kanalyst account and all its data, from the Android app, the web app, or by email.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="site.css">
+<style>
+  .pp { max-width: 1080px; margin: 0 auto; padding: 40px 24px 80px; display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 48px; }
+  .pp-head { grid-column: 1 / -1; }
+  .pp-head h1 { font-size: clamp(42px, 5vw, 64px); }
+  .pp-head p { color: var(--ink-2); margin-top: 10px; font-size: 18px; max-width: 60ch; }
+  .pp-sum { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+  .pp-sum div { background: var(--paper); border: 1px solid var(--line); border-radius: 18px; padding: 18px; }
+  .pp-sum b { display: block; font: 400 22px var(--serif); }
+  .pp-sum span { font-size: 14px; color: var(--ink-2); }
+  .toc { position: sticky; top: 90px; align-self: start; display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+  .toc a { text-decoration: none; color: var(--ink-2); padding: 5px 10px; border-radius: 8px; border-left: 3px solid transparent; }
+  .toc a:hover { background: var(--paper); color: var(--ink); border-left-color: var(--marigold); }
+  .body h2 { font-size: 30px; margin: 40px 0 12px; scroll-margin-top: 90px; }
+  .body h2:first-child { margin-top: 0; }
+  .body p, .body li { color: var(--ink-2); line-height: 1.7; }
+  .body p + p { margin-top: 12px; }
+  .body ul { padding-left: 20px; margin: 10px 0; }
+  .body strong { color: var(--ink); }
+  .callout { background: var(--paper); border-left: 4px solid var(--prussian); border-radius: 12px; padding: 16px 18px; margin: 16px 0; }
+  .callout p { color: var(--ink); }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 15px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; color: var(--ink-2); }
+  th { color: var(--ink); font-weight: 600; background: var(--paper); }
+  @media (max-width: 860px) { .pp { grid-template-columns: 1fr; gap: 24px; } .toc { display: none; } .pp-sum { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 520px) { .pp-sum { grid-template-columns: 1fr; } table { font-size: 14px; } th, td { padding: 8px; } }
+</style>
+</head>
+<body>
+<nav class="nav">
+  <a class="logo" href="/"><span class="mark" aria-hidden="true"></span>Kanalyst</a>
+  <div class="nav-links">
+    <a href="/">Home</a>
+    <a class="btn ghost" href="https://app.kanalyst.in/login">Log in</a>
+    <a class="btn" href="https://app.kanalyst.in/signup">Start free</a>
+  </div>
+</nav>
+
+<main class="pp" style="grid-template-columns:1fr;max-width:820px">
+  <header class="pp-head">
+    <h1>Delete your Kanalyst account</h1>
+    <p>Kanalyst (Android app <code>com.kanalyst.app</code> and app.kanalyst.in), by Hareesh Ravichandran, Chennai, India. You can delete your account and all its data at any time. It is free and can't be undone.</p>
+  </header>
+  <article class="body">
+    <h2>In the Android app</h2>
+    <ol>
+      <li>Open Kanalyst and go to <strong>Settings</strong>.</li>
+      <li>Scroll to the bottom and tap <strong>Delete Account &amp; All Data</strong>.</li>
+      <li>Confirm. Your account and data are deleted straight away and you are signed out.</li>
+    </ol>
+    <h2>On the web</h2>
+    <ol>
+      <li>Sign in at <a href="https://app.kanalyst.in/login">app.kanalyst.in</a>.</li>
+      <li>Go to <strong>Settings → Privacy → Delete account</strong>.</li>
+      <li>Type <strong>DELETE</strong> and confirm.</li>
+    </ol>
+    <h2>Without the app</h2>
+    <p>Email <a href="mailto:hello@kanalyst.in?subject=Delete%20my%20Kanalyst%20account">hello@kanalyst.in</a> from the email address you signed up with, with the subject "Delete my Kanalyst account". We confirm it is you, delete the account within 7 days, and reply when it is done.</p>
+    <h2>What is deleted</h2>
+    <p>Everything linked to your account: profile, transactions and SMS text, SMS rules and groups, what's due (bills, EMIs, subscriptions), investments and statements, family members, insurance policies, documents, dates, support messages and crash reports. Gmail access is revoked and its tokens deleted.</p>
+    <h2>What is kept</h2>
+    <p>Nothing that identifies you. Server logs without personal content expire automatically after a short time. Your encryption key in your own Google Drive app folder is yours: remove it from Google Drive → Settings → Manage apps → Kanalyst → Delete hidden app data.</p>
+    <p>More detail: <a href="/privacy">privacy policy</a>.</p>
+  </article>
+</main>
+
+<footer class="foot">
+  <span class="logo small"><span class="mark" aria-hidden="true"></span>Kanalyst</span>
+  <a href="/">Home</a>
+  <a href="https://app.kanalyst.in/login">Log in</a>
+  <a href="/privacy">Privacy</a>
+  <a href="/delete-account">Delete account</a>
+  <a href="mailto:hello@kanalyst.in">hello@kanalyst.in</a>
+  <span>© 2026 Kanalyst</span>
+</footer>
+</body>
+</html>

@@ -7,3 +7,4 @@
 /blueprint   https://app.kanalyst.in/blueprint   301
 /family      https://app.kanalyst.in/family      301
 /privacy     /privacy.html                       200
+/delete-account /delete-account.html 200

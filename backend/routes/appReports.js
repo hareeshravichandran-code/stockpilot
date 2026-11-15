@@ -31,6 +31,8 @@ router.post('/app-reports', async (req, res) => {
       happened_at: r?.happened_at && !isNaN(Date.parse(r.happened_at)) ? new Date(r.happened_at).toISOString() : null,
     })).filter(r => r.error || r.stack);
     if (rows.length) { const { error } = await supabase.from('app_reports').insert(rows); if (error) throw error; }
+    // Kept 90 days (privacy page promise)
+    supabase.from('app_reports').delete().lt('created_at', new Date(Date.now() - 90 * 864e5).toISOString()).then(() => {}, () => {});
     res.json({ ok: true, saved: rows.length });
   } catch (err) { console.error('[app-reports]', err.message); res.status(500).json({ error: 'Could not save' }); }
 });

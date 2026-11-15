@@ -394,12 +394,12 @@ router.delete('/delete-account', requireAuth, async (req, res) => {
       'expense_transactions','expense_categories','expense_budgets','expense_rules','expense_sms_rules','user_sms_rules','custom_fields',
       'goals','goal_assets','goal_cycles','fixed_deposits','recurring_deposits','nps_data','nps_holdings','asset_balances','retirement_plans',
       'portfolio_snapshots','portfolio_history','sync_logs','google_sheets_config',
-      'family_members','family_invites','password_reset_tokens','diag_sms','diag_uploads','support_messages',
+      'family_members','family_invites','password_reset_tokens','diag_sms','diag_uploads','support_messages','app_reports',
     ];
     for (const t of tables) {
       try { await supabase.from(t).delete().eq('user_id', uid); } catch(_) {}
     }
-    for (const t of ['event_payments','recurring_events','money_masters','insurance_policies','household_members','family_events','family_documents']) {
+    for (const t of ['sms_groups','event_payments','recurring_events','money_masters','insurance_policies','household_members','family_events','family_documents']) {
       try { await supabase.from(t).delete().eq('owner_id', uid); } catch(_) {}
     }
     await supabase.from('users').delete().eq('id', uid);
