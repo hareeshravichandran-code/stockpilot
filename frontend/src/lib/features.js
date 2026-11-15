@@ -4,7 +4,7 @@
  * Turn one back on by setting it to true; nothing else needs to change.
  */
 export const FEATURES = {
-  blueprint: false,     // goals on a visual plan
+  blueprint: true,      // goals on a visual plan (back on at the owner's request)
   retirement: false,    // retirement planner
 };
 
