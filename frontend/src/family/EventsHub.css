@@ -212,3 +212,15 @@
 
 .eh-x { width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--line, #E8DFD6); background: transparent; color: inherit; font-size: 20px; line-height: 1; cursor: pointer; margin-left: 4px; }
 .eh-x:hover { background: rgba(217, 84, 30, .08); }
+
+/* K-144: one question per due date; options and rules tucked away */
+.eh-ask { margin-top: 10px; padding: 12px 14px; border-radius: 14px; background: rgba(217, 84, 30, .06); border: 1px solid rgba(217, 84, 30, .22); }
+.eh-ask-q { margin: 0 0 8px; font-size: 15px; }
+.eh-ask-pay { margin-bottom: 10px; }
+.eh-ask .eh-occ-acts { margin-top: 0; }
+.eh-more { margin: 4px 0 6px; border-top: 1px solid var(--line, #E8DFD6); padding-top: 10px; }
+.eh-more > summary, .eh-adv > summary { cursor: pointer; font-weight: 600; list-style: none; padding: 6px 0; }
+.eh-more > summary::-webkit-details-marker, .eh-adv > summary::-webkit-details-marker { display: none; }
+.eh-more > summary::before, .eh-adv > summary::before { content: '▸ '; color: #D9541E; }
+.eh-more[open] > summary::before, .eh-adv[open] > summary::before { content: '▾ '; }
+.eh-adv .eh-sec-in { margin-top: 12px; padding: 0; border: 0; }
