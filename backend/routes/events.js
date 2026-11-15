@@ -119,6 +119,9 @@ function ruleBody(b) {
   if (b.category_id !== undefined) r.category_id = str(b.category_id, 80);
   if (b.event_id !== undefined) r.event_id = isUuid(b.event_id) ? b.event_id : null;
   if (b.label !== undefined) r.label = str(b.label, 2000);
+  // Account / card last digits (2-4): for card bills and EMIs whose amount changes
+  if (b.account_ref !== undefined) { const d = String(b.account_ref || '').replace(/\D/g, '').slice(-4); r.account_ref = d.length >= 2 ? d : null; }
+  if (b.ref_kind !== undefined) r.ref_kind = ['card', 'loan'].includes(b.ref_kind) ? b.ref_kind : null;
   return r;
 }
 async function checkRule(uid, r) {
@@ -129,8 +132,10 @@ async function checkRule(uid, r) {
   }
   if (!r.category_id) return 'Pick a category. Every rule puts its SMS in a category.';
   const words = !!r.merchant_pattern || (Array.isArray(r.pattern_tok) && r.pattern_tok.length);
-  if (!words && !r.sender_key) return 'Give the rule words from the SMS, a sender, or both.';
-  if (!words && r.amount_min == null && r.amount_max == null) return 'A rule with only a sender would catch every SMS from that bank. Add words or an amount.';
+  const ref = !!r.account_ref;
+  if (!words && !r.sender_key && !ref) return 'Give the rule words from the SMS, a sender, the account\'s last digits, or a mix.';
+  if (!words && !ref && r.amount_min == null && r.amount_max == null) return 'A rule with only a sender would catch every SMS from that bank. Add words, an amount or the account\'s last digits.';
+  if (ref && !words && !r.sender_key && !r.ref_kind) r.ref_kind = 'card';   // digits alone: only on card / loan payment SMS
   if (r.amount_min != null && r.amount_max != null && r.amount_min > r.amount_max) return 'The lowest amount is above the highest.';
   return null;
 }
@@ -153,6 +158,7 @@ router.get('/rules', requireAuth, async (req, res) => {
       return { id: r.id, category_id: r.category_id, is_ignored: !!r.is_ignored, event_id: r.event_id || null, event: r.event_id && evById[r.event_id] ? { id: r.event_id, title: evById[r.event_id].title, kind: evById[r.event_id].kind, status: evById[r.event_id].status } : null,
         merchant_pattern: r.merchant_pattern || null, has_words: !!r.merchant_pattern || (Array.isArray(r.pattern_tok) && r.pattern_tok.length > 0),
         label: r.label || null, sender_key: r.sender_key || null, amount_min: r.amount_min == null ? null : num(r.amount_min), amount_max: r.amount_max == null ? null : num(r.amount_max),
+        account_ref: r.account_ref || null, ref_kind: r.ref_kind || null,
         source: r.source || 'manual', from_phone: !r.source || r.source === 'manual' ? !r.user_confirmed : false, confirmed: !!r.user_confirmed,
         caught: caught.length, last_caught: caught[0] ? EM.istDay(caught[0].date_time) : null, updated_at: r.updated_at };
     });
@@ -358,6 +364,7 @@ router.get('/:id', requireAuth, async (req, res) => {
       rules: (rules || []).map(r => ({ id: r.id, category_id: r.category_id, merchant_pattern: r.merchant_pattern || null, label: r.label || null,
         has_words: !!r.merchant_pattern || (Array.isArray(r.pattern_tok) && r.pattern_tok.length > 0), sender_key: r.sender_key || null,
         amount_min: r.amount_min == null ? null : num(r.amount_min), amount_max: r.amount_max == null ? null : num(r.amount_max), source: r.source || 'manual',
+        account_ref: r.account_ref || null, ref_kind: r.ref_kind || null,
         caught: ruleTx.filter(t => EM.ruleScore(r, t) > 0).length })),
       occurrences: occ, other_payments: extra, today,
     });
@@ -468,8 +475,13 @@ function ruleFromTxn(e, t) {
   let lo = null, hi = null;
   if (mode === 'exact') { lo = a; hi = a; }
   else if (mode === 'about' || !tok) { lo = Math.floor(a * (mode === 'about' ? 0.9 : 0.75)); hi = Math.ceil(a * (mode === 'about' ? 1.1 : 1.25)); }
+  // Card bills and EMIs whose amount changes: learn the account's last digits instead of an amount range
+  const l4 = String(t.account_last4 || '').replace(/\D/g, '').slice(-4);
+  const refKind = e.kind === 'card_due' ? 'card' : e.kind === 'emi' ? 'loan' : null;
+  if (refKind && mode !== 'exact' && l4.length >= 3) { lo = null; hi = null; }
   return { event_id: e.id, category_id: e.category_id, sender_key: EM.senderKey(t.sms_sender), pattern_tok: tok, merchant_pattern: null,
-    amount_min: lo, amount_max: hi, label: t.merchant || t.description || null, sample_txn: t.id, source: 'event_map' };
+    amount_min: lo, amount_max: hi, account_ref: refKind && l4.length >= 3 ? l4 : null, ref_kind: refKind && l4.length >= 3 ? refKind : null,
+    label: t.merchant || t.description || null, sample_txn: t.id, source: 'event_map' };
 }
 
 router.post('/:id/occurrences/:period', requireAuth, async (req, res) => {

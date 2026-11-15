@@ -142,6 +142,39 @@ describe('rules made for events that have none', () => {
     assert.equal(rows('recurring_events')[0].category_id, 'cc_bill');
   });
 
+  test('K-145: a card bill is settled by the card digits from its master, whatever the amount', async () => {
+    db._seed('money_masters', [{ owner_id: uid, kind: 'card', title: 'ICICI card', institution: 'ICICI Bank', ref_key: '6007', match: {} }]);
+    const m = rows('money_masters')[0];
+    db._seed('recurring_events', [claudeEvent({ kind: 'card_due', title: 'ICICI card bill', master_table: 'money_masters', master_id: m.id, amount: null, amount_mode: 'any', due_day: 9, rules_seeded: false, category_id: null })]);
+    const ev = rows('recurring_events')[0];
+    db._seed('expense_transactions', [
+      // a card spend with the same digits: not a bill payment
+      txn({ amount: 500, sms_body: 'Rs 500 spent on ICICI Bank Card XX6007 at AMAZON', date_time: ist(`${lastMonth}-05`) }),
+      // the bill payment: any amount
+      txn({ amount: 24500, sms_body: 'Payment of Rs 24,500.00 received towards your ICICI Bank Credit Card XX6007. Thank you', date_time: ist(PAY) }),
+    ]);
+    await EM.runMatching(uid, { force: true });
+    const rule = rows('user_sms_rules').find(r => r.event_id === ev.id);
+    assert.ok(rule, 'a rule was made');
+    assert.equal(rule.account_ref, '6007');
+    assert.equal(rule.ref_kind, 'card');
+    assert.equal(rule.category_id, 'cc_bill');
+    const pays = rows('event_payments').filter(p => p.event_id === ev.id);
+    assert.equal(pays.length, 1, 'only the bill payment settles it');
+    assert.equal(pays[0].amount, 24500);
+  });
+
+  test('K-145: an EMI with a masked loan number is settled by those digits', async () => {
+    db._seed('money_masters', [{ owner_id: uid, kind: 'loan', title: 'Home loan', institution: 'HDFC Bank', ref_key: '756', match: {} }]);
+    const m = rows('money_masters')[0];
+    db._seed('recurring_events', [claudeEvent({ kind: 'emi', title: 'Home loan EMI', master_table: 'money_masters', master_id: m.id, amount: 32786, due_day: 9, rules_seeded: false, category_id: null })]);
+    const ev = rows('recurring_events')[0];
+    db._seed('expense_transactions', [txn({ amount: 32786, sms_body: 'EMI of Rs 32786 for loan a/c xxxxxx756 debited on 07-Nov', date_time: ist(PAY) })]);
+    await EM.runMatching(uid, { force: true });
+    assert.ok(rows('user_sms_rules').some(r => r.event_id === ev.id && r.account_ref === '756' && r.ref_kind === 'loan'));
+    assert.ok(rows('event_payments').some(p => p.event_id === ev.id && p.period === DUE));
+  });
+
   test('a failed save is retried next run, never marked done', async () => {
     db._seed('recurring_events', [claudeEvent({ rules_seeded: false })]);
     const ev = rows('recurring_events')[0];

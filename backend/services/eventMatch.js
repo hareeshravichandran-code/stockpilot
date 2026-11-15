@@ -106,17 +106,44 @@ function pickPeriod(ev, date, settled) {
   return null;
 }
 
+/** Account / card last digits in a payment: the parsed last4, masked numbers in the text ("XX6007", "a/c ...756"), or x: signals. */
+function hasAccountRef(t, ref) {
+  ref = String(ref || '').replace(/\D/g, '');
+  if (ref.length < 2) return false;
+  if (String(t.account_last4 || '').replace(/\D/g, '').endsWith(ref)) return true;
+  const sig = Array.isArray(t.signals) ? t.signals : [];
+  if (sig.some(s => typeof s === 'string' && s.startsWith('x:') && s.endsWith(ref))) return true;
+  const text = [t.sms_body, t.description].filter(x => typeof x === 'string' && !isEnc(x)).join(' ');
+  return text.replace(/\D+/g, ' ').split(' ').some(d => d.length >= ref.length && d.length <= 20 && d.endsWith(ref));
+}
+// A rule on account digits alone must also see the right kind of SMS (a card-bill payment, an EMI)
+const REF_WORDS = {
+  card: [/credit\s*card|\bcard\b|\bcc\b/i, /payment|paid|received|towards|credited|bill/i],
+  loan: [/\bemi\b|loan|instal(l)?ment|nach|repay/i],
+};
+function refKindOk(kind, t) {
+  const words = REF_WORDS[kind]; if (!words) return true;
+  const text = [t.sms_body, t.description, t.merchant].filter(x => typeof x === 'string' && !isEnc(x)).join(' ');
+  const sig = (Array.isArray(t.signals) ? t.signals : []).join(' ');
+  return words.every(rx => rx.test(text) || rx.test(sig));
+}
+
 /** Does an SMS rule catch this payment? Returns a specificity score, or 0. */
 function ruleScore(rule, t) {
   if (rule.is_deleted) return 0;
   const hasPattern = !!rule.merchant_pattern || (Array.isArray(rule.pattern_tok) && rule.pattern_tok.length);
-  if (!rule.sender_key && !hasPattern) return 0;
+  const ref = rule.account_ref ? String(rule.account_ref).replace(/\D/g, '') : '';
+  if (!rule.sender_key && !hasPattern && ref.length < 2) return 0;
   if (rule.sender_key && senderKey(t.sms_sender) !== rule.sender_key) return 0;
   const a = num(t.amount);
   if (rule.amount_min != null && a < num(rule.amount_min) - 0.5) return 0;
   if (rule.amount_max != null && a > num(rule.amount_max) + 0.5) return 0;
   if (hasPattern && !ruleMatches(rule, t)) return 0;
-  return (rule.sender_key ? 1 : 0) + (hasPattern ? 2 : 0) + (rule.amount_min != null || rule.amount_max != null ? 1 : 0);
+  if (ref) {
+    if (!hasAccountRef(t, ref)) return 0;
+    if (!rule.sender_key && !hasPattern && !refKindOk(rule.ref_kind, t)) return 0;
+  }
+  return (rule.sender_key ? 1 : 0) + (hasPattern ? 2 : 0) + (rule.amount_min != null || rule.amount_max != null ? 1 : 0) + (ref ? 2 : 0);
 }
 
 /** Category an event's payments go to when the user hasn't picked one (ids from the app's category list). */
@@ -134,7 +161,7 @@ async function seedRules(uid, events, rules, txns, pays) {
   const todo = events.filter(e => !e.rules_seeded && !has.has(e.id));
   if (!todo.length) return [];
   const masterIds = todo.filter(e => e.master_table === 'money_masters' && e.master_id).map(e => e.master_id);
-  const { data: masters } = masterIds.length ? await supabase.from('money_masters').select('id, amount, match').in('id', masterIds) : { data: [] };
+  const { data: masters } = masterIds.length ? await supabase.from('money_masters').select('id, amount, match, ref_key').in('id', masterIds) : { data: [] };
   const masterOf = Object.fromEntries((masters || []).map(m => [m.id, m]));
   const byId = Object.fromEntries((txns || []).map(t => [t.id, t]));
   const made = [];
@@ -151,6 +178,11 @@ async function seedRules(uid, events, rules, txns, pays) {
       const range = !m?.match?.any_amount && amt ? [Math.floor(amt * 0.85), Math.ceil(amt * 1.15)] : null;
       const sender = m?.match?.sender ? senderKey(m.match.sender) || m.match.sender : null;
       for (const k of kw.slice(0, 3)) rows.push({ merchant_pattern: k.toLowerCase(), pattern_tok: null, sender_key: sender, amount_min: range?.[0] ?? null, amount_max: range?.[1] ?? null, source: 'from_master', label: k });
+      // Card bills and EMIs: the account's last digits (their amount changes every month)
+      const refKind = e.kind === 'card_due' ? 'card' : e.kind === 'emi' ? 'loan' : null;
+      const mref = String(m?.ref_key || '').replace(/\D/g, '');
+      if (refKind && mref.length >= 2) rows.push({ merchant_pattern: null, pattern_tok: null, sender_key: sender, amount_min: null, amount_max: null,
+        account_ref: mref.slice(-4), ref_kind: refKind, source: 'from_master', label: (refKind === 'card' ? 'Card ' : 'Loan ') + '\u2022\u2022' + mref.slice(-4) });
       if (!kw.length && tok.length) rows.push({ merchant_pattern: null, pattern_tok: tok.slice(0, 6), sender_key: sender, amount_min: range?.[0] ?? null, amount_max: range?.[1] ?? null, source: 'from_master', label: null });
       // From payments already tied to it (or to its master): one rule per sender, amount range from those payments
       const paid = (pays || []).filter(p => p.event_id === e.id && p.txn_ref && byId[p.txn_ref]).map(p => byId[p.txn_ref])
@@ -160,7 +192,13 @@ async function seedRules(uid, events, rules, txns, pays) {
       for (const [k, list] of Object.entries(bySender)) {
         const a = list.map(t => num(t.amount));
         const lo = Math.min(...a), hi = Math.max(...a);
-        if (e.amount_mode === 'any' || hi > lo * 1.6) continue;      // a sender alone with no steady amount would catch every SMS of that bank
+        if (e.amount_mode === 'any' || hi > lo * 1.6) {
+          // No steady amount: only usable with the account digits every payment shares (card bills, EMIs)
+          const l4 = [...new Set(list.map(t => String(t.account_last4 || '').replace(/\D/g, '').slice(-4)).filter(x => x.length >= 3))];
+          if (l4.length === 1 && !rows.some(r => r.account_ref === l4[0])) rows.push({ merchant_pattern: null, pattern_tok: null, sender_key: k, amount_min: null, amount_max: null,
+            account_ref: l4[0], ref_kind: e.kind === 'card_due' ? 'card' : e.kind === 'emi' ? 'loan' : null, source: 'from_payments', label: null });
+          continue;                                               // a sender alone with no steady amount would catch every SMS of that bank
+        }
         const names = [...new Set(list.map(t => (t.merchant && !isEnc(t.merchant) ? String(t.merchant).toLowerCase().trim() : '')))];
         const word = names.length === 1 && names[0].length >= 3 ? names[0].slice(0, 60) : null;
         if (rows.some(r => r.sender_key === k && r.amount_min != null && r.amount_min <= lo && r.amount_max >= hi)) continue;
@@ -254,4 +292,5 @@ async function runMatching(uid, { force = false, matchesMaster = null } = {}) {
   return { linked: newPays.length, tagged: txnPatch.length };
 }
 
-module.exports = { seedRules, DEFAULT_CAT, senderKey, periods, stateOf, pickPeriod, ruleScore, runMatching, intervalDays, bufferOf, todayStr, istDay, addDays, diffDays };
+module.exports = {
+  hasAccountRef, seedRules, DEFAULT_CAT, senderKey, periods, stateOf, pickPeriod, ruleScore, runMatching, intervalDays, bufferOf, todayStr, istDay, addDays, diffDays };

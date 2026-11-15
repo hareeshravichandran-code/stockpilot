@@ -88,6 +88,7 @@ function ruleWhen(r) {
       ? (r.amount_min === r.amount_max ? inr(r.amount_min) : `${inr(r.amount_min)} – ${inr(r.amount_max)}`)
       : r.amount_min != null ? `from ${inr(r.amount_min)}` : `up to ${inr(r.amount_max)}`]);
   }
+  if (r.account_ref) parts.push([r.ref_kind === 'loan' ? 'Loan' : r.ref_kind === 'card' ? 'Card' : 'Account', `••${r.account_ref}`]);
   return parts;
 }
 
@@ -236,6 +237,7 @@ function RuleForm({ initial, preset, cats, events, onClose, onSaved, notify }) {
     event_id: r0.event_id || preset?.event_id || '', category_id: r0.category_id || preset?.category_id || '',
     sender_key: r0.sender_key || preset?.sender_key || '', words: r0.merchant_pattern || '',
     amount_min: r0.amount_min ?? preset?.amount_min ?? '', amount_max: r0.amount_max ?? preset?.amount_max ?? '',
+    account_ref: r0.account_ref || preset?.account_ref || '',
   });
   const keepPayee = !!(initial && !initial.merchant_pattern && initial.has_words);
   const [senders, setSenders] = useState([]);
@@ -250,12 +252,14 @@ function RuleForm({ initial, preset, cats, events, onClose, onSaved, notify }) {
     event_id: f.event_id || null, category_id: f.category_id || null, sender_key: f.sender_key || null,
     ...(f.words.trim() ? { merchant_pattern: f.words.trim().toLowerCase(), pattern_tok: null } : keepPayee ? {} : { merchant_pattern: null, pattern_tok: null }),
     amount_min: f.amount_min === '' ? null : Number(f.amount_min), amount_max: f.amount_max === '' ? null : Number(f.amount_max),
-  }), [f, keepPayee]);
+    account_ref: f.account_ref.replace(/\D/g, '').slice(-4) || null,
+    ...(f.account_ref && ev && (ev.kind === 'card_due' || ev.kind === 'emi') ? { ref_kind: ev.kind === 'card_due' ? 'card' : 'loan' } : {}),
+  }), [f, keepPayee, ev]);
   // Live preview: which recent SMS this rule catches
   const t = useRef(null);
   useEffect(() => {
     clearTimeout(t.current);
-    if (!body.sender_key && !body.merchant_pattern && !keepPayee) { setPrev(null); return undefined; }
+    if (!body.sender_key && !body.merchant_pattern && !body.account_ref && !keepPayee) { setPrev(null); return undefined; }
     t.current = setTimeout(() => {
       const q = keepPayee ? null : body;
       if (!q) { setPrev(initial ? { count: initial.caught, sample: [] } : null); return; }
@@ -266,7 +270,7 @@ function RuleForm({ initial, preset, cats, events, onClose, onSaved, notify }) {
   const save = async () => {
     setErr('');
     if (!body.category_id) return setErr('Pick a category. Every rule files its SMS in a category.');
-    if (!body.sender_key && !body.merchant_pattern && !keepPayee) return setErr('Give the rule a sender, words from the SMS, or both.');
+    if (!body.sender_key && !body.merchant_pattern && !body.account_ref && !keepPayee) return setErr('Give the rule a sender, words from the SMS, or the account\'s last digits.');
     setBusy(true);
     try {
       if (initial) await eventsAPI.updateRule(initial.id, body); else await eventsAPI.createRule({ ...body, source: 'web' });
@@ -290,6 +294,9 @@ function RuleForm({ initial, preset, cats, events, onClose, onSaved, notify }) {
             <Field label="amount from"><input type="number" min="0" value={f.amount_min} onChange={set('amount_min')} placeholder="Any" /></Field>
             <Field label="to"><input type="number" min="0" value={f.amount_max} onChange={set('amount_max')} placeholder="Any" /></Field>
           </div>
+          <Field label="mentions account / card ending in" hint="Last 2 to 4 digits, e.g. 6007 for Card XX6007. Best for card bills and EMIs, whose amount changes.">
+            <input inputMode="numeric" value={f.account_ref} onChange={(e) => set('account_ref')(e.target.value.replace(/[^0-9xX*]/g, '').slice(0, 8))} placeholder="Any account" />
+          </Field>
         </div>
         <div className="eh-rf-arrow" aria-hidden="true">→</div>
         <div className="eh-rf-col">
@@ -304,7 +311,7 @@ function RuleForm({ initial, preset, cats, events, onClose, onSaved, notify }) {
         </div>
       </div>
       <div className="eh-preview" aria-live="polite">
-        {prev == null ? <span className="eh-dim">Add a sender or words to see which SMS this rule catches.</span> : (
+        {prev == null ? <span className="eh-dim">Add a sender, words or account digits to see which SMS this rule catches.</span> : (
           <>
             <b>{prev.count ? `Catches ${prev.count} SMS from the last 6 months` : 'Catches no SMS from the last 6 months'}</b>
             {prev.count > 40 && !f.event_id ? null : null}

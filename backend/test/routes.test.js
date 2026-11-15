@@ -18,6 +18,12 @@ describe('events and SMS rules API', () => {
     const r = await api.call('POST', '/api/events/rules', { sender_key: 'ICICIT', amount_min: 100, amount_max: 200 });
     assert.equal(r.status, 400);
   });
+  test('K-145: a rule on card digits alone is allowed (card bills change amount)', async () => {
+    const r = await api.call('POST', '/api/events/rules', { account_ref: 'XX6007', category_id: 'cc_bill' });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(rows('user_sms_rules')[0].account_ref, '6007');
+    assert.equal(rows('user_sms_rules')[0].ref_kind, 'card');
+  });
   test('a sender-only rule needs words or an amount', async () => {
     const r = await api.call('POST', '/api/events/rules', { sender_key: 'ICICIT', category_id: 'food_dining' });
     assert.equal(r.status, 400);
