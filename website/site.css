@@ -497,3 +497,38 @@ html.family-hidden .end-family { display: none; }
 
 /* The family stands beside Start free (no walking): a little larger on wide screens */
 @media (min-width: 721px) { .ef { width: 60px; } .ef .rig { width: 60px; } .ef.kid .rig { width: 50px; } .end-family { gap: 12px; margin-left: auto; margin-right: 8px; } }
+
+/* K-141: hero demo phone (a bill due, the SMS arrives, it is paid). 9 s loop; reduced motion shows the paid state. */
+.demo { display: flex; flex-direction: column; align-items: center; gap: 14px; animation: rise .8s var(--ease) .1s both; }
+.phone { position: relative; width: min(330px, 86vw); aspect-ratio: 9 / 13; border-radius: 38px; background: #FAF7F0; border: 10px solid #2E211A; box-shadow: 0 40px 80px -30px rgba(46,33,26,.45); overflow: hidden; font-size: 14px; }
+.ph-bar { display: flex; justify-content: space-between; padding: 10px 18px 4px; font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.ph-dots { letter-spacing: 2px; font-size: 8px; }
+.ph-body { padding: 8px 14px; display: flex; flex-direction: column; gap: 10px; }
+.ph-h { font-family: var(--serif, Georgia), serif; font-size: 22px; margin: 4px 2px 2px; }
+.due-card { position: relative; display: grid; grid-template-columns: 36px 1fr auto; gap: 10px; align-items: center; background: #fff; border: 1px solid rgba(46,33,26,.1); border-radius: 16px; padding: 12px; }
+.due-card.dim { opacity: .62; }
+.due-ico { width: 36px; height: 36px; border-radius: 12px; display: grid; place-items: center; background: rgba(217,84,30,.1); color: #D9541E; font-size: 13px; }
+.due-txt b { display: block; font-size: 15px; } .due-txt small { color: var(--ink-2); font-size: 12px; }
+.due-amt { text-align: right; display: grid; justify-items: end; gap: 4px; } .due-amt b { font-size: 15px; }
+.due-tag { font-size: 11px; font-weight: 700; border-radius: 999px; padding: 3px 8px; white-space: nowrap; }
+.due-tag.calm { background: rgba(46,33,26,.07); color: var(--ink-2); }
+.due-soon { background: #F8DCCB; color: #A8401A; grid-area: 2 / 1; }
+.due-paid { background: #DCEFD9; color: #2E6B2A; grid-area: 2 / 1; opacity: 0; }
+.due-card:first-of-type { animation: ring 9s infinite; }
+.due-soon { animation: soon 9s infinite; } .due-paid { animation: paid 9s infinite; }
+.sms { position: absolute; left: 10px; right: 10px; top: 8px; z-index: 2; background: rgba(43,33,28,.94); color: #FAF7F0; border-radius: 16px; padding: 10px 12px; font-size: 12px; line-height: 1.35; display: grid; gap: 2px; transform: translateY(-130%); animation: sms 9s infinite; box-shadow: 0 12px 30px -10px rgba(0,0,0,.4); }
+.sms b { color: #E8A27A; font-size: 12px; }
+.ph-note { margin: 4px 2px 0; font-size: 12px; color: var(--ink-2); position: relative; min-height: 18px; }
+.ph-note span { position: absolute; left: 0; top: 0; } .n-on { animation: non 9s infinite; } .n-off { opacity: 0; color: #2E6B2A; font-weight: 600; animation: noff 9s infinite; }
+.demo-cap { margin: 0; font-size: 15px; color: var(--ink-2); text-align: center; } .demo-cap b { color: var(--ink); }
+@keyframes ring { 0%, 30% { box-shadow: 0 0 0 0 rgba(217,84,30,0); border-color: rgba(217,84,30,.5); } 12% { box-shadow: 0 0 0 6px rgba(217,84,30,.16); } 24% { box-shadow: 0 0 0 0 rgba(217,84,30,0); } 46%, 92% { border-color: rgba(46,107,42,.45); box-shadow: none; } 100% { border-color: rgba(217,84,30,.5); } }
+@keyframes sms { 0%, 30% { transform: translateY(-130%); } 36%, 52% { transform: translateY(0); } 58%, 100% { transform: translateY(-130%); } }
+@keyframes soon { 0%, 44% { opacity: 1; } 48%, 94% { opacity: 0; } 100% { opacity: 1; } }
+@keyframes paid { 0%, 44% { opacity: 0; transform: scale(.8); } 50% { opacity: 1; transform: scale(1.12); } 54%, 94% { opacity: 1; transform: none; } 100% { opacity: 0; } }
+@keyframes non { 0%, 44% { opacity: 1; } 48%, 94% { opacity: 0; } 100% { opacity: 1; } }
+@keyframes noff { 0%, 46% { opacity: 0; } 52%, 94% { opacity: 1; } 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .sms, .due-card:first-of-type, .due-soon, .due-paid, .n-on, .n-off { animation: none !important; }
+  .due-soon, .n-on { opacity: 0; } .due-paid, .n-off { opacity: 1; } .sms { transform: translateY(0); }
+}
+.family-sec .home { max-width: 760px; margin: 0 auto; }

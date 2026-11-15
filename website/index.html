@@ -46,6 +46,32 @@
     </ul>
   </div>
 
+  <div class="demo" aria-label="Demo: a Netflix payment is due, the bank SMS arrives, and Kanalyst marks it paid.">
+    <div class="phone" aria-hidden="true">
+      <div class="ph-bar"><span>9:41</span><span class="ph-dots">●●●</span></div>
+      <div class="sms"><b>HDFC Bank</b><span>Rs 649.00 debited for NETFLIX.COM on 12-Nov. UPI ref 4123…</span></div>
+      <div class="ph-body">
+        <p class="ph-h">What's due</p>
+        <div class="due-card">
+          <span class="due-ico">▶</span>
+          <div class="due-txt"><b>Netflix</b><small>Every month · 12th</small></div>
+          <div class="due-amt"><b>₹649</b>
+            <span class="due-tag due-soon">Due today</span>
+            <span class="due-tag due-paid">Paid ✓</span>
+          </div>
+        </div>
+        <div class="due-card dim"><span class="due-ico">⌂</span><div class="due-txt"><b>Home loan EMI</b><small>5 Dec</small></div><div class="due-amt"><b>₹32,786</b><span class="due-tag calm">In 20 days</span></div></div>
+        <div class="due-card dim"><span class="due-ico">▭</span><div class="due-txt"><b>HDFC card bill</b><small>18 Dec</small></div><div class="due-amt"><b>₹24,500</b><span class="due-tag calm">In 33 days</span></div></div>
+        <p class="ph-note"><span class="n-on">Reminder on</span><span class="n-off">Reminder stopped: the bank SMS arrived</span></p>
+      </div>
+    </div>
+    <p class="demo-cap"><b>Due → SMS arrives → paid.</b> No typing, no ticking boxes.</p>
+  </div>
+</header>
+
+<!-- ═══ The family map (moved below the hero) ═══ -->
+<section class="sec family-sec" aria-labelledby="fam-h">
+  <div class="sec-head"><h2 id="fam-h">Everyone in one home.</h2><p>Tap a person to see what's theirs.</p></div>
   <div class="home" id="home">
     <div class="stage" role="group" aria-label="A sample family in Kanalyst. Choose a person to see their things.">
       <svg class="orbit" viewBox="0 0 100 100" aria-hidden="true">
@@ -66,7 +92,7 @@
     </div>
     <div class="pick" role="group" aria-label="Choose a person"></div>
   </div>
-</header>
+</section>
 
 <!-- ═══ Rooms (modules) ════════════════════════════════════════ -->
 <section id="features" class="sec rooms">
