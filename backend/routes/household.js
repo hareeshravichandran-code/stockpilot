@@ -286,8 +286,11 @@ async function buildCalendar(uid, from, to, req = null, opts = {}) {
     }
   }
   // Blueprint goals: target dates, monthly / yearly goals and EMIs
+  // Loans that are events now come from the events master below (with paid / due / overdue)
+  const loanEv = new Set((((rev && rev.data) || []).filter(e => e.master_table === 'bp_buckets' && e.status !== 'closed')).map(e => String(e.master_id)));
   for (const b of bks.data || []) {
     if (b.is_loan) continue;
+    if (b.is_emi && loanEv.has(String(b.id))) continue;
     if (b.policy_id && b.recurrence !== 'none') continue;          // its premium is already on the calendar from the policy
     const om = ownerMember(b.user_id);
     const base = { module: b.is_emi ? 'loans' : 'goals', ref: b.id, member_ids: om ? [om.id] : [] };

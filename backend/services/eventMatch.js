@@ -185,8 +185,14 @@ async function seedRules(uid, events, rules, txns, pays) {
         account_ref: mref.slice(-4), ref_kind: refKind, source: 'from_master', label: (refKind === 'card' ? 'Card ' : 'Loan ') + '\u2022\u2022' + mref.slice(-4) });
       if (!kw.length && tok.length) rows.push({ merchant_pattern: null, pattern_tok: tok.slice(0, 6), sender_key: sender, amount_min: range?.[0] ?? null, amount_max: range?.[1] ?? null, source: 'from_master', label: null });
       // From payments already tied to it (or to its master): one rule per sender, amount range from those payments
-      const paid = (pays || []).filter(p => p.event_id === e.id && p.txn_ref && byId[p.txn_ref]).map(p => byId[p.txn_ref])
+      let paid = (pays || []).filter(p => p.event_id === e.id && p.txn_ref && byId[p.txn_ref]).map(p => byId[p.txn_ref])
         .concat((txns || []).filter(t => t.event_id === e.id || (e.master_table === 'money_masters' && e.master_id && t.master_id === e.master_id)));
+      // A loan's EMI (no master keywords): earlier debits of the EMI amount (±2%) that say EMI / loan / NACH
+      if (e.kind === 'emi' && e.master_table === 'bp_buckets' && num(e.amount) && !paid.length) {
+        const a0 = num(e.amount);
+        paid = (txns || []).filter(t => t.type === 'DEBIT' && Math.abs(num(t.amount) - a0) <= a0 * 0.02
+          && ((Array.isArray(t.signals) && t.signals.some(s => ['emi', 'loan', 'nach'].includes(s))) || /\b(emi|loan|nach|ach|ecs)\b/i.test(`${isEnc(t.merchant) ? '' : t.merchant || ''} ${isEnc(t.sms_body) ? '' : t.sms_body || ''} ${isEnc(t.description) ? '' : t.description || ''}`)));
+      }
       const bySender = {};
       for (const t of paid) { const k = senderKey(t.sms_sender); if (k) (bySender[k] = bySender[k] || []).push(t); }
       for (const [k, list] of Object.entries(bySender)) {
@@ -231,6 +237,31 @@ async function seedRules(uid, events, rules, txns, pays) {
 }
 
 const lastRun = new Map();
+
+/**
+ * Loans kept in Blueprint (EMI buckets) become events, so their EMI is settled by bank SMS, blinks when due
+ * and shows in What's due like a card bill or SIP. One event per bucket (master_table 'bp_buckets').
+ */
+async function ensureLoanEvents(uid) {
+  const { data: bks } = await supabase.from('bp_buckets').select('id, name, target_amount, recurrence, recurrence_day, target_date, status, is_emi')
+    .eq('user_id', uid).eq('is_emi', true);
+  const live = (bks || []).filter(b => b.status !== 'completed' && b.recurrence === 'monthly' && b.recurrence_day);
+  if (!live.length) return 0;
+  const { data: have } = await supabase.from('recurring_events').select('id, master_id').eq('owner_id', uid).eq('master_table', 'bp_buckets');
+  const known = new Set((have || []).map(e => String(e.master_id)));
+  const { lockRow } = require('./privacy');
+  let made = 0;
+  for (const b of live) {
+    if (known.has(String(b.id))) continue;
+    const title = isEnc(b.name) ? b.name : `${String(b.name || 'Loan').slice(0, 140)} EMI`;
+    const row = await lockRow(uid, { owner_id: uid, master_table: 'bp_buckets', master_id: String(b.id), kind: 'emi', title, amount: num(b.target_amount) || null,
+      frequency: 'monthly', due_day: Math.min(31, Math.max(1, Number(b.recurrence_day))), end_date: b.target_date && b.target_date > todayStr() ? b.target_date : null, remind_days: 3, direction: 'out',
+      category_id: DEFAULT_CAT.emi, amount_mode: 'about', source: 'loan', status: 'active' }, { texts: ['title', 'notes'] });
+    const { error } = await supabase.from('recurring_events').insert(row);
+    if (!error) made++;
+  }
+  return made;
+}
 /**
  * Tie the user's payments to their events and occurrences. Safe to call often (throttled).
  * matchesMaster(master, txn) is the masters module's matcher (injected to avoid a require cycle).
@@ -238,6 +269,7 @@ const lastRun = new Map();
 async function runMatching(uid, { force = false, matchesMaster = null } = {}) {
   if (!force && Date.now() - (lastRun.get(uid) || 0) < 90 * 1000) return { skipped: true };
   lastRun.set(uid, Date.now());
+  await ensureLoanEvents(uid).catch(() => 0);
   const since = Date.now() - 400 * DAY;
   const [{ data: evs }, { data: rules }, txns] = await Promise.all([
     supabase.from('recurring_events').select('*').eq('owner_id', uid).eq('status', 'active'),
@@ -293,4 +325,5 @@ async function runMatching(uid, { force = false, matchesMaster = null } = {}) {
 }
 
 module.exports = {
+  ensureLoanEvents,
   hasAccountRef, seedRules, DEFAULT_CAT, senderKey, periods, stateOf, pickPeriod, ruleScore, runMatching, intervalDays, bufferOf, todayStr, istDay, addDays, diffDays };

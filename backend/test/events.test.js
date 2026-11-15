@@ -66,6 +66,26 @@ describe('matching through rules only', () => {
     assert.equal(t.category_id, 'p_membership', 'NACH payment takes the event category');
   });
 
+  test('a Blueprint loan becomes an EMI event, gets a rule from its earlier EMI debits and is settled by SMS', async () => {
+    db._seed('bp_buckets', [{ id: 'bk-home', user_id: uid, name: 'Home Loan', kind: 'goal', status: 'active', is_emi: true, recurrence: 'monthly', recurrence_day: 9, target_amount: 33000 }]);
+    const before = `${monthBefore(lastMonth, 1)}-08`;
+    db._seed('expense_transactions', [
+      txn({ amount: 33000, sms_sender: 'VM-HDFCBK', sms_body: 'EMI of Rs 33000 debited for loan a/c', date_time: ist(before) }),
+      txn({ amount: 33000, sms_sender: 'VM-HDFCBK', sms_body: 'Rs 33000 debited NACH', date_time: ist(PAY) }),
+      txn({ amount: 33000, sms_sender: 'VM-HDFCBK', sms_body: 'Rs 33000 debited to a friend', date_time: ist(PAY) + 3600e3 * 30, signals: [] }),
+    ]);
+    await EM.runMatching(uid, { force: true });
+    const ev = rows('recurring_events').find(e => e.master_table === 'bp_buckets');
+    assert.ok(ev, 'loan has an event');
+    assert.equal(ev.kind, 'emi');
+    assert.equal(ev.due_day, 9);
+    assert.ok(rows('user_sms_rules').some(r => r.event_id === ev.id && r.sender_key === 'HDFCBK' && r.amount_min <= 33000 && r.amount_max >= 33000), 'rule from the EMI debits');
+    await EM.runMatching(uid, { force: true });
+    assert.ok(rows('event_payments').some(p => p.event_id === ev.id && p.period === DUE), 'last EMI marked paid');
+    await EM.ensureLoanEvents(uid);
+    assert.equal(rows('recurring_events').filter(e => e.master_table === 'bp_buckets').length, 1, 'one event per loan');
+  });
+
   test('no rule, no match (the master or a lookalike amount alone never settles an event)', async () => {
     db._seed('recurring_events', [claudeEvent({ master_table: 'money_masters', master_id: 'x' })]);
     db._seed('expense_transactions', [txn({ amount: 1982.4, date_time: ist(PAY) })]);
