@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { createPortal } from 'react-dom';
 import { moneyflowAPI, mastersAPI, expenseAPI } from '../lib/api';
 import { inrShort } from '../money/kinds';
 import './MoneyFlow.css';
@@ -202,14 +203,15 @@ function rangeOf(p, month, from, to) {
 /** A small dialog (Escape or the backdrop closes it). */
 function Dialog({ title, children, onClose, actions }) {
   useEffect(() => { const k = (e) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose]);
-  return (
-    <div className="mf2-dlg-back" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+  // Rendered on <body>: the page's entry animation (a transform) would otherwise pin "fixed" to the page, off-screen
+  return createPortal(
+    <div className="mf2 mf2-dlg-back" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="mf2-dlg" role="dialog" aria-modal="true" aria-label={title}>
         <h3>{title}</h3>
         <div className="mf2-dlg-body">{children}</div>
         <div className="mf2-dlg-acts">{actions}</div>
       </div>
-    </div>
+    </div>, document.body
   );
 }
 
@@ -394,7 +396,7 @@ function Report({ month, cats }) {
       {act?.kind === 'cat' && <CategoryDialog row={act.row} cats={cats} others={othersOf(act.row).filter(o => o.category_id !== act.row.category_id || !o.category_id)} onClose={() => setAct(null)} onDone={done} />}
       {act?.kind === 'edit' && <EditDialog row={act.row} onClose={() => setAct(null)} onDone={done} />}
       {act?.kind === 'del' && <DeleteDialog row={act.row} others={othersOf(act.row)} onClose={() => setAct(null)} onDone={done} />}
-      {toast && <div className="mf2-toast" role="status">{toast}</div>}
+      {toast && createPortal(<div className="mf2 mf2-toast" role="status">{toast}</div>, document.body)}
     </div>
   );
 }

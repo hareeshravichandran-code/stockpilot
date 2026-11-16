@@ -346,7 +346,7 @@ body::before {
 @keyframes k-pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
 
 /* Animations */
-@keyframes k-fade-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes k-fade-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 .k-fade-in { animation: k-fade-in .35s var(--ease) both; }
 
 /* Recharts — ensure axis text is readable on cream background */

@@ -311,3 +311,4 @@
 .mf2-primary:disabled, .mf2-danger:disabled { opacity: .5; cursor: default; }
 .mf2-err { margin: 0; color: #9E2B25; font-size: 13px; }
 .mf2-toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #2B211C; color: var(--paper); padding: 10px 16px; border-radius: 12px; font-size: 14px; z-index: 60; box-shadow: 0 10px 30px rgba(43,33,28,.3); }
+.mf2-dlg-back, .mf2-toast { font-family: Outfit, system-ui, sans-serif; color: #2B211C; }

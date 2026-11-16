@@ -132,7 +132,19 @@ router.post('/transactions', authMiddleware, async (req, res) => {
       let q = supabase.from('expense_transactions').select('*').eq('user_id', req.userId);
       q = reference_no ? q.eq('reference_no', reference_no) : q.eq('date_time', row.date_time).eq('amount', row.amount);
       const { data: had } = await q.limit(1);
-      if (had && had[0]) return res.status(200).json({ ...had[0], duplicate: true });
+      if (had && had[0]) {
+        // The phone sends a payment again after you change it there (category, note): keep those changes
+        const patch = {};
+        if (category_id && category_id !== had[0].category_id) patch.category_id = category_id;
+        if (note != null && note !== had[0].note) patch.note = note;
+        if (Object.keys(patch).length) {
+          patch.updated_at = Date.now();
+          let r = await supabase.from('expense_transactions').update(patch).eq('id', had[0].id).eq('user_id', req.userId).select().single();
+          if (r.error && /category_id_fkey/.test(r.error.message || '')) { delete patch.category_id; r = Object.keys(patch).length > 1 ? await supabase.from('expense_transactions').update(patch).eq('id', had[0].id).eq('user_id', req.userId).select().single() : { data: had[0] }; }
+          if (!r.error && r.data) return res.status(200).json({ ...r.data, duplicate: true, updated: true });
+        }
+        return res.status(200).json({ ...had[0], duplicate: true });
+      }
     }
     if (error) throw error;
     res.status(201).json(data);

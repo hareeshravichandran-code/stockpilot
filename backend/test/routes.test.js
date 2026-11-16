@@ -117,6 +117,15 @@ describe('phone upload', () => {
     assert.equal(again.status, 200, JSON.stringify(again.body));
     assert.equal(rows('expense_transactions').length, 1);
   });
+  test('a category set on the phone after upload reaches the server (re-sent payment updates the category)', async () => {
+    const body = { amount: 200, type: 'DEBIT', date_time: ist(istToday()), reference_no: 'UTR777', category_id: null };
+    assert.equal((await api.call('POST', '/api/expense/transactions', body)).status, 201);
+    const again = await api.call('POST', '/api/expense/transactions', { ...body, category_id: 'food_dining', note: 'lunch' });
+    assert.equal(again.status, 200, JSON.stringify(again.body));
+    const t = rows('expense_transactions').find(x => x.reference_no === 'UTR777');
+    assert.equal(t.category_id, 'food_dining');
+    assert.equal(t.note, 'lunch');
+  });
   test('a rule re-sent with the same id and new words updates that rule', async () => {
     const a = await api.call('POST', '/api/expense/sms-rules', { id: 'r-1', merchant_pattern: 'swiggy', category_id: 'food_online' });
     assert.equal(a.status, 201, JSON.stringify(a.body));
