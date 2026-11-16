@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { createPortal } from 'react-dom';
 import { eventsAPI, expenseAPI } from '../lib/api';
 import { Modal, Field, Seg, errMsg } from './shared';
 import { kindOf, KindIcon } from '../money/kinds';
@@ -179,10 +180,42 @@ function HowItWorks() {
 }
 
 // ── Event form ───────────────────────────────────────────────────────────────
+const TIMING = { early: 'Paid early', on_time: 'On time', late: 'Paid late' };
+const HOW = { rule: 'by SMS rule', manual: 'picked by you', marked: 'marked paid', auto: 'automatically', master: 'linked', learned: 'linked' };
+
+/** Payments that settled this event before (newest first), with the SMS each came from. */
+function PastPayments({ id }) {
+  const [d, setD] = useState(null);
+  useEffect(() => { let live = true; eventsAPI.get(id).then(r => { if (live) setD(r.data); }).catch(() => { if (live) setD({ error: true }); }); return () => { live = false; }; }, [id]);
+  if (!d) return <div className="ee-past"><LogoLoader size={26} inline label="Loading payments" /></div>;
+  if (d.error) return <div className="ee-past"><p className="eh-dim">Could not load the payments.</p></div>;
+  const paid = (d.occurrences || []).filter(o => o.state === 'done' || o.paid_on).map(o => ({ key: o.period, due: o.period, date: o.paid_on || o.txn?.date, amount: o.amount || o.txn?.amount, timing: o.timing, how: o.match_source, sms: o.txn?.body, sender: o.txn?.sender }));
+  const extra = (d.other_payments || []).map(t => ({ key: t.id, due: null, date: t.date, amount: t.amount, how: 'linked', sms: t.body || t.payee, sender: t.sender }));
+  const list = [...paid, ...extra].sort((x, y) => String(y.date || y.due).localeCompare(String(x.date || x.due)));
+  const total = list.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+  return (
+    <div className="ee-past">
+      <div className="ee-past-head"><h3>Past payments</h3>{list.length > 0 && <span>{list.length} · {inr(total)}</span>}</div>
+      {!list.length ? <p className="ee-none">No payment has been tied to this event yet. When its bank SMS arrives, Kanalyst asks once and remembers.</p> : (
+        <ol className="ee-plist">
+          {list.map(x => (
+            <li key={x.key}>
+              <div className="ee-p-top"><b>{x.date ? fmtY(x.date) : fmtY(x.due)}</b><span className="ee-p-amt">{inr(x.amount)}</span></div>
+              <div className="ee-p-meta">{x.due ? <>For {fmt(x.due)} due · </> : null}{x.timing ? TIMING[x.timing] : 'Tied to this event'}{x.how ? `, ${HOW[x.how] || x.how}` : ''}</div>
+              {x.sms && <p className="ee-p-sms">{x.sender ? <small>{x.sender}</small> : null}{clean(x.sms)}</p>}
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
+/** New / edit event: one clear sheet. Left: the event in plain sections with a live summary; right: its past payments. */
 function EventForm({ initial, cats, onClose, onSaved, notify }) {
   const e0 = initial || {};
   const [f, setF] = useState({
-    title: e0.title || '', kind: e0.kind || 'subscription', category_id: e0.category_id || '',
+    title: clean(e0.title) || '', kind: e0.kind || 'subscription', category_id: e0.category_id || '',
     amount: e0.amount || '', amount_mode: e0.amount_mode || 'about', frequency: e0.frequency || 'monthly',
     due_day: e0.due_day || '', due_month: e0.due_month || '', date: e0.start_date || '',
     buffer_days: e0.buffer_days ?? 2, remind_days: e0.remind_days ?? '', alert_level: e0.alert_level || '',
@@ -191,18 +224,22 @@ function EventForm({ initial, cats, onClose, onSaved, notify }) {
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const set = (k) => (v) => setF(x => ({ ...x, [k]: v && v.target ? v.target.value : v }));
+  useEffect(() => { const k = (e) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', k); document.body.style.overflow = 'hidden';
+    return () => { window.removeEventListener('keydown', k); document.body.style.overflow = ''; }; }, [onClose]);
   const level = f.alert_level || DEFAULT_LEVEL[f.kind] || 'medium';
   const remindDefault = DEFAULT_REMIND[level];
+  const remind = f.remind_days === '' ? remindDefault : Number(f.remind_days) || 0;
+  const buf = Number(f.buffer_days) || 0;
   const save = async () => {
     setErr('');
-    if (!f.title.trim()) return setErr('Give the event a name');
+    if (!f.title.trim()) return setErr('Give the event a name.');
     if (!f.category_id) return setErr('Pick a category. Every payment of this event is filed there.');
-    if (f.frequency === 'once' ? !f.date : !f.due_day) return setErr(f.frequency === 'once' ? 'Pick the date' : 'Pick the day it is due');
-    if (!['monthly', 'once'].includes(f.frequency) && !f.due_month) return setErr('Pick the month it is due');
+    if (f.frequency === 'once' ? !f.date : !f.due_day) return setErr(f.frequency === 'once' ? 'Pick the date.' : 'Pick the day it is due.');
+    if (!['monthly', 'once'].includes(f.frequency) && !f.due_month) return setErr('Pick the month it is due.');
     const body = {
-      title: f.title.trim(), kind: f.kind, category_id: f.category_id, amount: Number(f.amount) || 0, amount_mode: f.amount_mode,
+      title: f.title.trim(), kind: f.kind, category_id: f.category_id, amount: Number(f.amount) || 0, amount_mode: f.amount ? f.amount_mode : 'any',
       frequency: f.frequency, due_day: f.frequency === 'once' ? undefined : Number(f.due_day), due_month: f.frequency === 'monthly' || f.frequency === 'once' ? null : Number(f.due_month),
-      start_date: f.frequency === 'once' ? f.date : undefined, buffer_days: Number(f.buffer_days), remind_days: f.remind_days === '' ? null : Number(f.remind_days),
+      start_date: f.frequency === 'once' ? f.date : undefined, buffer_days: buf, remind_days: f.remind_days === '' ? null : Number(f.remind_days),
       alert_level: f.alert_level || null, pay_mode: f.pay_mode, notes: f.notes, direction: IN_TYPES.includes(f.kind) ? 'in' : 'out',
     };
     setBusy(true);
@@ -210,74 +247,100 @@ function EventForm({ initial, cats, onClose, onSaved, notify }) {
       const r = initial ? await eventsAPI.update(initial.id, body) : await eventsAPI.create(body);
       notify(initial ? 'Event saved' : 'Event added');
       onSaved(initial ? initial.id : r.data.event?.id);
-    } catch (e) { setErr(errMsg(e)); } finally { setBusy(false); }
+    } catch (e) { setErr(errMsg(e)); setBusy(false); }
   };
-  const buf = Number(f.buffer_days) || 0;
-  return (
-    <Modal title={initial ? 'Edit event' : 'New event'} onClose={onClose} wide
-      footer={<><button type="button" className="fo-btn ghost" onClick={onClose}>Cancel</button><button type="button" className="fo-btn" disabled={busy} onClick={save}>{busy ? 'Saving…' : initial ? 'Save' : 'Add event'}</button></>}>
-      <div className="eh-form">
-        <fieldset>
-          <legend>What it is</legend>
-          <Field label="Name" wide><input value={f.title} onChange={set('title')} placeholder="Claude subscription, Home loan EMI, Property tax" maxLength={120} /></Field>
-          <Field label="Type">
-            <select value={f.kind} onChange={set('kind')}>{TYPES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
-          </Field>
-          <Field label="Category" hint="Its payments are filed here, and its SMS rules use it">
-            <CategorySelect value={f.category_id} onChange={set('category_id')} cats={cats} required />
-          </Field>
-        </fieldset>
-        <fieldset>
-          <legend>When</legend>
-          <Field label="Repeats" wide><Seg label="Repeats" options={FREQS} value={f.frequency} onChange={set('frequency')} /></Field>
-          {f.frequency === 'once'
-            ? <Field label="Date"><input type="date" value={f.date} onChange={set('date')} /></Field>
-            : <Field label="Due day"><input type="number" min="1" max="31" value={f.due_day} onChange={set('due_day')} placeholder="5" /></Field>}
-          {!['monthly', 'once'].includes(f.frequency) && (
-            <Field label="Month"><select value={f.due_month} onChange={set('due_month')}><option value="">Pick…</option>{MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}</select></Field>
-          )}
-        </fieldset>
-        <fieldset>
-          <legend>Amount</legend>
-          <Field label="Usual amount" hint="Leave empty if it changes every time (card bills)"><input type="number" min="0" step="0.01" value={f.amount} onChange={set('amount')} placeholder="1999" /></Field>
-          <Field label="Notes" wide><input value={f.notes} onChange={set('notes')} placeholder="Optional" maxLength={300} /></Field>
-        </fieldset>
-        <details className="eh-more">
-          <summary>More options <span className="eh-dim">matching, reminders, how it's paid</span></summary>
-        <fieldset>
-          <legend>Matching the payment</legend>
-          <Field label="Buffer (± days)" hint={`A payment ${buf ? `up to ${buf} day${buf > 1 ? 's' : ''} before or after` : 'on'} the due date counts as on time`}>
-            <div className="eh-stepper">
-              <button type="button" onClick={() => set('buffer_days')(Math.max(0, buf - 1))} aria-label="Fewer days">−</button>
-              <span>±{buf}</span>
-              <button type="button" onClick={() => set('buffer_days')(Math.min(15, buf + 1))} aria-label="More days">+</button>
-            </div>
-          </Field>
-          <Field label="Amount matching" hint={f.amount_mode === 'exact' ? 'Only this exact amount counts' : f.amount_mode === 'about' ? 'Within 10% counts (good for USD bills)' : 'Any amount counts'}>
-            <Seg label="Amount matching" options={[['exact', 'Exact'], ['about', 'About ±10%'], ['any', 'Any']]} value={f.amount_mode} onChange={set('amount_mode')} />
-          </Field>
-          <Field label="How it's paid"><Seg label="How it's paid" options={[['auto', 'Auto-debit'], ['manual', 'I pay it']]} value={f.pay_mode} onChange={set('pay_mode')} /></Field>
-        </fieldset>
-        <fieldset>
-          <legend>Reminders</legend>
-          <Field label="Alert level">
-            <select value={f.alert_level} onChange={set('alert_level')}>
-              <option value="">Default for {TYPE_NAME[f.kind] || 'this type'} ({LEVELS.find(l => l[0] === (DEFAULT_LEVEL[f.kind] || 'medium'))[1]})</option>
-              {LEVELS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-            </select>
-          </Field>
-          <Field label="Remind me (days before)" hint={`Leave empty for the default: ${remindDefault} day${remindDefault === 1 ? '' : 's'}`}>
-            <input type="number" min="0" max="60" value={f.remind_days} onChange={set('remind_days')} placeholder={String(remindDefault)} />
-          </Field>
-        </fieldset>
-        </details>
-        <p className="eh-explain">
-          Kanalyst reminds you {remindDefault && f.remind_days === '' ? remindDefault : (Number(f.remind_days) || 0)} days before the due date. When the payment SMS arrives it asks
-          “Is this your {f.title.trim() || 'payment'}?” once; after that it marks it paid by itself.
-        </p>
-        {err && <div className="fo-err" role="alert">{err}</div>}
+  // Plain-language summary of what is being saved
+  const when = f.frequency === 'once' ? (f.date ? `on ${fmtY(f.date)}` : 'once')
+    : !f.due_day ? (FREQS.find(x => x[0] === f.frequency)?.[1] || '').toLowerCase()
+    : f.frequency === 'monthly' ? `every month on the ${ord(Number(f.due_day))}`
+    : `${{ quarterly: 'every 3 months', half_yearly: 'every 6 months', yearly: 'every year' }[f.frequency]} on ${ord(Number(f.due_day))}${f.due_month ? ` ${MONTHS[f.due_month - 1]}` : ''}`;
+  const howMuch = !Number(f.amount) ? 'any amount' : `${f.amount_mode === 'exact' ? '' : 'about '}${inr(f.amount)}`;
+  const k = kindOf(f.kind);
+  const cat = cats.find(c => c.id === f.category_id);
+  return createPortal(
+    <div className="ee-back" role="presentation">
+      <div className="ee" role="dialog" aria-modal="true" aria-label={initial ? 'Edit event' : 'New event'}>
+        <header className="ee-bar">
+          <button type="button" className="ee-close" onClick={onClose} aria-label="Close">‹</button>
+          <h2>{initial ? 'Edit event' : 'New event'}</h2>
+          <span className="ee-grow" />
+          <button type="button" className="ee-btn ghost" onClick={onClose}>Cancel</button>
+          <button type="button" className="ee-btn" disabled={busy} onClick={save}>{busy ? 'Saving…' : initial ? 'Save changes' : 'Add event'}</button>
+        </header>
+        <div className={`ee-body${initial ? '' : ' solo'}`}>
+          <div className="ee-form">
+            <section className="ee-summary" style={{ '--k': k.c }}>
+              <span className="ee-sum-ic"><KindIcon kind={f.kind} size={22} color="#FAF7F0" /></span>
+              <div>
+                <b>{f.title.trim() || 'Untitled event'}</b>
+                <p>{TYPE_NAME[f.kind] || k.label}, {when}, {howMuch}. {f.pay_mode === 'auto' ? 'Auto-debited' : 'You pay it'}; reminder {remind ? `${remind} day${remind > 1 ? 's' : ''} before` : 'on the day'}.</p>
+                {cat && <small>Filed under {cat.icon ? `${cat.icon} ` : ''}{cat.name}</small>}
+              </div>
+            </section>
+
+            <section className="ee-sec">
+              <h3>What it is</h3>
+              <label className="ee-field"><span>Name</span><input value={f.title} onChange={set('title')} placeholder="e.g. Home loan EMI, Netflix, Property tax" maxLength={120} autoFocus={!initial} /></label>
+              <div className="ee-field"><span>Type</span>
+                <div className="ee-types" role="radiogroup" aria-label="Type">
+                  {TYPES.map(([t, l]) => (
+                    <button key={t} type="button" role="radio" aria-checked={f.kind === t} className={f.kind === t ? 'on' : ''} onClick={() => set('kind')(t)}>
+                      <KindIcon kind={t} size={15} color={f.kind === t ? '#FAF7F0' : undefined} />{l.replace(' (money in)', '')}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <label className="ee-field"><span>Category <small>its payments and SMS rules are filed here</small></span><CategorySelect value={f.category_id} onChange={set('category_id')} cats={cats} required /></label>
+            </section>
+
+            <section className="ee-sec">
+              <h3>When it's due</h3>
+              <div className="ee-field"><span>Repeats</span><Seg label="Repeats" options={FREQS} value={f.frequency} onChange={set('frequency')} /></div>
+              <div className="ee-row">
+                {f.frequency === 'once'
+                  ? <label className="ee-field"><span>Date</span><input type="date" value={f.date} onChange={set('date')} /></label>
+                  : <label className="ee-field"><span>Day of the month</span><input type="number" min="1" max="31" value={f.due_day} onChange={set('due_day')} placeholder="5" /></label>}
+                {!['monthly', 'once'].includes(f.frequency) && (
+                  <label className="ee-field"><span>Month</span><select value={f.due_month} onChange={set('due_month')}><option value="">Pick…</option>{MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}</select></label>
+                )}
+                <div className="ee-field"><span>Counts as on time if paid within</span>
+                  <div className="eh-stepper">
+                    <button type="button" onClick={() => set('buffer_days')(Math.max(0, buf - 1))} aria-label="Fewer days">−</button>
+                    <span>±{buf} day{buf === 1 ? '' : 's'}</span>
+                    <button type="button" onClick={() => set('buffer_days')(Math.min(15, buf + 1))} aria-label="More days">+</button>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section className="ee-sec">
+              <h3>How much</h3>
+              <div className="ee-row">
+                <label className="ee-field ee-money"><span>Usual amount <small>leave empty if it changes (card bills)</small></span><i>₹</i><input type="number" min="0" step="0.01" value={f.amount} onChange={set('amount')} placeholder="0" /></label>
+                {Number(f.amount) > 0 && <div className="ee-field"><span>The payment must be</span><Seg label="Amount matching" options={[['exact', 'Exactly this'], ['about', 'Within 10%'], ['any', 'Any amount']]} value={f.amount_mode} onChange={set('amount_mode')} /></div>}
+              </div>
+              <div className="ee-field"><span>Paid by</span><Seg label="Paid by" options={[['auto', 'Auto-debit (NACH, standing instruction)'], ['manual', 'Me, by hand']]} value={f.pay_mode} onChange={set('pay_mode')} /></div>
+            </section>
+
+            <section className="ee-sec">
+              <h3>Reminders</h3>
+              <div className="ee-row">
+                <label className="ee-field"><span>Importance</span>
+                  <select value={f.alert_level} onChange={set('alert_level')}>
+                    <option value="">Default for {TYPE_NAME[f.kind] || 'this type'} ({LEVELS.find(l => l[0] === (DEFAULT_LEVEL[f.kind] || 'medium'))[1]})</option>
+                    {LEVELS.map(([lk, l]) => <option key={lk} value={lk}>{l}</option>)}
+                  </select>
+                </label>
+                <label className="ee-field"><span>Remind me (days before)</span><input type="number" min="0" max="60" value={f.remind_days} onChange={set('remind_days')} placeholder={`${remindDefault} (default)`} /></label>
+              </div>
+              <label className="ee-field"><span>Notes</span><input value={f.notes} onChange={set('notes')} placeholder="Optional, e.g. loan account number is on the passbook" maxLength={300} /></label>
+            </section>
+            {err && <div className="ee-err" role="alert">{err}</div>}
+          </div>
+          {initial && <aside className="ee-side"><PastPayments id={initial.id} /></aside>}
+        </div>
       </div>
-    </Modal>
+    </div>, document.body
   );
 }
 
