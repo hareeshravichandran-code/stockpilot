@@ -207,3 +207,119 @@ describe('rules made for events that have none', () => {
     assert.equal(rows('recurring_events')[0].rules_seeded, false);
   });
 });
+
+describe('premiums: renewals whose amount changes every year', () => {
+  beforeEach(() => H.reset());
+  // A yearly health policy renewed ~9 days ago; last year's premium was 20,324
+  const due = shift(today, -9);
+  function careEvent(extra = {}) {
+    db._seed('insurance_policies', [{ owner_id: uid, kind: 'health', insurer: 'Care Health Insurance', premium: 20324, premium_frequency: 'yearly' }]);
+    const pol = rows('insurance_policies')[0];
+    db._seed('recurring_events', [claudeEvent({ title: 'Care Health premium', kind: 'premium', master_table: 'insurance_policies', master_id: pol.id, frequency: 'yearly',
+      due_day: +due.slice(8, 10), due_month: +due.slice(5, 7), amount: 20324, category_id: 'p_insurance', start_date: shift(due, -365), ...extra })]);
+    return rows('recurring_events')[0];
+  }
+
+  test('K-150: a health-insurance debit 47% above last year, 9 days late, settles the renewal by its category', async () => {
+    const ev = careEvent();
+    db._seed('expense_transactions', [txn({ amount: 29964.7, merchant: 'ev1:sealed', category_id: 'health_insurance', signals: ['insurance'], date_time: ist(today) - 864e5 * 2 })]);
+    await EM.runMatching(uid, { force: true });
+    const pay = rows('event_payments').find(p => p.event_id === ev.id && p.period === due);
+    assert.ok(pay, 'this year\'s renewal is marked paid');
+    assert.equal(pay.match_source, 'category');
+    assert.equal(pay.timing, 'late');
+    assert.equal(rows('expense_transactions')[0].event_id, ev.id);
+  });
+
+  test('a renewal paid five weeks early counts for that due date', async () => {
+    const nextDue = shift(today, 35);
+    const ev = careEvent({ due_day: +nextDue.slice(8, 10), due_month: +nextDue.slice(5, 7), start_date: null });
+    db._seed('expense_transactions', [txn({ amount: 22000, category_id: 'health_insurance', date_time: ist(today) })]);
+    await EM.runMatching(uid, { force: true });
+    const pay = rows('event_payments').find(p => p.event_id === ev.id);
+    assert.ok(pay); assert.equal(pay.period, nextDue); assert.equal(pay.timing, 'early');
+  });
+
+  test('a life-insurance debit does not settle the health policy; a far-off one does not either', async () => {
+    const ev = careEvent();
+    db._seed('expense_transactions', [
+      txn({ amount: 21000, category_id: 'life_insurance', date_time: ist(today) }),
+      txn({ amount: 21000, category_id: 'health_insurance', date_time: ist(shift(due, -120)) }),
+    ]);
+    await EM.runMatching(uid, { force: true });
+    assert.equal(rows('event_payments').filter(p => p.event_id === ev.id).length, 0);
+  });
+
+  test('two health policies: each premium goes to the one whose amount is closest', async () => {
+    const big = careEvent();
+    db._seed('recurring_events', [claudeEvent({ title: 'Parents policy', kind: 'premium', frequency: 'yearly', due_day: big.due_day, due_month: big.due_month, amount: 12514, category_id: 'p_insurance', start_date: big.start_date })]);
+    const small = rows('recurring_events')[1];
+    db._seed('expense_transactions', [txn({ amount: 13100, category_id: 'health_insurance', date_time: ist(today) })]);
+    await EM.runMatching(uid, { force: true });
+    assert.ok(rows('event_payments').some(p => p.event_id === small.id));
+    assert.ok(!rows('event_payments').some(p => p.event_id === big.id));
+  });
+
+  test('a subscription is never settled by category alone', async () => {
+    db._seed('recurring_events', [claudeEvent({ rules_seeded: true })]);
+    db._seed('expense_transactions', [txn({ amount: 1982.4, category_id: 'p_membership', date_time: ist(PAY) })]);
+    await EM.runMatching(uid, { force: true });
+    assert.equal(rows('event_payments').length, 0);
+  });
+
+  test('a policy gets a rule from the insurer name (any amount), and no sender-only rule from one yearly payment', async () => {
+    const ev = careEvent({ rules_seeded: false, category_id: null });
+    db._seed('expense_transactions', [txn({ amount: 20324, sms_sender: 'AD-HDFCBK-S', date_time: ist(shift(due, -365)), event_id: ev.id })]);
+    await EM.runMatching(uid, { force: true });
+    const rules = rows('user_sms_rules').filter(r => r.event_id === ev.id);
+    assert.equal(rules.length, 1);
+    assert.equal(rules[0].merchant_pattern, 'care health');
+    assert.equal(rules[0].amount_min, null);
+    assert.equal(rules[0].category_id, 'p_insurance');
+  });
+
+  test('an event with nothing to learn from yet is tried again later (not marked seeded)', async () => {
+    db._seed('recurring_events', [claudeEvent({ rules_seeded: false })]);
+    await EM.runMatching(uid, { force: true });
+    assert.equal(rows('recurring_events')[0].rules_seeded, false);
+  });
+
+  test('a paid due date whose payment was read again under a new id points at the new row', async () => {
+    const ev = careEvent();
+    const last = shift(due, -365);
+    db._seed('event_payments', [{ owner_id: uid, event_id: ev.id, period: last, status: 'paid', paid_on: last, amount: 20324, txn_ref: '00000000-0000-0000-0000-000000000000' }]);
+    db._seed('expense_transactions', [txn({ amount: 20324, sms_sender: 'AD-HDFCBK-S', date_time: ist(last) })]);
+    await EM.runMatching(uid, { force: true });
+    const t = rows('expense_transactions')[0];
+    assert.equal(rows('event_payments')[0].txn_ref, t.id);
+    assert.equal(t.event_id, ev.id);
+  });
+
+  test('pure: insurer words and the early window', () => {
+    assert.equal(EM.insurerWords('Care Health Insurance Ltd'), 'care health');
+    assert.equal(EM.insurerWords('The Acko General Insurance'), 'acko');
+    assert.equal(EM.insurerWords('ev1:abc'), null);
+    const ev = { frequency: 'yearly', due_day: 8, due_month: 12, buffer_days: 2 };
+    assert.deepEqual(EM.pickPeriod(ev, '2026-11-01', new Set()), { period: '2026-12-08', timing: 'early' });
+  });
+});
+
+describe('insurance policies become premium events', () => {
+  beforeEach(() => H.reset());
+  test('one event per policy; a twin from the same insurer a few days apart is not added twice; runs once', async () => {
+    db._seed('insurance_policies', [
+      { owner_id: uid, kind: 'health', insurer: 'Care Health', premium: 12514, premium_frequency: 'yearly', renewal_date: '2027-03-01', status: 'active' },
+      { owner_id: uid, kind: 'life', insurer: 'Kotak Life Insurance', premium: 5244.07, premium_frequency: 'yearly', renewal_date: '2027-06-02', status: 'active' },
+      { owner_id: uid, kind: 'life', insurer: 'Kotak Life', premium: 4400, premium_frequency: 'yearly', renewal_date: '2027-06-04', status: 'active' },
+      { owner_id: uid, kind: 'health', insurer: 'Old policy', premium: 100, premium_frequency: 'yearly', renewal_date: '2027-01-01', status: 'lapsed' },
+    ]);
+    const [care, kotak] = rows('insurance_policies');
+    db._seed('recurring_events', [claudeEvent({ title: 'Kotak premium', kind: 'premium', master_table: 'insurance_policies', master_id: kotak.id, frequency: 'yearly', due_day: 2, due_month: 6 })]);
+    assert.equal(await EM.ensurePolicyEvents(uid), 1);
+    const ev = rows('recurring_events').find(e => e.master_id === care.id);
+    assert.ok(ev);
+    assert.equal(ev.kind, 'premium'); assert.equal(ev.frequency, 'yearly'); assert.equal(ev.due_day, 1); assert.equal(ev.due_month, 3);
+    assert.equal(ev.category_id, 'p_insurance'); assert.equal(ev.title, 'Care Health premium');
+    assert.equal(await EM.ensurePolicyEvents(uid), 0, 'runs once');
+  });
+});

@@ -388,3 +388,38 @@
 .ee .eh-stepper { display: inline-flex; align-items: center; gap: 4px; background: #fff; border: 1px solid rgba(43,33,28,.2); border-radius: 10px; padding: 3px; align-self: flex-start; }
 .ee .eh-stepper button { width: 32px; height: 32px; border: 0; border-radius: 8px; background: #EFE9DC; font-size: 17px; cursor: pointer; color: #2B211C; }
 .ee .eh-stepper span { min-width: 74px; text-align: center; font-weight: 600; font-size: 14px; }
+
+/* ── K-150: needs your answer, payment picker ─────────────────────────────── */
+.eh-tag.ok { color: var(--ok); background: var(--ok-bg); border-color: transparent; }
+.eh-payline { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.eh-payline-top { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.eh-payline .eh-sms { margin: 0; }
+.eh-payline .eh-row-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.eh-inbox { background: var(--fo-paper); border: 1px solid var(--fo-line); border-radius: 18px; padding: 14px 16px 16px; margin-bottom: 14px; }
+.eh-inbox-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.eh-inbox-head h2 { font-size: 17px; margin: 0; }
+.eh-inbox > ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 10px; }
+.eh-inbox-card { border: 1px solid var(--fo-line); border-left: 3px solid var(--warn); border-radius: 14px; padding: 12px; display: flex; flex-direction: column; gap: 10px; background: var(--fo-paper);
+  animation: eh-in .24s cubic-bezier(.23, 1, .32, 1) both; animation-delay: calc(var(--i, 0) * 40ms); }
+.eh-inbox-card.overdue { border-left-color: var(--bad); }
+.eh-inbox-ev { display: flex; gap: 10px; align-items: center; background: none; border: 0; padding: 0; text-align: left; cursor: pointer; color: var(--fo-ink); font: inherit; }
+.eh-inbox-ev b { display: block; font-size: 15px; }
+.eh-inbox-ev small { display: block; font-size: 12.5px; color: var(--fo-ink-2); }
+.eh-inbox-card.overdue .eh-inbox-ev small { color: var(--bad); }
+.eh-inbox-q { display: flex; flex-direction: column; gap: 8px; }
+.eh-inbox-q > p { margin: 0; font-size: 13.5px; font-weight: 600; }
+.eh-inbox-q .eh-occ-acts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 2px; }
+
+.eh-picker { display: flex; flex-direction: column; gap: 12px; }
+.eh-picker > p { margin: 0; }
+.eh-picklist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; max-height: min(58vh, 560px); overflow: auto; }
+.eh-picklist li { display: flex; gap: 12px; align-items: center; justify-content: space-between; border: 1px solid var(--fo-line); border-radius: 12px; padding: 10px 12px;
+  animation: eh-in .2s cubic-bezier(.23, 1, .32, 1) both; animation-delay: calc(var(--i, 0) * 30ms); }
+.eh-picklist li > .fo-btn { flex: 0 0 auto; }
+.eh-taken { font-size: 12px; flex: 0 0 auto; max-width: 110px; text-align: right; }
+.eh-inbox .fo-btn:active, .eh-picker .fo-btn:active, .eh-inbox-ev:active { transform: scale(.97); }
+@keyframes eh-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .eh-inbox-card, .eh-picklist li { animation: eh-fade .2s ease both; } }
+@keyframes eh-fade { from { opacity: 0; } to { opacity: 1; } }
+@media (max-width: 560px) { .eh-picklist li { flex-direction: column; align-items: stretch; } .eh-taken { max-width: none; text-align: left; } }

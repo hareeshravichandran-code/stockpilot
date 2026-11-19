@@ -42,7 +42,7 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 const LEVELS = [['very_high', 'Very high'], ['high', 'High'], ['medium', 'Medium'], ['low', 'Low']];
 const DEFAULT_REMIND = { very_high: 5, high: 7, medium: 2, low: 0 };
 const DEFAULT_LEVEL = { emi: 'very_high', card_due: 'very_high', premium: 'high', salary: 'low', income: 'low', dividend: 'low', maturity: 'low' };
-const SOURCE = { rule: 'by SMS rule', master: 'linked before rules', learned: 'linked before rules', manual: 'picked by you', marked: 'marked by you', auto: 'automatically' };
+const SOURCE = { rule: 'by SMS rule', category: 'by its category', master: 'linked before rules', learned: 'linked before rules', manual: 'picked by you', marked: 'marked by you', auto: 'automatically' };
 const STATE = {
   done: ['Done', 'ok'], skipped: ['Skipped', 'mute'], due: ['Due', 'warn'], overdue: ['Overdue', 'bad'],
   upcoming: ['Upcoming', 'calm'], missed: ['Missed', 'mute'], untracked: ['Before tracking', 'mute'],
@@ -56,6 +56,14 @@ const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(
 const days = (s) => Math.round((pd(s) - pd(today())) / 864e5);
 const inr = (v) => (v == null || v === '' ? '—' : '₹' + Math.round(Number(v)).toLocaleString('en-IN'));
 const clean = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+/** "47% more than expected" when a payment's amount differs from the event's by 5% or more. */
+const deltaText = (amount, expected) => {
+  const a = Number(amount), x = Number(expected);
+  if (!a || !x) return null;
+  const pc = Math.round((a / x - 1) * 100);
+  return Math.abs(pc) < 5 ? null : `${Math.abs(pc)}% ${pc > 0 ? 'more' : 'less'} than ${inr(x)}`;
+};
+const lastPaidOf = (e) => e.last_done?.paid_on || e.last_done?.period || null;
 
 export function scheduleText(e) {
   if (!e) return '';
@@ -181,7 +189,7 @@ function HowItWorks() {
 
 // ── Event form ───────────────────────────────────────────────────────────────
 const TIMING = { early: 'Paid early', on_time: 'On time', late: 'Paid late' };
-const HOW = { rule: 'by SMS rule', manual: 'picked by you', marked: 'marked paid', auto: 'automatically', master: 'linked', learned: 'linked' };
+const HOW = { rule: 'by SMS rule', category: 'by its category', manual: 'picked by you', marked: 'marked paid', auto: 'automatically', master: 'linked', learned: 'linked' };
 
 /** Payments that settled this event before (newest first), with the SMS each came from. */
 function PastPayments({ id }) {
@@ -441,8 +449,71 @@ function RuleForm({ initial, preset, cats, events, onClose, onSaved, notify }) {
   );
 }
 
+
+/** One payment as a pickable row: amount, date, bank, SMS text, and why it is likely. */
+function PayLine({ t, expected, period }) {
+  const delta = deltaText(t.amount, expected);
+  const off = period ? Math.round((pd(t.date) - pd(period)) / 864e5) : null;
+  return (
+    <div className="eh-payline">
+      <div className="eh-payline-top">
+        <span className="eh-amt">{inr(t.amount)}</span>
+        <span className="eh-dim">{fmtY(t.date)}{off ? ` · ${Math.abs(off)} day${Math.abs(off) === 1 ? '' : 's'} ${off < 0 ? 'before' : 'after'} due` : off === 0 ? ' · on the due date' : ''}</span>
+      </div>
+      <div className="eh-row-tags">
+        {t.cat_match && <span className="eh-tag ok">Same category</span>}
+        {delta && <span className="eh-tag">{delta}</span>}
+        {(t.sender || t.bank) && <span className="eh-tag">{t.sender || t.bank}{t.account ? ` · ••${String(t.account).slice(-4)}` : ''}</span>}
+      </div>
+      {clean(t.body || t.payee) && !/^e[vp]1:/.test(String(t.body || t.payee)) && <p className="eh-sms">{clean(t.body || t.payee)}</p>}
+    </div>
+  );
+}
+
+/**
+ * Pick the payment for a due date by hand, from every payment near it (any amount). Used when the right
+ * payment was not suggested: a premium that went up, a fee paid weeks early, a payment from another bank.
+ */
+function PaymentPicker({ ev, period, onClose, onPick, busy }) {
+  const [q, setQ] = useState('');
+  const [wide, setWide] = useState(false);
+  const [list, setList] = useState(null);
+  useEffect(() => {
+    let live = true;
+    const h = setTimeout(() => {
+      eventsAPI.candidates(ev.id, { period, q: q || undefined, days: wide ? 120 : undefined })
+        .then(r => { if (live) setList(r.data.payments || []); }).catch(() => { if (live) setList([]); });
+    }, q ? 250 : 0);
+    return () => { live = false; clearTimeout(h); };
+  }, [ev.id, period, q, wide]);
+  return (
+    <Modal title={`Which payment was ${clean(ev.title)} on ${fmt(period)}?`} onClose={onClose} wide
+      footer={<><button type="button" className="fo-btn ghost" onClick={onClose}>Cancel</button></>}>
+      <div className="eh-picker">
+        <p className="eh-dim">Payments {wide ? 'within 4 months' : 'near'} this due date, any amount. Pick one and Kanalyst saves a rule so the next one is marked paid by itself.</p>
+        <input className="eh-search" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search amount, bank, payee or SMS words" aria-label="Search payments" />
+        {list === null ? <LogoLoader size={26} inline label="Finding payments" /> : !list.length ? (
+          <div className="eh-empty"><b>No payment found{q ? ' for that search' : ''}.</b><p>{wide ? 'If you paid in cash or from an account Kanalyst does not read, close this and use “I paid it another way”.' : 'Look further back and ahead.'}</p></div>
+        ) : (
+          <ul className="eh-picklist">
+            {list.map((t, i) => (
+              <li key={t.id} style={{ '--i': Math.min(i, 10) }}>
+                <PayLine t={t} expected={ev.amount} period={period} />
+                {t.taken === 'other'
+                  ? <span className="eh-dim eh-taken">Already settles another event</span>
+                  : <button type="button" className="fo-btn sm" disabled={busy || t.taken === 'this'} onClick={() => onPick(t)}>{t.taken === 'this' ? 'Tied' : 'This one'}</button>}
+              </li>
+            ))}
+          </ul>
+        )}
+        {!wide && list !== null && <button type="button" className="eh-link" onClick={() => setWide(true)}>Look further back and ahead</button>}
+      </div>
+    </Modal>
+  );
+}
+
 // ── Event detail ─────────────────────────────────────────────────────────────
-function Occurrence({ o, ev, onAct, busy, i }) {
+function Occurrence({ o, ev, onAct, onPick, busy, i }) {
   const [no, setNo] = useState(0);           // how many suggestions the user said No to
   const [label, tone] = STATE[o.state] || [o.state, 'mute'];
   const isOpen = ['due', 'overdue', 'missed'].includes(o.state);
@@ -465,25 +536,29 @@ function Occurrence({ o, ev, onAct, busy, i }) {
         {isOpen && ask && (
           <div className="eh-ask" role="group" aria-label={`Is this your ${clean(ev.title)} payment?`}>
             <p className="eh-ask-q">Is this your <b>{clean(ev.title)}</b> payment?</p>
-            <div className="eh-ask-pay"><span className="eh-amt">{inr(ask.amount)}</span> <span className="eh-dim">{fmt(ask.date)} · {ask.sender || ask.bank || ''}{ask.account ? ` · ••${String(ask.account).slice(-4)}` : ''}</span>
-              <p className="eh-sms">{clean(ask.body || ask.payee) || '—'}</p></div>
+            <div className="eh-ask-pay"><PayLine t={ask} expected={ev.amount} period={o.period} /></div>
             <div className="eh-occ-acts">
               <button type="button" className="fo-btn sm" disabled={busy} onClick={() => onAct(o.period, { action: 'match', txn_id: ask.id })}>Yes, that's it</button>
               <button type="button" className="fo-btn sm ghost" disabled={busy} onClick={() => setNo(n => n + 1)}>No</button>
+              <button type="button" className="eh-link" disabled={busy} onClick={() => onPick(o.period)}>Choose another…</button>
             </div>
             <p className="eh-dim eh-note">Answer once: the next one is marked paid by itself.</p>
           </div>
         )}
         {isOpen && !ask && (
           <div className="eh-occ-acts">
-            <span className="eh-dim">{(o.suggestions || []).length ? 'None of those.' : 'No payment found yet.'}</span>
+            <span className="eh-dim">{(o.suggestions || []).length ? 'None of those.' : 'No likely payment found.'}</span>
+            <button type="button" className="fo-btn sm" disabled={busy} onClick={() => onPick(o.period)}>Choose the payment…</button>
             <button type="button" className="fo-btn sm ghost" disabled={busy} onClick={() => onAct(o.period, { action: 'done' })}>I paid it another way</button>
             <button type="button" className="fo-btn sm ghost" disabled={busy} onClick={() => onAct(o.period, { action: 'skip' })}>Skip this one</button>
             {no > 0 && <button type="button" className="eh-link" onClick={() => setNo(0)}>Show the payments again</button>}
           </div>
         )}
         {(o.state === 'done' || o.state === 'skipped') && (
-          <button type="button" className="eh-link" disabled={busy} onClick={() => onAct(o.period, null)}>{o.state === 'done' && o.txn ? 'Not this payment' : 'Open again'}</button>
+          <span className="eh-occ-acts">
+            <button type="button" className="eh-link" disabled={busy} onClick={() => onAct(o.period, null)}>{o.state === 'done' && o.txn ? 'Not this payment' : 'Open again'}</button>
+            {o.state === 'done' && !o.txn && <button type="button" className="eh-link" disabled={busy} onClick={() => onPick(o.period)}>Tie the payment SMS</button>}
+          </span>
         )}
       </div>
     </li>
@@ -517,6 +592,7 @@ function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify, ful
   const [d, setD] = useState(null);
   const [busy, setBusy] = useState(false);
   const [ruleEdit, setRuleEdit] = useState(null);
+  const [pick, setPick] = useState(null);             // the due date whose payment is being chosen
   const load = useCallback(async () => {
     try { const r = await eventsAPI.get(id); setD(r.data); } catch (e) { notify(errMsg(e)); setD({ error: true }); }
   }, [id, notify]);
@@ -587,14 +663,14 @@ function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify, ful
       {e.status === 'active' && now && (
         <div className={`eh-callout ${now.state === 'overdue' ? 'bad' : 'warn'}`}>
           <b>{now.state === 'overdue' ? `${fmt(now.period)} is overdue.` : `${fmt(now.period)} is due.`}</b> {' '}
-          {(now.suggestions || []).length ? 'Is one of these SMS the payment? Answer below.' : 'No matching payment yet. Mark it paid below if you paid another way.'}
+          {(now.suggestions || []).length ? 'Is one of these SMS the payment? Answer below.' : <>No likely payment found. <button type="button" className="eh-link" onClick={() => setPick(now.period)}>Choose the payment</button> or mark it paid another way below.</>}
         </div>
       )}
 
       <section className="eh-sec">
         <h3>Due dates</h3>
         <ul className="eh-occs">
-          {d.occurrences.map((o, i) => <Occurrence key={o.period} o={o} ev={e} onAct={act} busy={busy} i={i} />)}
+          {d.occurrences.map((o, i) => <Occurrence key={o.period} o={o} ev={e} onAct={act} onPick={setPick} busy={busy} i={i} />)}
         </ul>
         {!!d.other_payments.length && (
           <details className="eh-extra">
@@ -652,6 +728,8 @@ function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify, ful
         </dl>
 
       </details>
+      {pick && <PaymentPicker ev={e} period={pick} busy={busy} onClose={() => setPick(null)}
+        onPick={async (t) => { await act(pick, { action: 'match', txn_id: t.id }); setPick(null); }} />}
       {ruleEdit && (
         <RuleForm initial={ruleEdit.rule} preset={ruleEdit.preset} cats={cats} events={events}
           onClose={() => setRuleEdit(null)} onSaved={() => { setRuleEdit(null); load(); onChanged(); }} notify={notify} />
@@ -660,8 +738,68 @@ function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify, ful
   );
 }
 
+// ── Needs your answer ────────────────────────────────────────────────────────
+/** Open due dates across all events, each with its most likely payment: answer them without opening each event. */
+function InboxStrip({ events, onOpen, onChanged, notify, version }) {
+  const [items, setItems] = useState(null);
+  const [busy, setBusy] = useState(null);
+  const [pick, setPick] = useState(null);
+  const load = useCallback(() => { eventsAPI.inbox().then(r => setItems(r.data.items || [])).catch(() => setItems([])); }, []);
+  useEffect(() => { load(); }, [load, version]);
+  const act = async (it, body, msg) => {
+    setBusy(it.event.id + it.period);
+    try {
+      const r = await eventsAPI.occurrence(it.event.id, it.period, body);
+      notify(msg || (r.data.rule?.created ? `${clean(it.event.title)} marked paid · rule saved for next time` : `${clean(it.event.title)} marked paid`));
+      setItems(xs => (xs || []).filter(x => x !== it));
+      onChanged();
+    } catch (e) { notify(errMsg(e)); } finally { setBusy(null); }
+  };
+  const skip = (it) => setItems(xs => (xs || []).map(x => (x === it ? { ...x, suggestion: null, dismissed: true } : x)));
+  if (!items || !items.length) return null;
+  return (
+    <section className="eh-inbox" aria-label="Needs your answer">
+      <div className="eh-inbox-head"><h2>Needs your answer</h2><span className="eh-count">{items.length}</span></div>
+      <ul>
+        {items.map((it, i) => {
+          const k = kindOf(it.event.kind); const b = busy === it.event.id + it.period; const s = it.suggestion;
+          return (
+            <li key={it.event.id + it.period} className={`eh-inbox-card ${it.state}`} style={{ '--i': Math.min(i, 8) }}>
+              <button type="button" className="eh-inbox-ev" onClick={() => onOpen(it.event.id)}>
+                <span className="eh-ico sm" style={{ '--k': k.c }}><KindIcon kind={it.event.kind} size={15} /></span>
+                <span><b>{clean(it.event.title)}</b><small>{it.state === 'overdue' ? `Was due ${fmt(it.period)} · ${it.days} day${it.days === 1 ? '' : 's'} ago` : it.days < 0 ? `Due ${fmt(it.period)} · in ${-it.days} day${it.days === -1 ? '' : 's'}` : `Due ${fmt(it.period)}`}</small></span>
+              </button>
+              {s ? (
+                <div className="eh-inbox-q">
+                  <p>Is this the payment?</p>
+                  <PayLine t={s} expected={it.event.amount} period={it.period} />
+                  <div className="eh-occ-acts">
+                    <button type="button" className="fo-btn sm" disabled={b} onClick={() => act(it, { action: 'match', txn_id: s.id })}>Yes</button>
+                    <button type="button" className="fo-btn sm ghost" disabled={b} onClick={() => setPick(it)}>Choose another…</button>
+                    <button type="button" className="eh-link" disabled={b} onClick={() => skip(it)}>No</button>
+                  </div>
+                </div>
+              ) : (
+                <div className="eh-inbox-q">
+                  <p className="eh-dim">{it.dismissed ? 'Pick the right payment, or mark it paid.' : 'No likely payment in your SMS yet.'}</p>
+                  <div className="eh-occ-acts">
+                    <button type="button" className="fo-btn sm" disabled={b} onClick={() => setPick(it)}>Choose the payment…</button>
+                    <button type="button" className="fo-btn sm ghost" disabled={b} onClick={() => act(it, { action: 'done' }, `${clean(it.event.title)} marked paid`)}>Paid another way</button>
+                    <button type="button" className="eh-link" disabled={b} onClick={() => act(it, { action: 'skip' }, 'Skipped this one')}>Skip</button>
+                  </div>
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {pick && <PaymentPicker ev={events.find(e => e.id === pick.event.id) || pick.event} period={pick.period} busy={!!busy} onClose={() => setPick(null)}
+        onPick={async (t) => { const it = pick; setPick(null); await act(it, { action: 'match', txn_id: t.id }); }} />}
+    </section>
+  );
+}
+
 // ── Events tab ───────────────────────────────────────────────────────────────
-const FILTERS = [['all', 'All'], ['action', 'Needs action'], ['done', 'Done'], ['upcoming', 'Upcoming'], ['nocat', 'No category'], ['inactive', 'Paused / stopped']];
 const FREQ_NAME = Object.fromEntries(FREQS);
 const typeOf = (e) => (e.link ? linkName(e.link) : e.source === 'manual' || !e.source ? 'Manual' : TYPE_NAME[e.kind] || 'Other');
 const dueText = (e) => e.next_due ? fmt(e.next_due) : e.focus_date ? fmt(e.focus_date) : '—';
@@ -690,7 +828,7 @@ function EventsTab({ events, cats, reload, notify, selected, setSelected }) {
       }
     });
     const [k, dir] = sort;
-    const val = (e) => ({ title: clean(e.title).toLowerCase(), type: typeOf(e), freq: e.frequency || '', due: e.next_due || e.focus_date || '9999', last: e.last_done || '', amount: Number(e.amount) || 0,
+    const val = (e) => ({ title: clean(e.title).toLowerCase(), type: typeOf(e), freq: e.frequency || '', due: e.next_due || e.focus_date || '9999', last: lastPaidOf(e) || '', amount: Number(e.amount) || 0,
       state: { overdue: 0, due: 1, upcoming: 2, done: 3 }[e.state] ?? 4 }[k]);
     return rows.sort((x, y) => (val(x) > val(y) ? 1 : val(x) < val(y) ? -1 : 0) * dir);
   }, [events, filter, group, freq, q, sort]);
@@ -720,6 +858,7 @@ function EventsTab({ events, cats, reload, notify, selected, setSelected }) {
   );
   return (
     <div className="eh-tablewrap">
+      <InboxStrip events={events} onOpen={open} onChanged={reload} notify={notify} version={events} />
       <div className="eh-tfilters">
         <input className="eh-search" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search events" aria-label="Search events" />
         <select value={group} onChange={(e) => setGroup(e.target.value)} aria-label="Type">
@@ -754,7 +893,7 @@ function EventsTab({ events, cats, reload, notify, selected, setSelected }) {
                       <td><span className={`eh-type t-${groupOf(e)}`}>{typeOf(e)}</span>{e.link?.ref && <small className="eh-dim"> ••{e.link.ref}</small>}</td>
                       <td>{FREQ_NAME[e.frequency] || '—'}{e.due_day && e.frequency === 'monthly' ? <small className="eh-dim"> · day {e.due_day}</small> : null}</td>
                       <td>{dueText(e)}</td>
-                      <td>{e.last_done ? fmt(e.last_done) : <span className="eh-dim">Not seen</span>}</td>
+                      <td>{lastPaidOf(e) ? fmt(lastPaidOf(e)) : <span className="eh-dim">Not seen</span>}</td>
                       <td className="num">{Number(e.amount) ? inr(e.amount) : <span className="eh-dim">varies</span>}</td>
                       <td><Pill tone={tone}>{line}</Pill></td>
                       <td>{e.rules ? <span className="eh-tag">{e.rules}</span> : <span className="eh-tag warn">None</span>}</td>
