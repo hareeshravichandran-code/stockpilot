@@ -7,8 +7,10 @@
  *  SMS rule     sender + words in the message (+ amount range) -> category, optionally -> an event.
  *               A rule that points to an event always carries a category.
  *
- *  A payment is tied to an event ONLY through an SMS rule of that event (most specific rule wins), or because
- *  the user picked it (which also saves a rule). No hidden matching: every link can be seen and edited as a rule.
+ *  A payment is tied to an event through an SMS rule of that event (most specific rule wins), because the user
+ *  picked it (which also saves a rule), or - for premiums, school fees and property tax only - because its
+ *  category can only mean that event (a "Health insurance" debit near the health policy's renewal). Every link
+ *  shows how it was made ("by SMS rule", "by its category", "picked by you") and "Not this payment" undoes it.
  *  Events that have no rule yet get rules made once (seedRules): from their master's keywords / sender, and from
  *  the payments that already settled them (same sender, same amount range). They are ordinary rules after that.
  *  and then to an occurrence:
@@ -48,6 +50,7 @@ function senderKey(s) {
   return core.length >= 3 ? core : null;
 }
 
+const EARLY = { quarterly: 20, half_yearly: 30, yearly: 45 };
 const intervalDays = (ev) => (ev.frequency === 'once' ? 3650 : (STEP[ev.frequency] || 1) * 30);
 const bufferOf = (ev) => Math.max(0, Math.min(15, ev.buffer_days == null ? 2 : Number(ev.buffer_days)));
 
@@ -94,7 +97,8 @@ function pickPeriod(ev, date, settled) {
   // 1. inside the window
   const inWin = around.filter(p => Math.abs(diffDays(date, p)) <= buffer).sort((a, b) => Math.abs(diffDays(date, a)) - Math.abs(diffDays(date, b)))[0];
   if (inWin) return { period: inWin, timing: 'on_time' };
-  const early = Math.min(10, Math.round(iv * 0.35));
+  // Renewals are often paid weeks ahead (insurers remind 30-45 days before): a wider early window for long cycles
+  const early = EARLY[ev.frequency] ?? Math.min(10, Math.round(iv * 0.35));
   const next = around.filter(p => p > date).sort()[0];
   const prev = around.filter(p => p < date).sort().reverse()[0];
   // 2. a still-open due date not long ago: paid late
@@ -146,6 +150,60 @@ function ruleScore(rule, t) {
   return (rule.sender_key ? 1 : 0) + (hasPattern ? 2 : 0) + (rule.amount_min != null || rule.amount_max != null ? 1 : 0) + (ref ? 2 : 0);
 }
 
+/**
+ * Categories that can only be one kind of payment. A debit filed as "Health insurance" near the health policy's
+ * renewal is that premium, whatever the amount (premiums change every year: age band, members, GST).
+ * Only for event types whose categories are this specific; never card bills, EMIs or subscriptions.
+ */
+const INS_ALL = ['p_insurance', 'health_insurance', 'life_insurance', 'term_insurance', 'veh_insurance', 'vehicle_insurance', 'home_insurance', 'travel_insurance'];
+const INS_BY_POLICY = { health: ['health_insurance'], life: ['life_insurance', 'term_insurance'], term: ['term_insurance', 'life_insurance'],
+  vehicle: ['veh_insurance', 'vehicle_insurance'], motor: ['veh_insurance', 'vehicle_insurance'], home: ['home_insurance'], travel: ['travel_insurance'] };
+const KIND_CATS = { premium: INS_ALL, school_fee: ['school_fees', 'p_education'], property_tax: ['property_tax'] };
+/** [days early, days late] a payment may be from its due date to count by category. */
+const CAT_WINDOW = { monthly: [7, 10], quarterly: [20, 20], half_yearly: [30, 30], yearly: [45, 30], once: [30, 30] };
+
+/** The categories that settle this event by themselves (null: rules only). policy: its insurance_policies row, if any. */
+function catFamily(ev, policy) {
+  const base = KIND_CATS[ev.kind];
+  if (!base) return null;
+  if (ev.kind === 'premium' && policy && INS_BY_POLICY[policy.kind]) return new Set([...INS_BY_POLICY[policy.kind], 'p_insurance']);
+  return new Set(base);
+}
+
+/**
+ * The event a payment's category points to, or null. When two events share the category (two health policies),
+ * the one whose amount is closest wins; amounts further than 0.4x - 2.5x never count.
+ */
+function categoryPick(t, events, fam) {
+  if (!t.category_id) return null;
+  const a = num(t.amount);
+  let best = null, bestGap = Infinity;
+  for (const e of events) {
+    const f = fam[e.id];
+    if (!f || !f.has(t.category_id)) continue;
+    const amt = num(e.amount);
+    if (amt && (a < amt * 0.4 || a > amt * 2.5)) continue;
+    const gap = amt && a ? Math.abs(Math.log(a / amt)) : 1;
+    if (gap < bestGap) { best = e; bestGap = gap; }
+  }
+  return best;
+}
+/** A category match must sit close to its due date (rules may settle late payments; a category alone may not). */
+function inCatWindow(ev, date, period) {
+  const [early, late] = CAT_WINDOW[ev.frequency] || CAT_WINDOW.monthly;
+  const d = diffDays(date, period);
+  return d >= -(early + bufferOf(ev)) && d <= late + bufferOf(ev);
+}
+
+/** First words of an insurer's name, as a rule's words: "Care Health Insurance Ltd" -> "care health". */
+function insurerWords(name) {
+  if (!name || isEnc(name)) return null;
+  const w = String(name).toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean)
+    .filter(x => !['the', 'insurance', 'insu', 'insur', 'co', 'company', 'ltd', 'limited', 'general'].includes(x));
+  const out = w.slice(0, 2).join(' ');
+  return out.length >= 4 ? out : null;
+}
+
 /** Category an event's payments go to when the user hasn't picked one (ids from the app's category list). */
 const DEFAULT_CAT = { card_due: 'cc_bill', emi: 'p_loans', subscription: 'p_membership', sip: 'mf_sip', rd_instalment: 'rd', premium: 'p_insurance',
   salary: 'salary', income: 'p_salary', bill: 'utilities', rent: 'rent_house', school_fee: 'school_fees', property_tax: 'p_home' };
@@ -163,7 +221,12 @@ async function seedRules(uid, events, rules, txns, pays) {
   const masterIds = todo.filter(e => e.master_table === 'money_masters' && e.master_id).map(e => e.master_id);
   const { data: masters } = masterIds.length ? await supabase.from('money_masters').select('id, amount, match, ref_key').in('id', masterIds) : { data: [] };
   const masterOf = Object.fromEntries((masters || []).map(m => [m.id, m]));
+  const polIds = todo.filter(e => e.master_table === 'insurance_policies' && e.master_id).map(e => e.master_id);
+  const { data: pols } = polIds.length ? await supabase.from('insurance_policies').select('id, insurer, kind').in('id', polIds) : { data: [] };
+  const polOf = Object.fromEntries((pols || []).map(p => [String(p.id), p]));
   const byId = Object.fromEntries((txns || []).map(t => [t.id, t]));
+  // Payments tied only by their category teach no rule (their amount says nothing about next year's)
+  const byCategory = new Set((pays || []).filter(p => p.match_source === 'category' && p.txn_ref).map(p => p.txn_ref));
   const made = [];
   for (const e of todo) {
     const category_id = e.category_id || DEFAULT_CAT[e.kind] || null;
@@ -184,9 +247,14 @@ async function seedRules(uid, events, rules, txns, pays) {
       if (refKind && mref.length >= 2) rows.push({ merchant_pattern: null, pattern_tok: null, sender_key: sender, amount_min: null, amount_max: null,
         account_ref: mref.slice(-4), ref_kind: refKind, source: 'from_master', label: (refKind === 'card' ? 'Card ' : 'Loan ') + '\u2022\u2022' + mref.slice(-4) });
       if (!kw.length && tok.length) rows.push({ merchant_pattern: null, pattern_tok: tok.slice(0, 6), sender_key: sender, amount_min: range?.[0] ?? null, amount_max: range?.[1] ?? null, source: 'from_master', label: null });
+      // An insurance policy: the insurer's name, any amount (premiums change every year)
+      const pol = e.master_table === 'insurance_policies' ? polOf[String(e.master_id)] : null;
+      const iw = insurerWords(pol?.insurer);
+      if (iw) rows.push({ merchant_pattern: iw, pattern_tok: null, sender_key: null, amount_min: null, amount_max: null, source: 'from_master', label: pol.insurer });
       // From payments already tied to it (or to its master): one rule per sender, amount range from those payments
       let paid = (pays || []).filter(p => p.event_id === e.id && p.txn_ref && byId[p.txn_ref]).map(p => byId[p.txn_ref])
-        .concat((txns || []).filter(t => t.event_id === e.id || (e.master_table === 'money_masters' && e.master_id && t.master_id === e.master_id)));
+        .concat((txns || []).filter(t => t.event_id === e.id || (e.master_table === 'money_masters' && e.master_id && t.master_id === e.master_id)))
+        .filter(t => !byCategory.has(t.id));
       // A loan's EMI (no master keywords): earlier debits of the EMI amount (±2%) that say EMI / loan / NACH
       if (e.kind === 'emi' && e.master_table === 'bp_buckets' && num(e.amount) && !paid.length) {
         const a0 = num(e.amount);
@@ -207,6 +275,9 @@ async function seedRules(uid, events, rules, txns, pays) {
         }
         const names = [...new Set(list.map(t => (t.merchant && !isEnc(t.merchant) ? String(t.merchant).toLowerCase().trim() : '')))];
         const word = names.length === 1 && names[0].length >= 3 ? names[0].slice(0, 60) : null;
+        // Quarterly / yearly dues: a sender + amount rule with no words would settle a late due date with any
+        // payment of that size from the bank, months later. Only with the payee's words.
+        if (!word && e.frequency && e.frequency !== 'monthly') continue;
         if (rows.some(r => r.sender_key === k && r.amount_min != null && r.amount_min <= lo && r.amount_max >= hi)) continue;
         rows.push({ merchant_pattern: word, pattern_tok: null, sender_key: k, amount_min: Math.floor(lo * 0.95), amount_max: Math.ceil(hi * 1.05), source: 'from_payments', label: null });
       }
@@ -228,7 +299,8 @@ async function seedRules(uid, events, rules, txns, pays) {
       if (data) made.push(data);
       if (error) { failed++; console.error('[events] rule not saved for event', e.id, error.message); }
     }
-    if (!category_id || failed) continue;                         // try again next run (never mark done on a failed save)                                   // made once the user picks a category
+    // Try again next run on a failed save, or when nothing could be made yet (payments tied later teach one)
+    if (!category_id || failed || !rows.length) continue;
     await supabase.from('recurring_events').update({ rules_seeded: true }).eq('id', e.id);
     e.rules_seeded = true;
     if (category_id) e.category_id = category_id;
@@ -263,6 +335,70 @@ async function ensureLoanEvents(uid) {
   return made;
 }
 /**
+ * Paid due dates whose payment row no longer exists (the SMS were read again and the payment got a new id):
+ * point them at the same payment (same direction, same amount, same day) so its history and rules still work.
+ */
+async function repairRefs(uid, events, pays, txns, since) {
+  const ids = new Set(txns.map(t => t.id));
+  const taken = new Set(pays.map(p => p.txn_ref).filter(Boolean));
+  const evOf = Object.fromEntries(events.map(e => [e.id, e]));
+  const sinceDay = istDay(since);
+  let n = 0;
+  for (const p of pays) {
+    if (p.status !== 'paid' || !p.txn_ref || ids.has(p.txn_ref) || !p.paid_on || p.paid_on < sinceDay || !num(p.amount)) continue;
+    const ev = evOf[p.event_id]; if (!ev) continue;
+    const type = ev.direction === 'in' ? 'CREDIT' : 'DEBIT';
+    const hits = txns.filter(t => !taken.has(t.id) && t.type === type && Math.abs(num(t.amount) - num(p.amount)) <= 1 && Math.abs(diffDays(istDay(t.date_time), p.paid_on)) <= 1);
+    if (hits.length !== 1) continue;                                // only when it can only be that one
+    const t = hits[0];
+    const { error } = await supabase.from('event_payments').update({ txn_ref: t.id }).eq('event_id', p.event_id).eq('period', p.period);
+    if (error) continue;
+    taken.add(t.id); p.txn_ref = t.id;
+    if (!t.event_id) { await supabase.from('expense_transactions').update({ event_id: ev.id }).eq('id', t.id).eq('user_id', uid); t.event_id = ev.id; }
+    n++;
+  }
+  return n;
+}
+
+/**
+ * Insurance policies become premium events, so their renewal reminds you and the premium SMS settles it.
+ * Policies saved by SMS setup or on the Insurance page had none (only Discover made them). One per policy;
+ * a policy from the same insurer due within 10 days of an existing premium event is taken as the same policy.
+ */
+const POLICY_FREQ = { monthly: 'monthly', quarterly: 'quarterly', half_yearly: 'half_yearly', yearly: 'yearly', single: null };
+async function ensurePolicyEvents(uid) {
+  const { data: pols } = await supabase.from('insurance_policies').select('id, kind, insurer, plan_name, premium, premium_frequency, renewal_date, status').eq('owner_id', uid).eq('status', 'active');
+  const live = (pols || []).filter(p => p.renewal_date && /^\d{4}-\d{2}-\d{2}$/.test(p.renewal_date) && POLICY_FREQ[p.premium_frequency || 'yearly']);
+  if (!live.length) return 0;
+  const { data: have } = await supabase.from('recurring_events').select('id, master_table, master_id, kind, due_day, due_month, frequency').eq('owner_id', uid).neq('status', 'deleted');
+  const known = new Set((have || []).filter(e => e.master_table === 'insurance_policies').map(e => String(e.master_id)));
+  const byId = Object.fromEntries((pols || []).map(p => [String(p.id), p]));
+  const first = (s) => (isEnc(s) ? '' : String(s || '').toLowerCase().split(/\s+/)[0] || '');
+  const { lockRow } = require('./privacy');
+  let made = 0;
+  for (const p of live) {
+    if (known.has(String(p.id))) continue;
+    const freq = POLICY_FREQ[p.premium_frequency || 'yearly'];
+    const dd = +p.renewal_date.slice(8, 10), mm = +p.renewal_date.slice(5, 7);
+    // Same insurer, premium due within 10 days of this one: the same policy saved twice (setup + Discover)
+    const twin = (have || []).some(e => e.kind === 'premium' && e.master_table === 'insurance_policies' && byId[String(e.master_id)]
+      && first(byId[String(e.master_id)].insurer) && first(byId[String(e.master_id)].insurer) === first(p.insurer)
+      && (freq === 'monthly' || e.due_month === mm || (!e.due_month && e.frequency === 'monthly'))
+      && Math.abs(diffDays(`2001-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`, `2001-${String(e.due_month || mm).padStart(2, '0')}-${String(Math.min(e.due_day || dd, 28)).padStart(2, '0')}`)) <= 10);
+    if (twin) continue;
+    const name = (isEnc(p.plan_name) ? null : p.plan_name) || (isEnc(p.insurer) ? null : p.insurer) || 'Insurance';
+    const title = /premium/i.test(name) ? name : `${String(name).slice(0, 120)} premium`;
+    const row = await lockRow(uid, { owner_id: uid, master_table: 'insurance_policies', master_id: String(p.id), kind: 'premium', title, amount: num(p.premium) || null,
+      frequency: freq, due_day: dd, due_month: freq === 'monthly' ? null : mm, start_date: null, remind_days: 7, direction: 'out', buffer_days: 2,
+      category_id: DEFAULT_CAT.premium, amount_mode: 'about', source: 'policy', status: 'active' }, { texts: ['title', 'notes'] });
+    const { error } = await supabase.from('recurring_events').insert(row);
+    if (!error) { made++; known.add(String(p.id)); (have || []).push({ ...row, master_id: String(p.id) }); }
+    else console.error('[events] policy event not saved', p.id, error.message);
+  }
+  return made;
+}
+
+/**
  * Tie the user's payments to their events and occurrences. Safe to call often (throttled).
  * matchesMaster(master, txn) is the masters module's matcher (injected to avoid a require cycle).
  */
@@ -270,6 +406,7 @@ async function runMatching(uid, { force = false, matchesMaster = null } = {}) {
   if (!force && Date.now() - (lastRun.get(uid) || 0) < 90 * 1000) return { skipped: true };
   lastRun.set(uid, Date.now());
   await ensureLoanEvents(uid).catch(() => 0);
+  await ensurePolicyEvents(uid).catch(() => 0);
   const since = Date.now() - 400 * DAY;
   const [{ data: evs }, { data: rules }, txns] = await Promise.all([
     supabase.from('recurring_events').select('*').eq('owner_id', uid).eq('status', 'active'),
@@ -280,7 +417,12 @@ async function runMatching(uid, { force = false, matchesMaster = null } = {}) {
   const events = (evs || []).filter(e => e.frequency);
   if (!events.length) return { linked: 0 };
   const ids = events.map(e => e.id);
-  const { data: pays } = await supabase.from('event_payments').select('event_id, period, status, txn_ref').in('event_id', ids).gte('period', ymd(new Date(since - 40 * DAY)));
+  const { data: pays } = await supabase.from('event_payments').select('event_id, period, status, txn_ref, paid_on, amount, match_source').in('event_id', ids).gte('period', ymd(new Date(since - 40 * DAY)));
+  await repairRefs(uid, events, pays || [], txns || [], since);
+  const polIds = events.filter(e => e.master_table === 'insurance_policies' && e.master_id).map(e => e.master_id);
+  const { data: pols } = polIds.length ? await supabase.from('insurance_policies').select('id, kind').in('id', polIds) : { data: [] };
+  const polOf = Object.fromEntries((pols || []).map(p => [String(p.id), p]));
+  const fam = {}; for (const e of events) { const f = catFamily(e, e.master_table === 'insurance_policies' ? polOf[String(e.master_id)] : null); if (f) fam[e.id] = f; }
   const masterIds = events.filter(e => e.master_table === 'money_masters' && e.master_id).map(e => e.master_id);
   const { data: masters } = masterIds.length ? await supabase.from('money_masters').select('id').in('id', masterIds).eq('status', 'active') : { data: [] };
   const masterOf = Object.fromEntries((masters || []).map(m => [m.id, m]));
@@ -303,10 +445,18 @@ async function runMatching(uid, { force = false, matchesMaster = null } = {}) {
       for (const r of allRules) { const s = ruleScore(r, t); if (s > best) { const e = mine.find(x => x.id === r.event_id); if (e) { best = s; ev = e; rule = r; } } }
       if (ev) source = 'rule';
     }
-    if (!ev) continue;
     const date = istDay(t.date_time);
+    let pick = null;
+    if (!ev) {
+      // Premiums, school fees, property tax: the payment's own category, close to an open due date
+      const c = categoryPick(t, mine, fam);
+      if (!c) continue;
+      pick = pickPeriod(c, date, settled[c.id] || new Set());
+      if (!pick || !inCatWindow(c, date, pick.period)) continue;
+      ev = c; source = 'category';
+    }
     const set = settled[ev.id] = settled[ev.id] || new Set();
-    const pick = pickPeriod(ev, date, set);
+    if (!pick) pick = pickPeriod(ev, date, set);
     const patch = {};
     if (t.event_id !== ev.id) patch.event_id = ev.id;
     if (!t.master_id && ev.master_table === 'money_masters' && masterOf[ev.master_id]) patch.master_id = ev.master_id;
@@ -325,5 +475,5 @@ async function runMatching(uid, { force = false, matchesMaster = null } = {}) {
 }
 
 module.exports = {
-  ensureLoanEvents,
-  hasAccountRef, seedRules, DEFAULT_CAT, senderKey, periods, stateOf, pickPeriod, ruleScore, runMatching, intervalDays, bufferOf, todayStr, istDay, addDays, diffDays };
+  ensureLoanEvents, ensurePolicyEvents,
+  hasAccountRef, seedRules, DEFAULT_CAT, catFamily, categoryPick, inCatWindow, insurerWords, repairRefs, KIND_CATS, senderKey, periods, stateOf, pickPeriod, ruleScore, runMatching, intervalDays, bufferOf, todayStr, istDay, addDays, diffDays };

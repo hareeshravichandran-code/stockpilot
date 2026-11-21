@@ -59,6 +59,33 @@ describe('events and SMS rules API', () => {
   });
 });
 
+describe('K-150: open due dates and picking any payment', () => {
+  const shiftD = (d, n) => new Date(Date.parse(d + 'T00:00:00Z') + n * 864e5).toISOString().slice(0, 10);
+  test('inbox lists the overdue premium with the payment most likely to settle it; candidates list every nearby payment', async () => {
+    const today = istToday();
+    const due = shiftD(today, -9);
+    db._seed('recurring_events', [{ owner_id: uid, master_table: 'manual', master_id: 'm-1', title: 'Care Health premium', kind: 'premium', frequency: 'yearly', due_day: +due.slice(8, 10), due_month: +due.slice(5, 7),
+      amount: 20324, category_id: 'p_insurance', buffer_days: 2, remind_days: 7, status: 'active', created_at: '2025-01-01T00:00:00Z', rules_seeded: true }]);
+    const ev = rows('recurring_events')[0];
+    db._seed('expense_transactions', [
+      txn({ amount: 29964.7, category_id: 'health_insurance', date_time: ist(shiftD(today, -2)), event_skip: [ev.id] }),   // "not this payment" said once
+      txn({ amount: 31000, category_id: null, date_time: ist(shiftD(today, -3)) }),
+      txn({ amount: 450, category_id: 'p_food', date_time: ist(shiftD(today, -1)) }),
+    ]);
+    const inbox = await api.call('GET', '/api/events/inbox');
+    assert.equal(inbox.status, 200, JSON.stringify(inbox.body));
+    assert.equal(inbox.body.items.length, 1);
+    assert.equal(inbox.body.items[0].state, 'overdue');
+    assert.equal(inbox.body.items[0].suggestion.amount, 31000, 'a 52% higher premium is still suggested for a yearly event');
+    const c = await api.call('GET', `/api/events/${ev.id}/candidates?period=${due}`);
+    assert.equal(c.status, 200, JSON.stringify(c.body));
+    assert.equal(c.body.payments.length, 3, 'any amount near the due date');
+    assert.equal(c.body.payments[0].cat_match, true, 'the health-insurance debit comes first');
+    const q = await api.call('GET', `/api/events/${ev.id}/candidates?period=${due}&q=450`);
+    assert.equal(q.body.payments.length, 1);
+  });
+});
+
 describe('Sort tab: repeating payments', () => {
   test('Track as due makes an event + rule; Not a bill and Undo work; the list reply has event null for open groups', async () => {
     db._seed('sms_groups', [{ owner_id: uid, key: 'netflix', name: 'Netflix', count: 6, avg_amount: 649, min_amount: 649, max_amount: 649, cadence: 'monthly', due_day: 12, sender_key: 'HDFCBK' },

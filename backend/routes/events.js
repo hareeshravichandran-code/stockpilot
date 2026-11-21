@@ -14,6 +14,8 @@
  *   PUT    /api/events/:id                      edit
  *   POST   /api/events/:id/status               { status: active | paused | closed }
  *   DELETE /api/events/:id                      delete (own events only; master events are closed instead)
+ *   GET    /api/events/inbox                    due / overdue dates with the payment that most likely settles each
+ *   GET    /api/events/:id/candidates?period=&q=  every payment near a due date (any amount), to pick one by hand
  *   POST   /api/events/:id/occurrences/:period  { action: match (txn_id) | done | skip }   match also creates the SMS rule
  *   DELETE /api/events/:id/occurrences/:period  open that due date again; its payment won't be tied to this event again
  */
@@ -35,7 +37,7 @@ const isDate = (s) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
 const isUuid = (s) => typeof s === 'string' && /^[0-9a-f-]{36}$/i.test(s);
 const nowIso = () => new Date().toISOString();
 const TXN_COLS = 'id, amount, type, merchant, description, sms_body, sms_sender, bank_name, account_last4, date_time, category_id, master_id, event_id, event_skip, merchant_tok, signals';
-const txnOut = (t) => t && ({ id: t.id, amount: num(t.amount), date: EM.istDay(t.date_time), dir: t.type === 'CREDIT' ? 'in' : 'out',
+const txnOut = (t) => t && ({ cat_match: false, id: t.id, amount: num(t.amount), date: EM.istDay(t.date_time), dir: t.type === 'CREDIT' ? 'in' : 'out',
   payee: t.merchant || t.description || null, body: t.sms_body || null, sender: t.sms_sender || null, sender_key: EM.senderKey(t.sms_sender),
   bank: t.bank_name || null, account: t.account_last4 || null, category_id: t.category_id || null, event_id: t.event_id || null });
 
@@ -56,6 +58,34 @@ function currentOf(e, payOf, today) {
   const last = [...rows].reverse().find(r => r.state === 'done');
   const lastDue = [...rows].reverse().find(r => r.period <= today);
   return { cycle_done: !!(lastDue && !owed.length && (lastDue.state === 'done' || lastDue.state === 'skipped')), now: owed[0] || null, next: next || null, last_done: last ? { period: last.period, paid_on: last.pay?.paid_on || null, amount: num(last.pay?.amount), timing: last.timing } : null };
+}
+
+/** Categories that settle an event by themselves (premiums, school fees, property tax), from its policy if any. */
+async function familiesFor(evs) {
+  const ids = [...new Set((evs || []).filter(e => e.master_table === 'insurance_policies' && e.master_id).map(e => String(e.master_id)))];
+  const { data: pols } = ids.length ? await supabase.from('insurance_policies').select('id, kind').in('id', ids) : { data: [] };
+  const P = Object.fromEntries((pols || []).map(p => [String(p.id), p]));
+  const out = {};
+  for (const e of evs || []) { const f = EM.catFamily(e, e.master_table === 'insurance_policies' ? P[String(e.master_id)] : null); if (f) out[e.id] = f; }
+  return out;
+}
+
+/**
+ * Payments that could settle a due date, best first. Long cycles (premiums, yearly fees) change amount and are
+ * paid weeks early, so their window and amount band are wider; a payment in the event's own category ranks first.
+ */
+function suggestFor(e, period, recent, used, fam) {
+  const amt = num(e.amount), dir = e.direction === 'in' ? 'in' : 'out';
+  const long = ['quarterly', 'half_yearly', 'yearly'].includes(e.frequency);
+  const win = long ? 50 : Math.max(20, EM.bufferOf(e) + 10);
+  const [lo, hi] = long ? [0.5, 2] : [0.7, 1.3];
+  return recent.filter(t => !used.has(t.id) && (t.type === 'CREDIT' ? 'in' : 'out') === dir && Math.abs(EM.diffDays(EM.istDay(t.date_time), period)) <= win
+      && !(Array.isArray(t.event_skip) && t.event_skip.includes(e.id)) && !(t.event_id && t.event_id !== e.id)
+      && (fam?.has(t.category_id) || !amt || (num(t.amount) >= amt * lo - 5 && num(t.amount) <= amt * hi + 5)))
+    .map(t => ({ t, cat: !!fam?.has(t.category_id) }))
+    .sort((a, b) => (b.cat - a.cat) || Math.abs(num(a.t.amount) - amt) - Math.abs(num(b.t.amount) - amt)
+      || Math.abs(EM.diffDays(EM.istDay(a.t.date_time), period)) - Math.abs(EM.diffDays(EM.istDay(b.t.date_time), period)))
+    .slice(0, 5).map(({ t, cat }) => ({ ...txnOut(t), cat_match: cat }));
 }
 
 /**
@@ -371,6 +401,60 @@ router.post('/groups/:id', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── Inbox: what needs an answer ──────────────────────────────────────────────
+// Every active event whose due date is open now, with the payment that most likely settles it.
+router.get('/inbox', requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.id;
+    await require('./masters').linkActuals(uid).catch(() => {});
+    const { data: evs } = await supabase.from('recurring_events').select('*').eq('owner_id', uid).eq('status', 'active');
+    const ids = (evs || []).map(e => e.id);
+    const today = EM.todayStr();
+    const { data: pays } = ids.length ? await supabase.from('event_payments').select('event_id, period, status, txn_ref').in('event_id', ids).gte('period', EM.addDays(today, -800)) : { data: [] };
+    const payOf = {}; for (const p of pays || []) payOf[p.event_id + '|' + p.period] = p;
+    const open = (evs || []).map(e => ({ e, cur: currentOf(e, payOf, today) })).filter(x => x.cur.now);
+    if (!open.length) return res.json({ items: [], today });
+    const recent = await recentTxns(uid, 120);
+    const used = new Set((pays || []).map(p => p.txn_ref).filter(Boolean));
+    const fams = await familiesFor(open.map(x => x.e));
+    const items = open.map(({ e, cur }) => {
+      const s = suggestFor(e, cur.now.period, recent, used, fams[e.id] || null);
+      return { event: { id: e.id, title: e.title, kind: e.kind, amount: num(e.amount), frequency: e.frequency, category_id: e.category_id || null },
+        period: cur.now.period, state: cur.now.state, days: EM.diffDays(today, cur.now.period), suggestion: s[0] || null, more: Math.max(0, s.length - 1) };
+    }).sort((a, b) => (a.state === 'overdue' ? 0 : 1) - (b.state === 'overdue' ? 0 : 1) || a.period.localeCompare(b.period));
+    res.json({ items, today });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Every payment near a due date, any amount: when the right one was not suggested, pick it by hand.
+router.get('/:id/candidates', requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.id;
+    const e = await ownEvent(uid, req.params.id);
+    if (!e) return res.status(404).json({ error: 'Event not found' });
+    const period = isDate(req.query.period) ? req.query.period : EM.todayStr();
+    const q = str(req.query.q, 60)?.toLowerCase() || null;
+    const span = Math.min(120, Math.max(15, parseInt(req.query.days, 10) || (['quarterly', 'half_yearly', 'yearly'].includes(e.frequency) ? 60 : 25)));
+    const from = EM.addDays(period, -span), to = EM.addDays(period, span);
+    const dir = e.direction === 'in' ? 'CREDIT' : 'DEBIT';
+    const data = await allRows(() => supabase.from('expense_transactions').select(TXN_COLS).eq('user_id', uid).eq('is_deleted', false).eq('type', dir)
+      .gte('date_time', Date.parse(from + 'T00:00:00+05:30')).lte('date_time', Date.parse(to + 'T23:59:59+05:30'))
+      .order('date_time', { ascending: false }).order('id', { ascending: true }));
+    const refs = data.map(t => t.id);
+    const { data: tied } = refs.length ? await supabase.from('event_payments').select('txn_ref, event_id').in('txn_ref', refs) : { data: [] };
+    const taken = Object.fromEntries((tied || []).map(p => [p.txn_ref, p.event_id]));
+    const fam = (await familiesFor([e]))[e.id] || null;
+    const amt = num(e.amount);
+    const list = data.filter(t => !q || [t.merchant, t.description, t.sms_body, t.sms_sender, t.bank_name, t.category_id, String(Math.round(num(t.amount)))]
+        .some(x => typeof x === 'string' && !x.startsWith('ev1:') && !x.startsWith('ep1:') && x.toLowerCase().includes(q)))
+      .map(t => ({ ...txnOut(t), cat_match: !!fam?.has(t.category_id), taken: taken[t.id] ? (taken[t.id] === e.id ? 'this' : 'other') : null,
+        days: EM.diffDays(EM.istDay(t.date_time), period) }))
+      .sort((a, b) => (b.cat_match - a.cat_match) || Math.abs(a.days) - Math.abs(b.days) || Math.abs(a.amount - amt) - Math.abs(b.amount - amt))
+      .slice(0, 60);
+    res.json({ period, from, to, payments: list });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── One event ────────────────────────────────────────────────────────────────
 router.get('/:id', requireAuth, async (req, res) => {
   try {
@@ -394,11 +478,8 @@ router.get('/:id', requireAuth, async (req, res) => {
     const recent = await recentTxns(uid, Math.max(60, Math.round(EM.diffDays(today, from)) + 30));
     const used = new Set(refs);
     const amt = num(e.amount);
-    const dir = e.direction === 'in' ? 'in' : 'out';
-    const suggest = (p) => recent.filter(t => !used.has(t.id) && (t.type === 'CREDIT' ? 'in' : 'out') === dir && Math.abs(EM.diffDays(EM.istDay(t.date_time), p)) <= Math.max(20, EM.bufferOf(e) + 10)
-        && (!amt || Math.abs(num(t.amount) - amt) <= Math.max(5, amt * 0.3)) && !(Array.isArray(t.event_skip) && t.event_skip.includes(e.id)))
-      .sort((a, b) => Math.abs(num(a.amount) - amt) - Math.abs(num(b.amount) - amt) || Math.abs(EM.diffDays(EM.istDay(a.date_time), p)) - Math.abs(EM.diffDays(EM.istDay(b.date_time), p)))
-      .slice(0, 5).map(txnOut);
+    const fam = (await familiesFor([e]))[e.id] || null;
+    const suggest = (p) => suggestFor(e, p, recent, used, fam);
     const occ = EM.periods(e, from, to).reverse().slice(0, 9).map(p => {
       const pay = payOf[p] || null;
       const st = EM.stateOf(e, p, pay, today);
@@ -531,6 +612,7 @@ function ruleFromTxn(e, t) {
   const tok = Array.isArray(t.merchant_tok) && t.merchant_tok.length ? t.merchant_tok.slice(0, 6) : null;
   let lo = null, hi = null;
   if (mode === 'exact') { lo = a; hi = a; }
+  else if (['quarterly', 'half_yearly', 'yearly'].includes(e.frequency) && tok) { lo = Math.floor(a * 0.6); hi = Math.ceil(a * 1.8); }   // premiums / fees change every renewal
   else if (mode === 'about' || !tok) { lo = Math.floor(a * (mode === 'about' ? 0.9 : 0.75)); hi = Math.ceil(a * (mode === 'about' ? 1.1 : 1.25)); }
   // Card bills and EMIs whose amount changes: learn the account's last digits instead of an amount range
   const l4 = String(t.account_last4 || '').replace(/\D/g, '').slice(-4);
