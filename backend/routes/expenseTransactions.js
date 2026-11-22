@@ -5,6 +5,34 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../services/supabase');
+const { WINDOW_MS, nearestTwin, extraCopies } = require('../services/txnDedup');
+
+/** The saved copy of this payment, if the cloud already has it: by id, then reference, then amount and time. */
+async function savedTwin(uid, row, id) {
+  if (id && /^[0-9a-f-]{36}$/i.test(String(id))) {
+    const { data } = await supabase.from('expense_transactions').select('*').eq('id', id).eq('user_id', uid).eq('is_deleted', false).limit(1);
+    if (data && data[0]) return data[0];
+  }
+  const { data } = await supabase.from('expense_transactions').select('*')
+    .eq('user_id', uid).eq('amount', row.amount).eq('type', row.type).eq('is_deleted', false)
+    .gte('date_time', row.date_time - WINDOW_MS).lte('date_time', row.date_time + WINDOW_MS).limit(20);
+  return nearestTwin(row, data);
+}
+
+/** The phone sends a payment again after a change there (category, note): keep those changes on the saved copy. */
+async function keepChanges(uid, had, category_id, note) {
+  const patch = {};
+  if (category_id && category_id !== had.category_id) patch.category_id = category_id;
+  if (note != null && note !== '' && note !== had.note) patch.note = note;
+  if (!Object.keys(patch).length) return had;
+  patch.updated_at = Date.now();
+  let r = await supabase.from('expense_transactions').update(patch).eq('id', had.id).eq('user_id', uid).select().single();
+  if (r.error && /category_id_fkey/.test(r.error.message || '') && patch.note) {
+    delete patch.category_id;
+    r = await supabase.from('expense_transactions').update(patch).eq('id', had.id).eq('user_id', uid).select().single();
+  }
+  return (!r.error && r.data) ? r.data : had;
+}
 
 // ── Auth middleware (reuses existing JWT logic) ────────────────────────────────
 const jwt = require('jsonwebtoken');
@@ -123,6 +151,9 @@ router.post('/transactions', authMiddleware, async (req, res) => {
         created_at:   Date.now(),
         updated_at:   Date.now()
       };
+    // Already in the cloud (same id, or the same payment a minute apart): update it, never add a second copy
+    const twin = await savedTwin(req.userId, row, req.body.id);
+    if (twin) return res.status(200).json({ ...(await keepChanges(req.userId, twin, category_id, note)), duplicate: true });
     const put = (r) => supabase.from('expense_transactions').insert(r).select().single();
     let { data, error } = await put(row);
     // A category the server does not know yet: keep the payment, leave it unsorted
@@ -206,25 +237,10 @@ router.post('/transactions/bulk', authMiddleware, async (req, res) => {
     // Match on: user_id + amount + date_time + type + merchant (within 60s window)
     for (const row of withoutRef) {
       try {
-        const windowMs = 60 * 1000; // 60 second window for same SMS
-        const { data: existing } = await supabase
-          .from('expense_transactions')
-          .select('id')
-          .eq('user_id', row.user_id)
-          .eq('amount',  row.amount)
-          .eq('type',    row.type)
-          .gte('date_time', row.date_time - windowMs)
-          .lte('date_time', row.date_time + windowMs)
-          .eq('is_deleted', false)
-          .maybeSingle();
-
-        if (!existing) {
-          const { error: e2 } = await supabase
-            .from('expense_transactions')
-            .insert(row);
-          if (!e2) created++;
-          else if (!e2.message.includes('duplicate')) console.warn('[bulk] insert warn:', e2.message);
-        }
+        if (await savedTwin(row.user_id, row)) continue;   // the same payment is already saved
+        const { error: e2 } = await supabase.from('expense_transactions').insert(row);
+        if (!e2) created++;
+        else if (!e2.message.includes('duplicate')) console.warn('[bulk] insert warn:', e2.message);
       } catch(rowErr) {
         console.warn('[bulk] row error:', rowErr.message);
       }
@@ -233,6 +249,33 @@ router.post('/transactions/bulk', authMiddleware, async (req, res) => {
     res.status(201).json({ created, failed: 0 });
   } catch (err) {
     console.error('[expense/transactions/bulk POST]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/expense/transactions/tidy ───────────────────────────────────────
+// Hides extra copies of the same SMS payment (is_deleted, so nothing is lost). The phone calls it after a restore.
+router.post('/transactions/tidy', authMiddleware, async (req, res) => {
+  try {
+    const rows = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabase.from('expense_transactions')
+        .select('id,amount,type,date_time,reference_no,account_last4,category_id,note,source,created_at,is_deleted')
+        .eq('user_id', req.userId).eq('is_deleted', false).order('id').range(from, from + 999);
+      if (error) throw error;
+      rows.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+    const extra = extraCopies(rows);
+    for (let i = 0; i < extra.length; i += 200) {
+      const ids = extra.slice(i, i + 200).map(e => e.id);
+      const { error } = await supabase.from('expense_transactions').update({ is_deleted: true, updated_at: Date.now() })
+        .in('id', ids).eq('user_id', req.userId);
+      if (error) throw error;
+    }
+    res.json({ checked: rows.length, hidden: extra.length, pairs: extra });
+  } catch (err) {
+    console.error('[expense/transactions/tidy]', err.message);
     res.status(500).json({ error: err.message });
   }
 });
