@@ -205,7 +205,26 @@ function ruleBody(b) {
   if (b.label !== undefined) r.label = str(b.label, 2000);
   // Account / card last digits (2-4): for card bills and EMIs whose amount changes
   if (b.account_ref !== undefined) { const d = String(b.account_ref || '').replace(/\D/g, '').slice(-4); r.account_ref = d.length >= 2 ? d : null; }
-  if (b.ref_kind !== undefined) r.ref_kind = ['card', 'loan'].includes(b.ref_kind) ? b.ref_kind : null;
+  if (b.ref_kind !== undefined) r.ref_kind = ['card', 'loan', 'acct'].includes(b.ref_kind) ? b.ref_kind : null;
+  ruleWindow(b, r);
+  return r;
+}
+/**
+ * Category rules match on the merchant; the user can narrow one to a day-of-month window, and to an amount range too.
+ * sample_amount / sample_day: the payment the rule was made from, used to fill the window when the user narrows it.
+ * Event rules keep their own amount range whatever the mode.
+ */
+const MODES = ['merchant', 'merchant_date', 'merchant_date_amount'];
+const dayOrNull = (v) => { const n = parseInt(v, 10); return n >= 1 && n <= 31 ? n : null; };
+function ruleWindow(b, r) {
+  if (b.sample_amount !== undefined) r.sample_amount = numOrNull(b.sample_amount);
+  if (b.sample_day !== undefined) r.sample_day = dayOrNull(b.sample_day);
+  if (b.day_from !== undefined) r.day_from = dayOrNull(b.day_from);
+  if (b.day_to !== undefined) r.day_to = dayOrNull(b.day_to);
+  if (b.match_mode === undefined) return r;
+  r.match_mode = MODES.includes(b.match_mode) ? b.match_mode : 'merchant';
+  if (r.match_mode === 'merchant') { r.day_from = null; r.day_to = null; }
+  if (r.match_mode !== 'merchant_date_amount' && !b.event_id) { r.amount_min = null; r.amount_max = null; }
   return r;
 }
 async function checkRule(uid, r) {
@@ -221,6 +240,8 @@ async function checkRule(uid, r) {
   if (!words && !ref && r.amount_min == null && r.amount_max == null) return 'A rule with only a sender would catch every SMS from that bank. Add words, an amount or the account\'s last digits.';
   if (ref && !words && !r.sender_key && !r.ref_kind) r.ref_kind = 'card';   // digits alone: only on card / loan payment SMS
   if (r.amount_min != null && r.amount_max != null && r.amount_min > r.amount_max) return 'The lowest amount is above the highest.';
+  if (r.match_mode && r.match_mode !== 'merchant' && (r.day_from == null || r.day_to == null)) return 'Pick the days of the month this rule covers.';
+  if (r.match_mode === 'merchant_date_amount' && r.amount_min == null && r.amount_max == null) return 'Give the amount range for this rule.';
   return null;
 }
 async function recentTxns(uid, days = 200) {
@@ -243,6 +264,8 @@ router.get('/rules', requireAuth, async (req, res) => {
         merchant_pattern: r.merchant_pattern || null, has_words: !!r.merchant_pattern || (Array.isArray(r.pattern_tok) && r.pattern_tok.length > 0),
         label: r.label || null, sender_key: r.sender_key || null, amount_min: r.amount_min == null ? null : num(r.amount_min), amount_max: r.amount_max == null ? null : num(r.amount_max),
         account_ref: r.account_ref || null, ref_kind: r.ref_kind || null,
+        match_mode: r.match_mode || 'merchant', day_from: r.day_from ?? null, day_to: r.day_to ?? null,
+        sample_amount: r.sample_amount == null ? null : num(r.sample_amount), sample_day: r.sample_day ?? null,
         source: r.source || 'manual', from_phone: !r.source || r.source === 'manual' ? !r.user_confirmed : false, confirmed: !!r.user_confirmed,
         caught: caught.length, last_caught: caught[0] ? EM.istDay(caught[0].date_time) : null, updated_at: r.updated_at };
     });
@@ -500,6 +523,8 @@ router.get('/:id', requireAuth, async (req, res) => {
         has_words: !!r.merchant_pattern || (Array.isArray(r.pattern_tok) && r.pattern_tok.length > 0), sender_key: r.sender_key || null,
         amount_min: r.amount_min == null ? null : num(r.amount_min), amount_max: r.amount_max == null ? null : num(r.amount_max), source: r.source || 'manual',
         account_ref: r.account_ref || null, ref_kind: r.ref_kind || null,
+        match_mode: r.match_mode || 'merchant', day_from: r.day_from ?? null, day_to: r.day_to ?? null,
+        sample_amount: r.sample_amount == null ? null : num(r.sample_amount), sample_day: r.sample_day ?? null,
         caught: ruleTx.filter(t => EM.ruleScore(r, t) > 0).length,
         // The latest SMS this rule caught: sender and text, so you can see what it reacts to
         sample: (() => { const t = ruleTx.filter(x => EM.ruleScore(r, x) > 0).sort((a, b) => Number(b.date_time) - Number(a.date_time))[0] || (tied || [])[0];
@@ -701,3 +726,4 @@ router.delete('/:id/occurrences/:period', requireAuth, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.ruleWindow = ruleWindow;

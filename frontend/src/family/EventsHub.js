@@ -88,17 +88,23 @@ function stateLine(e) {
   if (e.next_due) return [`Next ${fmt(e.next_due)}`, 'calm'];
   return ['No upcoming date', 'mute'];
 }
+const ordinal = (n) => { const v = n % 100; return n + (v >= 11 && v <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th')); };
+// A rule matches on the merchant; it can be narrowed to days of the month, and to an amount too
+const MATCH_MODES = [['merchant', 'Merchant only'], ['merchant_date', 'Merchant + date'], ['merchant_date_amount', 'Merchant + date + amount']];
+const wrapDay = (d) => ((d - 1 + 31) % 31) + 1;
 function ruleWhen(r) {
   const parts = [];
   if (r.sender_key) parts.push(['From', r.sender_key]);
-  if (r.merchant_pattern) parts.push(['Words', `“${r.merchant_pattern}”`]);
+  if (r.ref_kind === 'acct') parts.push(['Account', `${r.label ? clean(r.label) + ' ' : ''}••${r.account_ref || ''}`]);
+  else if (r.merchant_pattern) parts.push(['Words', `“${r.merchant_pattern}”`]);
   else if (r.has_words) parts.push(['Payee', r.label ? `“${clean(r.label)}”` : 'same payee']);
   if (r.amount_min != null || r.amount_max != null) {
     parts.push(['Amount', r.amount_min != null && r.amount_max != null
       ? (r.amount_min === r.amount_max ? inr(r.amount_min) : `${inr(r.amount_min)} – ${inr(r.amount_max)}`)
       : r.amount_min != null ? `from ${inr(r.amount_min)}` : `up to ${inr(r.amount_max)}`]);
   }
-  if (r.account_ref) parts.push([r.ref_kind === 'loan' ? 'Loan' : r.ref_kind === 'card' ? 'Card' : 'Account', `••${r.account_ref}`]);
+  if (r.account_ref && r.ref_kind !== 'acct') parts.push([r.ref_kind === 'loan' ? 'Loan' : r.ref_kind === 'card' ? 'Card' : 'Account', `••${r.account_ref}`]);
+  if (r.day_from && r.day_to) parts.push(['Days', r.day_from === r.day_to ? `${ordinal(r.day_from)} of the month` : `${ordinal(r.day_from)} – ${ordinal(r.day_to)} of the month`]);
   return parts;
 }
 
@@ -360,6 +366,18 @@ function RuleForm({ initial, preset, cats, events, onClose, onSaved, notify }) {
     sender_key: r0.sender_key || preset?.sender_key || '', words: r0.merchant_pattern || '',
     amount_min: r0.amount_min ?? preset?.amount_min ?? '', amount_max: r0.amount_max ?? preset?.amount_max ?? '',
     account_ref: r0.account_ref || preset?.account_ref || '',
+    match_mode: r0.match_mode || 'merchant', day_from: r0.day_from ?? '', day_to: r0.day_to ?? '',
+  });
+  const acctRule = r0.ref_kind === 'acct';
+  // Switching the match fills the window from the payment the rule was made from: its day ±3, its amount ±5%
+  const setMode = (m) => setF(x => {
+    const y = { ...x, match_mode: m };
+    const sd = r0.sample_day, sa = r0.sample_amount;
+    if (m !== 'merchant' && (x.day_from === '' || x.day_to === '') && sd) { y.day_from = wrapDay(sd - 3); y.day_to = wrapDay(sd + 3); }
+    if (m === 'merchant_date_amount' && x.amount_min === '' && x.amount_max === '' && sa) { y.amount_min = Math.floor(sa * 0.95); y.amount_max = Math.ceil(sa * 1.05); }
+    if (m === 'merchant') { y.day_from = ''; y.day_to = ''; }
+    if (m !== 'merchant_date_amount' && !x.event_id) { y.amount_min = ''; y.amount_max = ''; }
+    return y;
   });
   const keepPayee = !!(initial && !initial.merchant_pattern && initial.has_words);
   const [senders, setSenders] = useState([]);
@@ -372,10 +390,13 @@ function RuleForm({ initial, preset, cats, events, onClose, onSaved, notify }) {
   useEffect(() => { if (ev && ev.category_id && !f.category_id) setF(x => ({ ...x, category_id: ev.category_id })); }, [ev, f.category_id]);
   const body = useMemo(() => ({
     event_id: f.event_id || null, category_id: f.category_id || null, sender_key: f.sender_key || null,
-    ...(f.words.trim() ? { merchant_pattern: f.words.trim().toLowerCase(), pattern_tok: null } : keepPayee ? {} : { merchant_pattern: null, pattern_tok: null }),
+    ...(acctRule ? {} : f.words.trim() ? { merchant_pattern: f.words.trim().toLowerCase(), pattern_tok: null } : keepPayee ? {} : { merchant_pattern: null, pattern_tok: null }),
+    match_mode: f.match_mode, day_from: f.match_mode === 'merchant' || f.day_from === '' ? null : Number(f.day_from),
+    day_to: f.match_mode === 'merchant' || f.day_to === '' ? null : Number(f.day_to),
     amount_min: f.amount_min === '' ? null : Number(f.amount_min), amount_max: f.amount_max === '' ? null : Number(f.amount_max),
     account_ref: f.account_ref.replace(/\D/g, '').slice(-4) || null,
-    ...(f.account_ref && ev && (ev.kind === 'card_due' || ev.kind === 'emi') ? { ref_kind: ev.kind === 'card_due' ? 'card' : 'loan' } : {}),
+    ...(acctRule ? { ref_kind: 'acct' } : {}),
+    ...(!acctRule && f.account_ref && ev && (ev.kind === 'card_due' || ev.kind === 'emi') ? { ref_kind: ev.kind === 'card_due' ? 'card' : 'loan' } : {}),
   }), [f, keepPayee, ev]);
   // Live preview: which recent SMS this rule catches
   const t = useRef(null);
@@ -393,6 +414,8 @@ function RuleForm({ initial, preset, cats, events, onClose, onSaved, notify }) {
     setErr('');
     if (!body.category_id) return setErr('Pick a category. Every rule files its SMS in a category.');
     if (!body.sender_key && !body.merchant_pattern && !body.account_ref && !keepPayee) return setErr('Give the rule a sender, words from the SMS, or the account\'s last digits.');
+    if (f.match_mode !== 'merchant' && (body.day_from == null || body.day_to == null)) return setErr('Pick the days of the month this rule covers.');
+    if (f.match_mode === 'merchant_date_amount' && body.amount_min == null && body.amount_max == null) return setErr('Give the amount range for this rule.');
     setBusy(true);
     try {
       if (initial) await eventsAPI.updateRule(initial.id, body); else await eventsAPI.createRule({ ...body, source: 'web' });
@@ -409,16 +432,37 @@ function RuleForm({ initial, preset, cats, events, onClose, onSaved, notify }) {
             <input list="eh-senders" value={f.sender_key} onChange={(e) => set('sender_key')(e.target.value.toUpperCase())} placeholder="Any sender" />
             <datalist id="eh-senders">{senders.map(s => <option key={s.key} value={s.key}>{`${s.bank || ''} · ${s.count} SMS`}</option>)}</datalist>
           </Field>
-          <Field label="has these words" hint={keepPayee ? `Now: same payee as “${clean(initial.label) || 'the payment it was made from'}”. Type words to replace it.` : 'Words from the SMS, e.g. claude or anthropic'}>
+          {acctRule ? (
+            <Field label="paid from account" hint="Made on the phone for payments whose SMS has no merchant name">
+              <input value={`${clean(r0.label) || 'Account'} ••${r0.account_ref || ''}`} readOnly />
+            </Field>
+          ) : <Field label="has these words" hint={keepPayee ? `Now: same payee as “${clean(initial.label) || 'the payment it was made from'}”. Type words to replace it.` : 'Words from the SMS, e.g. claude or anthropic'}>
             <input value={f.words} onChange={set('words')} placeholder={keepPayee ? 'Same payee (keep)' : 'Any words'} />
-          </Field>
+          </Field>}
+          {!f.event_id && (
+            <Field label="match on" hint={r0.sample_day ? `Made from a payment of ${r0.sample_amount != null ? inr(r0.sample_amount) : '—'} on the ${ordinal(r0.sample_day)}.` : 'Narrow the rule to some days of the month, and an amount.'}>
+              <div className="eh-seg" role="radiogroup" aria-label="Match on">
+                {MATCH_MODES.map(([k, label]) => (
+                  <button key={k} type="button" role="radio" aria-checked={f.match_mode === k} className={f.match_mode === k ? 'on' : ''} onClick={() => setMode(k)}>{label}</button>
+                ))}
+              </div>
+            </Field>
+          )}
+          {!f.event_id && f.match_mode !== 'merchant' && (
+            <div className="eh-two">
+              <Field label="from day"><input type="number" min="1" max="31" value={f.day_from} onChange={set('day_from')} placeholder="1" /></Field>
+              <Field label="to day" hint="28 to 5 wraps the month end"><input type="number" min="1" max="31" value={f.day_to} onChange={set('day_to')} placeholder="31" /></Field>
+            </div>
+          )}
+          {(f.event_id || f.match_mode === 'merchant_date_amount') && (
           <div className="eh-two">
             <Field label="amount from"><input type="number" min="0" value={f.amount_min} onChange={set('amount_min')} placeholder="Any" /></Field>
             <Field label="to"><input type="number" min="0" value={f.amount_max} onChange={set('amount_max')} placeholder="Any" /></Field>
           </div>
-          <Field label="mentions account / card ending in" hint="Last 2 to 4 digits, e.g. 6007 for Card XX6007. Best for card bills and EMIs, whose amount changes.">
+          )}
+          {!acctRule && <Field label="mentions account / card ending in" hint="Last 2 to 4 digits, e.g. 6007 for Card XX6007. Best for card bills and EMIs, whose amount changes.">
             <input inputMode="numeric" value={f.account_ref} onChange={(e) => set('account_ref')(e.target.value.replace(/[^0-9xX*]/g, '').slice(0, 8))} placeholder="Any account" />
-          </Field>
+          </Field>}
         </div>
         <div className="eh-rf-arrow" aria-hidden="true">→</div>
         <div className="eh-rf-col">

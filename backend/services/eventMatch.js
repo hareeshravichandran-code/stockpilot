@@ -133,21 +133,39 @@ function refKindOk(kind, t) {
 }
 
 /** Does an SMS rule catch this payment? Returns a specificity score, or 0. */
+/** Day of month (IST) inside the rule's window. Windows can wrap the month end (28 to 5); a window past the
+ *  month's last day (29-31 in February) takes the last day. No window: any day. */
+function dayOk(rule, t) {
+  const from = rule.day_from == null ? null : Number(rule.day_from), to = rule.day_to == null ? null : Number(rule.day_to);
+  if (!from || !to) return true;
+  const d = new Date(Number(t.date_time) + 330 * 60000);
+  const day = d.getUTCDate();
+  const last = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+  const inWin = (x) => from <= to ? (x >= from && x <= to) : (x >= from || x <= to);
+  if (inWin(day)) return true;
+  // the window asks for days this month does not have: its last day stands in for them
+  return day === last && ((from <= to && to > last && from <= last + 3) || (from > to && from > last));
+}
+
 function ruleScore(rule, t) {
   if (rule.is_deleted) return 0;
-  const hasPattern = !!rule.merchant_pattern || (Array.isArray(rule.pattern_tok) && rule.pattern_tok.length);
+  // Phone rules for payments without a merchant name are keyed on the account (ref_kind 'acct'): their words are a key, not SMS words
+  const acct = rule.ref_kind === 'acct';
+  const hasPattern = !acct && (!!rule.merchant_pattern || (Array.isArray(rule.pattern_tok) && rule.pattern_tok.length));
   const ref = rule.account_ref ? String(rule.account_ref).replace(/\D/g, '') : '';
   if (!rule.sender_key && !hasPattern && ref.length < 2) return 0;
   if (rule.sender_key && senderKey(t.sms_sender) !== rule.sender_key) return 0;
   const a = num(t.amount);
   if (rule.amount_min != null && a < num(rule.amount_min) - 0.5) return 0;
   if (rule.amount_max != null && a > num(rule.amount_max) + 0.5) return 0;
+  if (!dayOk(rule, t)) return 0;
   if (hasPattern && !ruleMatches(rule, t)) return 0;
   if (ref) {
     if (!hasAccountRef(t, ref)) return 0;
     if (!rule.sender_key && !hasPattern && !refKindOk(rule.ref_kind, t)) return 0;
   }
-  return (rule.sender_key ? 1 : 0) + (hasPattern ? 2 : 0) + (rule.amount_min != null || rule.amount_max != null ? 1 : 0) + (ref ? 2 : 0);
+  return (rule.sender_key ? 1 : 0) + (hasPattern ? 2 : 0) + (rule.amount_min != null || rule.amount_max != null ? 1 : 0) + (ref ? 2 : 0)
+    + (rule.day_from != null && rule.day_to != null ? 1 : 0);
 }
 
 /**
@@ -475,5 +493,6 @@ async function runMatching(uid, { force = false, matchesMaster = null } = {}) {
 }
 
 module.exports = {
+  dayOk,
   ensureLoanEvents, ensurePolicyEvents,
   hasAccountRef, seedRules, DEFAULT_CAT, catFamily, categoryPick, inCatWindow, insurerWords, repairRefs, KIND_CATS, senderKey, periods, stateOf, pickPeriod, ruleScore, runMatching, intervalDays, bufferOf, todayStr, istDay, addDays, diffDays };

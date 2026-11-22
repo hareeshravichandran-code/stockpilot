@@ -44,13 +44,22 @@ router.post('/sms-rules', authMiddleware, async (req, res) => {
     const category_id = is_ignored ? (req.body.category_id || null) : req.body.category_id;
     if (!merchant_pattern) return res.status(400).json({ error: 'merchant_pattern is required' });
     if (!category_id && !is_ignored) return res.status(400).json({ error: 'category_id is required (or is_ignored)' });
+    // Match mode, day window, amount range and the payment the rule came from (see events.js ruleWindow)
+    const win = {};
+    for (const k of ['account_ref', 'ref_kind']) if (req.body[k] !== undefined) win[k] = req.body[k] || null;
+    if (win.ref_kind && !['card', 'loan', 'acct'].includes(win.ref_kind)) win.ref_kind = null;
+    if (win.account_ref) win.account_ref = String(win.account_ref).replace(/\D/g, '').slice(-4) || null;
+    const num = (v) => (v === null || v === '' || v === undefined || isNaN(Number(v))) ? null : Number(v);
+    if (req.body.amount_min !== undefined) win.amount_min = num(req.body.amount_min);
+    if (req.body.amount_max !== undefined) win.amount_max = num(req.body.amount_max);
+    require('./events').ruleWindow(req.body, win);
     // Same rule id with edited words: update that rule (an upsert on the words would clash on the id)
     if (id) {
       const { data: had } = await supabase.from('user_sms_rules').select('id, user_id').eq('id', id).maybeSingle();
       if (had && had.user_id !== req.userId) return res.status(409).json({ error: 'rule id in use' });
       if (had) {
         const { data, error } = await supabase.from('user_sms_rules').update({
-          merchant_pattern, category_id, is_ignored, match_count: match_count || 1, user_confirmed: user_confirmed || false, is_deleted: false,
+          merchant_pattern, category_id, is_ignored, match_count: match_count || 1, user_confirmed: user_confirmed || false, is_deleted: false, ...win,
           ...(Array.isArray(req.body.pattern_tok) ? { pattern_tok: req.body.pattern_tok.slice(0, 20) } : {}), updated_at: Date.now(),
         }).eq('id', id).eq('user_id', req.userId).select().single();
         if (error && !/duplicate key/.test(error.message || '')) throw error;
@@ -69,6 +78,7 @@ router.post('/sms-rules', authMiddleware, async (req, res) => {
         is_deleted:       false,
         match_count:      match_count || 1,
         user_confirmed:   user_confirmed || false,
+        ...win,
         ...(Array.isArray(req.body.pattern_tok) ? { pattern_tok: req.body.pattern_tok.slice(0, 20) } : {}),
         updated_at:       Date.now()
       }, { onConflict: 'user_id,merchant_pattern' })

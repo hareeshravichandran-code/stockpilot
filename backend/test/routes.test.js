@@ -215,3 +215,63 @@ describe('phone sync', () => {
     assert.equal(r.body.transactions.length, 1500);
   });
 });
+
+describe('K-199 / K-201: rule windows, deletions and duplicate decisions survive a reinstall', () => {
+  const EM = require('../services/eventMatch');
+  test('day window: plain, wrapping the month end, and short months', () => {
+    const r = { day_from: 3, day_to: 7 };
+    assert.equal(EM.dayOk(r, { date_time: ist('2026-10-05') }), true);
+    assert.equal(EM.dayOk(r, { date_time: ist('2026-10-09') }), false);
+    const wrap = { day_from: 28, day_to: 4 };
+    assert.equal(EM.dayOk(wrap, { date_time: ist('2026-10-30') }), true);
+    assert.equal(EM.dayOk(wrap, { date_time: ist('2026-11-02') }), true);
+    assert.equal(EM.dayOk(wrap, { date_time: ist('2026-11-15') }), false);
+    assert.equal(EM.dayOk({ day_from: 29, day_to: 31 }, { date_time: ist('2026-02-28') }), true, 'Feb 28 stands in for 29-31');
+    assert.equal(EM.dayOk({}, { date_time: ist('2026-02-28') }), true, 'no window: any day');
+  });
+  test('phone rule keeps its mode, window and the payment it came from; merchant-only clears the window', async () => {
+    const a = await api.call('POST', '/api/expense/sms-rules', { id: 'm-1', merchant_pattern: 'landlord', category_id: 'rent_house',
+      match_mode: 'merchant_date_amount', day_from: 1, day_to: 7, amount_min: 23750, amount_max: 26250, sample_amount: 25000, sample_day: 3 });
+    assert.equal(a.status, 201, JSON.stringify(a.body));
+    let r = rows('user_sms_rules')[0];
+    assert.equal(r.match_mode, 'merchant_date_amount'); assert.equal(r.day_from, 1); assert.equal(r.amount_max, 26250); assert.equal(r.sample_day, 3);
+    await api.call('PUT', '/api/events/rules/m-1', { match_mode: 'merchant' });
+    r = rows('user_sms_rules')[0];
+    assert.equal(r.match_mode, 'merchant'); assert.equal(r.day_from, null); assert.equal(r.amount_min, null);
+    assert.equal(r.sample_amount, 25000, 'the sample stays for next time');
+  });
+  test('merchant + date needs the days', async () => {
+    await api.call('POST', '/api/expense/sms-rules', { id: 'm-2', merchant_pattern: 'school', category_id: 'school_fees' });
+    const bad = await api.call('PUT', '/api/events/rules/m-2', { match_mode: 'merchant_date' });
+    assert.equal(bad.status, 400);
+  });
+  test('account rule from the phone (no merchant in the SMS) matches on account, days and amount only', () => {
+    const rule = { merchant_pattern: 'ev1:opaque', ref_kind: 'acct', account_ref: '4821', match_mode: 'merchant_date_amount', day_from: 3, day_to: 7, amount_min: 31000, amount_max: 34000 };
+    const t = { amount: 32786, date_time: ist('2026-11-05'), account_last4: '4821', sms_body: 'Rs 32786 debited from a/c XX4821' };
+    assert.ok(EM.ruleScore(rule, t) > 0);
+    assert.equal(EM.ruleScore(rule, { ...t, amount: 500 }), 0);
+    assert.equal(EM.ruleScore(rule, { ...t, date_time: ist('2026-11-20') }), 0);
+  });
+  test('a deleted payment is sent to the phone as a marker, and the same SMS read again stays deleted', async () => {
+    const body = { amount: 640, type: 'DEBIT', date_time: ist(istToday()), reference_no: 'UTR640', category_id: 'food_dining' };
+    const made = await api.call('POST', '/api/expense/transactions', body);
+    await api.call('DELETE', `/api/expense/transactions/${made.body.id}`);
+    const again = await api.call('POST', '/api/expense/transactions', { ...body, id: undefined });
+    assert.equal(again.status, 200, JSON.stringify(again.body));
+    assert.equal(again.body.deleted, true);
+    assert.equal(rows('expense_transactions').length, 1);
+    assert.equal(rows('expense_transactions')[0].is_deleted, true, 'not brought back');
+    const live = await api.call('GET', '/api/expense/transactions?page=1&limit=100');
+    assert.equal(live.body.data.length, 0);
+    const all = await api.call('GET', '/api/expense/transactions?page=1&limit=100&include_deleted=1');
+    assert.equal(all.body.data.length, 1); assert.equal(all.body.data[0].is_deleted, true);
+  });
+  test('a payment deleted on the phone before upload is kept as a marker; separate-payment decision is saved', async () => {
+    const dead = await api.call('POST', '/api/expense/transactions', { amount: 99, type: 'DEBIT', date_time: ist(istToday()), reference_no: 'UTR99', is_deleted: true });
+    assert.equal(dead.status, 201); assert.equal(rows('expense_transactions')[0].is_deleted, true);
+    const body = { amount: 300, type: 'DEBIT', date_time: ist(istToday()), reference_no: 'UTR300' };
+    await api.call('POST', '/api/expense/transactions', body);
+    await api.call('POST', '/api/expense/transactions', { ...body, dup_state: 'separate' });
+    assert.equal(rows('expense_transactions').find(x => x.reference_no === 'UTR300').dup_state, 'separate');
+  });
+});

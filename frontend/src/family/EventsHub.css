@@ -423,3 +423,11 @@
 @media (prefers-reduced-motion: reduce) { .eh-inbox-card, .eh-picklist li { animation: eh-fade .2s ease both; } }
 @keyframes eh-fade { from { opacity: 0; } to { opacity: 1; } }
 @media (max-width: 560px) { .eh-picklist li { flex-direction: column; align-items: stretch; } .eh-taken { max-width: none; text-align: left; } }
+
+/* Rule match: merchant only / + date / + date + amount */
+.eh-seg { display: flex; flex-wrap: wrap; gap: 6px; }
+.eh-seg button { border: 1px solid var(--fo-line); background: var(--fo-paper); color: inherit; border-radius: 999px;
+  padding: 7px 12px; font: inherit; font-size: 13px; cursor: pointer; transition: background-color .15s ease, border-color .15s ease; }
+.eh-seg button:active { transform: scale(0.97); }
+.eh-seg button.on { background: var(--fo-ink); border-color: var(--fo-ink); color: var(--fo-paper); }
+.eh-seg button:focus-visible { outline: 2px solid var(--fo-ink); outline-offset: 2px; }
