@@ -22,7 +22,7 @@ router.post('/transactions/bulk-categorize', auth, async (req, res) => {
     if (!txnIds?.length || !categoryId) return res.status(400).json({ error: 'txnIds and categoryId required' });
     const { error } = await supabase
       .from('expense_transactions')
-      .update({ category_id: categoryId, updated_at: new Date().toISOString() })
+      .update({ category_id: categoryId, updated_at: Date.now() }) // updated_at is epoch ms (bigint); an ISO string failed every bulk save (K-208)
       .in('id', txnIds)
       .eq('user_id', req.userId);
     if (error) throw error;

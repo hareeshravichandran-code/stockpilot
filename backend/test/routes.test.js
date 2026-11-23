@@ -275,3 +275,37 @@ describe('K-199 / K-201: rule windows, deletions and duplicate decisions survive
     assert.equal(rows('expense_transactions').find(x => x.reference_no === 'UTR300').dup_state, 'separate');
   });
 });
+
+describe('K-208: a rule made from a payment files that payee\'s earlier payments', () => {
+  const seed = (o) => { (db._tables.expense_transactions ||= []).push(txn({ id: o.id, merchant_key: 'k-mulberry', amount: 15, date_time: ist('2026-11-19', '12:26'), ...o })); };
+  test('uncategorised payments of the same payee get the category; others stay as they are', async () => {
+    seed({ id: 't-now', amount: 16, category_id: 'ciggy' });
+    seed({ id: 't-old1', date_time: ist('2026-10-02') });
+    seed({ id: 't-old2', category_id: 'other', date_time: ist('2026-09-14') });
+    seed({ id: 't-kept', category_id: 'snacks' });
+    seed({ id: 't-gone', is_deleted: true });
+    seed({ id: 't-in', type: 'CREDIT' });
+    seed({ id: 't-else', merchant_key: 'k-other' });
+    const r = await api.call('POST', '/api/expense/sms-rules', { merchant_pattern: 'mulberry', category_id: 'ciggy', user_confirmed: true, apply_from: 't-now' });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(r.body.applied, 2);
+    const cat = (id) => rows('expense_transactions').find(t => t.id === id).category_id;
+    assert.equal(cat('t-old1'), 'ciggy'); assert.equal(cat('t-old2'), 'ciggy');
+    assert.equal(cat('t-kept'), 'snacks'); assert.equal(cat('t-gone'), null); assert.equal(cat('t-in'), null); assert.equal(cat('t-else'), null);
+    assert.equal(typeof rows('expense_transactions').find(t => t.id === 't-old1').updated_at, 'number');
+  });
+  test('a day window on the rule limits which earlier payments are filed', async () => {
+    seed({ id: 't-now', category_id: 'rent_house', date_time: ist('2026-11-05') });
+    seed({ id: 't-in', date_time: ist('2026-10-04') });
+    seed({ id: 't-out', date_time: ist('2026-10-20') });
+    const r = await api.call('POST', '/api/expense/sms-rules', { merchant_pattern: 'landlord', category_id: 'rent_house', match_mode: 'merchant_date', day_from: 1, day_to: 7, apply_from: 't-now' });
+    assert.equal(r.body.applied, 1);
+    assert.equal(rows('expense_transactions').find(t => t.id === 't-out').category_id, null);
+  });
+  test('without apply_from nothing else changes (the phone files its own copy)', async () => {
+    seed({ id: 't-old1' });
+    const r = await api.call('POST', '/api/expense/sms-rules', { merchant_pattern: 'mulberry', category_id: 'ciggy' });
+    assert.equal(r.body.applied, undefined);
+    assert.equal(rows('expense_transactions')[0].category_id, null);
+  });
+});
