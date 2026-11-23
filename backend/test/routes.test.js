@@ -9,7 +9,7 @@ const { db, uid, txn, ist, istToday } = H;
 const rows = (name) => db._tables[name] || [];
 let api;
 
-before(async () => { api = await H.server([['/api/events', 'events.js'], ['/api/expense', 'expenseTransactions.js'], ['/api/moneyflow', 'moneyflow.js'], ['/api/expense', 'expenseSync.js'], ['/api/expense', 'expenseSmsRules.js'], ['/api', 'appReports.js']]); });
+before(async () => { api = await H.server([['/api/events', 'events.js'], ['/api/expense', 'expenseTransactions.js'], ['/api/moneyflow', 'moneyflow.js'], ['/api/expense', 'expenseSync.js'], ['/api/expense', 'expenseSmsRules.js'], ['/api', 'appReports.js'], ['/api/expense', 'expenseCategories.js'], ['/api/expense', 'expenseManage.js']]); });
 after(async () => { await api.close(); });
 beforeEach(() => H.reset());
 
@@ -307,5 +307,48 @@ describe('K-208: a rule made from a payment files that payee\'s earlier payments
     const r = await api.call('POST', '/api/expense/sms-rules', { merchant_pattern: 'mulberry', category_id: 'ciggy' });
     assert.equal(r.body.applied, undefined);
     assert.equal(rows('expense_transactions')[0].category_id, null);
+  });
+});
+
+describe('K-210: web and phone masters stay in step', () => {
+  const put = (t, r) => { (db._tables[t] ||= []).push(r); };
+  test('deleting a category on the web works: subcategories go, payments become uncategorised, rules stop', async () => {
+    put('expense_categories', { id: 'c-pets', user_id: uid, name: 'Pets', type: 'EXPENSE', is_system: false, is_deleted: false, updated_at: 1 });
+    put('expense_categories', { id: 'c-vet', user_id: uid, name: 'Vet', type: 'EXPENSE', parent_id: 'c-pets', is_system: false, is_deleted: false, updated_at: 1 });
+    put('expense_categories', { id: 'food', user_id: null, name: 'Food', type: 'EXPENSE', is_system: true, is_deleted: false, updated_at: 1 });
+    put('expense_transactions', txn({ id: 't1', amount: 500, date_time: 1, category_id: 'c-vet', updated_at: 1 }));
+    put('expense_transactions', txn({ id: 't2', amount: 90, date_time: 1, category_id: 'food', updated_at: 1 }));
+    put('user_sms_rules', { id: 'r1', user_id: uid, merchant_pattern: 'pawsome', category_id: 'c-pets', is_deleted: false, updated_at: 1 });
+    const r = await api.call('DELETE', '/api/expense/categories/c-pets');
+    assert.equal(r.status, 200, JSON.stringify(r.body)); assert.equal(r.body.deleted, 2);
+    const cat = (id) => rows('expense_categories').find(c => c.id === id);
+    assert.equal(cat('c-pets').is_deleted, true); assert.equal(cat('c-vet').is_deleted, true); assert.ok(cat('c-vet').updated_at > 1);
+    assert.equal(rows('expense_transactions').find(t => t.id === 't1').category_id, null);
+    assert.equal(rows('expense_transactions').find(t => t.id === 't2').category_id, 'food');
+    assert.equal(rows('user_sms_rules')[0].is_deleted, true);
+    assert.equal((await api.call('DELETE', '/api/expense/categories/food')).status, 404, 'system categories stay');
+  });
+  test('the phone pull carries web deletions after the first sync, but not on a first pull', async () => {
+    put('expense_categories', { id: 'c-old', user_id: uid, name: 'Old', type: 'EXPENSE', is_system: false, is_deleted: true, updated_at: 500 });
+    put('expense_budgets', { id: 'b-old', user_id: uid, category_id: 'food', month: 202611, amount: 100, is_deleted: true, updated_at: 500 });
+    put('user_sms_rules', { id: 'r-old', user_id: uid, merchant_pattern: 'x', category_id: 'food', is_deleted: true, updated_at: 500 });
+    put('custom_fields', { id: 'f-old', user_id: uid, name: 'Trip', is_deleted: true, updated_at: '2026-11-23T10:00:00.000Z' });
+    const later = await api.call('GET', '/api/expense/sync/pull?last_sync_at=100');
+    assert.equal(later.status, 200);
+    assert.deepEqual([later.body.categories.length, later.body.budgets.length, later.body.sms_rules.length, later.body.custom_fields.length], [1, 1, 1, 1]);
+    assert.equal(later.body.custom_fields[0].is_deleted, true);
+    const first = await api.call('GET', '/api/expense/sync/pull?last_sync_at=0');
+    assert.deepEqual([first.body.categories.length, first.body.budgets.length, first.body.sms_rules.length, first.body.custom_fields.length], [0, 0, 0, 0]);
+  });
+  test('custom fields changed on the web reach the phone (timestamp column)', async () => {
+    put('custom_fields', { id: 'f1', user_id: uid, name: 'Trip', is_deleted: false, updated_at: '2026-11-23T10:00:00.000Z' });
+    const since = Date.parse('2026-11-22T00:00:00Z');
+    assert.equal((await api.call('GET', `/api/expense/sync/pull?last_sync_at=${since}`)).body.custom_fields.length, 1);
+    assert.equal((await api.call('GET', `/api/expense/sync/pull?last_sync_at=${Date.parse('2026-11-24T00:00:00Z')}`)).body.custom_fields.length, 0);
+  });
+  test('a custom field deleted on the web moves its updated_at', async () => {
+    put('custom_fields', { id: 'f2', user_id: uid, name: 'Trip', is_deleted: false, updated_at: '2026-01-01T00:00:00.000Z' });
+    assert.equal((await api.call('DELETE', '/api/expense/custom-fields/f2')).status, 200);
+    assert.ok(rows('custom_fields')[0].updated_at > '2026-01-01T00:00:00.000Z');
   });
 });
