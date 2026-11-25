@@ -480,3 +480,13 @@
 .eh-tl-group.g-now h4 { color: var(--fo-ink); }
 .eh-tl-group.g-past .eh-occs { opacity: .92; }
 @media (max-width: 640px) { .eh-spot-grid { grid-template-columns: 1fr; } .eh-spot-acts { margin-left: 0; } }
+
+/* K-215: proposals: found in SMS, not tracked until activated */
+.eh { --prop: #5B3E8E; --prop-bg: rgba(91,62,142,.1); }
+.eh-pill.prop { background: var(--prop-bg); color: var(--prop); }
+.eh-type.t-prop { background: var(--prop-bg); color: var(--prop); }
+.eh-propcell { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.eh-propnote { margin: 12px 0 0; padding: 12px 14px; border-radius: 14px; background: var(--prop-bg); border: 1px dashed color-mix(in srgb, var(--prop) 40%, transparent); font-size: 13.5px; line-height: 1.5; }
+.eh-filters button.prop span { background: var(--prop); color: #fff; }
+.eh-stats .prop b { color: var(--prop); }
+.eh-grp-prop { margin: 6px 0 0; font-size: 12.5px; color: var(--fo-ink-2); }

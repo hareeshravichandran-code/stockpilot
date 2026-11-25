@@ -157,12 +157,53 @@ function trackOf(e, payOf, today) {
   return list.map(p => ({ p, s: EM.stateOf(e, p, payOf[e.id + '|' + p] || null, today).state }));
 }
 
+/**
+ * K-215: every SMS group that repeats (the phone found a cadence) becomes a proposed event, whether or not
+ * the user has answered its question yet. Proposals are not tracked until the user activates them; deleting
+ * one leaves a tombstone (status 'deleted') so it is not proposed again.
+ */
+const proposedAt = new Map();
+async function proposeFromGroups(uid, { force = false } = {}) {
+  if (!force && Date.now() - (proposedAt.get(uid) || 0) < 10 * 60 * 1000) return 0;
+  proposedAt.set(uid, Date.now());
+  const { data: gs } = await supabase.from('sms_groups').select('*').eq('owner_id', uid).eq('status', 'open').is('event_id', null).not('cadence', 'is', null);
+  let made = 0;
+  for (const g of gs || []) {
+    if ((g.count || 0) < 2 || !g.due_day) continue;
+    const kindOf = Object.entries(EM.DEFAULT_CAT).find(([, c]) => c === g.suggested);
+    const kind = kindOf ? kindOf[0] : (g.cadence === 'monthly' && num(g.avg_amount) <= 2000 ? 'subscription' : 'bill');
+    const steady = num(g.min_amount) && num(g.max_amount) && num(g.max_amount) <= num(g.min_amount) * 1.25;
+    const category_id = g.suggested || EM.DEFAULT_CAT[kind] || null;
+    const row = { owner_id: uid, master_table: 'manual', master_id: `g-${g.id}`, source: 'manual', status: 'proposed', title: g.name || g.key, kind,
+      category_id, amount: num(g.avg_amount) || null, amount_mode: steady ? 'about' : 'any', frequency: g.cadence, due_day: g.due_day,
+      due_month: g.cadence === 'monthly' ? null : (g.last_seen ? +g.last_seen.slice(5, 7) : null), buffer_days: 2, pay_mode: 'auto',
+      remind_days: Math.max(0, WINDOW[levelOf(kind, null)] ?? 2), direction: IN_KINDS.includes(kind) ? 'in' : 'out' };
+    if (row.frequency !== 'monthly' && !row.due_month) continue;
+    const { data: ev, error } = await supabase.from('recurring_events').insert(await lockRow(uid, row, { texts: ['title'] })).select('id').single();
+    if (error) { console.error('[events] proposal not saved', error.message); continue; }
+    made++;
+    await supabase.from('sms_groups').update({ event_id: ev.id, updated_at: nowIso() }).eq('id', g.id);
+    // Its SMS rule, so the user can see and edit it before activating. Never takes over a rule the user already has.
+    if (category_id) {
+      const { isEnc } = require('../services/privacy');
+      const pattern = isEnc(g.key) ? g.key : String(g.key).toLowerCase().trim();
+      const { data: ex } = await supabase.from('user_sms_rules').select('id').eq('user_id', uid).eq('merchant_pattern', pattern).eq('is_deleted', false).maybeSingle();
+      if (!ex) await supabase.from('user_sms_rules').insert({ user_id: uid, merchant_pattern: pattern, pattern_tok: g.pattern_tok || null, category_id, event_id: ev.id,
+        source: 'group', label: g.name || null, amount_min: steady ? Math.floor(num(g.min_amount) * 0.9) : null, amount_max: steady ? Math.ceil(num(g.max_amount) * 1.1) : null,
+        user_confirmed: true, is_deleted: false, match_count: g.count || 1, updated_at: Date.now(), created_at: Date.now() });
+    }
+  }
+  return made;
+}
+
+
 // ── List ─────────────────────────────────────────────────────────────────────
 router.get('/', requireAuth, async (req, res) => {
   try {
     const uid = req.user.id;
     const { linkActuals } = require('./masters');
     await linkActuals(uid).catch(() => {});
+    await proposeFromGroups(uid).catch(() => 0);
     const [{ data: evs }, { data: rules }, { data: ms }] = await Promise.all([
       supabase.from('recurring_events').select('*').eq('owner_id', uid).neq('status', 'deleted'),
       supabase.from('user_sms_rules').select('id, event_id').eq('user_id', uid).eq('is_deleted', false).not('event_id', 'is', null),
@@ -353,14 +394,14 @@ router.get('/groups', requireAuth, async (req, res) => {
     const uid = req.user.id;
     const [{ data: gs }, { data: evs }] = await Promise.all([
       supabase.from('sms_groups').select('*').eq('owner_id', uid).order('count', { ascending: false }).range(0, 999),
-      supabase.from('recurring_events').select('id, title, kind').eq('owner_id', uid),
+      supabase.from('recurring_events').select('id, title, kind, status').eq('owner_id', uid).neq('status', 'deleted'),
     ]);
     const evById = Object.fromEntries((evs || []).map(e => [e.id, e]));
     res.json({ groups: (gs || []).map(g => ({
       id: g.id, name: g.name || g.key, key: g.key, sample: g.sample, sender_key: g.sender_key, count: g.count, total: num(g.total),
       avg_amount: num(g.avg_amount), min_amount: num(g.min_amount), max_amount: num(g.max_amount), first_seen: g.first_seen, last_seen: g.last_seen,
       cadence: g.cadence, due_day: g.due_day, suggested: g.suggested, status: g.status, category_id: g.category_id,
-      event: g.event_id && evById[g.event_id] ? { id: g.event_id, title: evById[g.event_id].title, kind: evById[g.event_id].kind } : null, updated_at: g.updated_at,
+      event: g.event_id && evById[g.event_id] ? { id: g.event_id, title: evById[g.event_id].title, kind: evById[g.event_id].kind, status: evById[g.event_id].status } : null, updated_at: g.updated_at,
     })) });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -396,7 +437,10 @@ router.post('/groups/:id', requireAuth, async (req, res) => {
     if (b.action === 'reopen') { await set({ status: 'open' }); return res.json({ ok: true }); }
     const category_id = str(b.category_id, 80);
     if (!category_id) return res.status(400).json({ error: 'Pick a category' });
+    const proposal = g.event_id ? await ownEvent(uid, g.event_id) : null;
+    const isProposal = proposal && proposal.status === 'proposed';
     if (b.action === 'category') {
+      if (isProposal) await dropEvent(uid, proposal);
       const rule_id = await ruleFromGroup(uid, g, { category_id });
       await recategorise(uid, g, category_id);
       await set({ status: 'ruled', category_id, rule_id, event_id: null });
@@ -423,7 +467,9 @@ router.post('/groups/:id', requireAuth, async (req, res) => {
     }
     const fields = { kind, category_id, amount, amount_mode: ['exact', 'about', 'any'].includes(b.amount_mode) ? b.amount_mode : 'about', frequency: freq, due_day, due_month,
       buffer_days: (() => { const x = parseInt(b.buffer_days, 10); return Number.isFinite(x) ? Math.max(0, Math.min(15, x)) : 2; })(), direction: IN_KINDS.includes(kind) ? 'in' : 'out' };
-    if (eventId) await supabase.from('recurring_events').update(fields).eq('id', eventId);
+    if (!eventId && isProposal && proposal.master_table === 'manual') eventId = proposal.id;
+    else if (eventId && isProposal && proposal.id !== eventId) await dropEvent(uid, proposal);
+    if (eventId) await supabase.from('recurring_events').update(await lockRow(uid, { ...fields, title, status: 'active', updated_at: nowIso() }, { texts: ['title'] })).eq('id', eventId);
     else {
       const row = { owner_id: uid, master_table: 'manual', master_id: `g-${g.id}`, source: 'manual', status: 'active', title, start_date: null, pay_mode: 'auto',
         remind_days: Math.max(0, WINDOW[levelOf(kind, null)] ?? 2), ...fields };
@@ -551,6 +597,14 @@ router.get('/:id', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+/** Removes a proposal: its rules and ties go; the row stays as 'deleted' so it is never proposed again. */
+async function dropEvent(uid, e) {
+  await supabase.from('user_sms_rules').update({ is_deleted: true, updated_at: Date.now() }).eq('user_id', uid).eq('event_id', e.id);
+  await supabase.from('expense_transactions').update({ event_id: null }).eq('user_id', uid).eq('event_id', e.id);
+  await supabase.from('event_payments').delete().eq('event_id', e.id);
+  await supabase.from('recurring_events').update({ status: 'deleted', updated_at: nowIso() }).eq('id', e.id);
+}
+
 function eventFields(b, forCreate) {
   const p = {};
   if (b.title !== undefined) p.title = str(b.title, 4000);
@@ -626,8 +680,11 @@ router.post('/:id/status', requireAuth, async (req, res) => {
     const e = await ownEvent(req.user.id, req.params.id);
     if (!e) return res.status(404).json({ error: 'Event not found' });
     const s = req.body?.status;
-    if (!['active', 'paused', 'closed'].includes(s)) return res.status(400).json({ error: 'Unknown status' });
+    if (!['active', 'paused', 'closed', 'proposed'].includes(s)) return res.status(400).json({ error: 'Unknown status' });
+    if (s === 'active') { const bad = checkEvent(e); if (bad) return res.status(400).json({ error: bad }); }
     await supabase.from('recurring_events').update({ status: s, updated_at: nowIso() }).eq('id', e.id);
+    // Tracking starts now: tie its past payments
+    if (s === 'active' && e.status !== 'active') await require('./masters').linkActuals(req.user.id, { force: true }).catch(() => {});
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -637,6 +694,7 @@ router.delete('/:id', requireAuth, async (req, res) => {
     const uid = req.user.id;
     const e = await ownEvent(uid, req.params.id);
     if (!e) return res.status(404).json({ error: 'Event not found' });
+    if (e.status === 'proposed') { await dropEvent(uid, e); return res.json({ ok: true }); }
     if (e.master_table !== 'manual') return res.status(400).json({ error: 'This event comes from a master (loan, subscription...). Close it instead.' });
     await supabase.from('user_sms_rules').update({ is_deleted: true, updated_at: Date.now() }).eq('user_id', uid).eq('event_id', e.id);
     await supabase.from('expense_transactions').update({ event_id: null }).eq('user_id', uid).eq('event_id', e.id);
@@ -745,3 +803,4 @@ router.delete('/:id/occurrences/:period', requireAuth, async (req, res) => {
 module.exports = router;
 module.exports.ruleWindow = ruleWindow;
 module.exports.trackOf = trackOf;
+module.exports.proposeFromGroups = proposeFromGroups;

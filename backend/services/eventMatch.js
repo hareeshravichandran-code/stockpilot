@@ -346,7 +346,7 @@ async function ensureLoanEvents(uid) {
     const title = isEnc(b.name) ? b.name : `${String(b.name || 'Loan').slice(0, 140)} EMI`;
     const row = await lockRow(uid, { owner_id: uid, master_table: 'bp_buckets', master_id: String(b.id), kind: 'emi', title, amount: num(b.target_amount) || null,
       frequency: 'monthly', due_day: Math.min(31, Math.max(1, Number(b.recurrence_day))), end_date: b.target_date && b.target_date > todayStr() ? b.target_date : null, remind_days: 3, direction: 'out',
-      category_id: DEFAULT_CAT.emi, amount_mode: 'about', source: 'loan', status: 'active' }, { texts: ['title', 'notes'] });
+      category_id: DEFAULT_CAT.emi, amount_mode: 'about', source: 'loan', status: 'proposed' }, { texts: ['title', 'notes'] });
     const { error } = await supabase.from('recurring_events').insert(row);
     if (!error) made++;
   }
@@ -388,7 +388,7 @@ async function ensurePolicyEvents(uid) {
   const { data: pols } = await supabase.from('insurance_policies').select('id, kind, insurer, plan_name, premium, premium_frequency, renewal_date, status').eq('owner_id', uid).eq('status', 'active');
   const live = (pols || []).filter(p => p.renewal_date && /^\d{4}-\d{2}-\d{2}$/.test(p.renewal_date) && POLICY_FREQ[p.premium_frequency || 'yearly']);
   if (!live.length) return 0;
-  const { data: have } = await supabase.from('recurring_events').select('id, master_table, master_id, kind, due_day, due_month, frequency').eq('owner_id', uid).neq('status', 'deleted');
+  const { data: have } = await supabase.from('recurring_events').select('id, master_table, master_id, kind, due_day, due_month, frequency, status').eq('owner_id', uid);
   const known = new Set((have || []).filter(e => e.master_table === 'insurance_policies').map(e => String(e.master_id)));
   const byId = Object.fromEntries((pols || []).map(p => [String(p.id), p]));
   const first = (s) => (isEnc(s) ? '' : String(s || '').toLowerCase().split(/\s+/)[0] || '');
@@ -408,7 +408,7 @@ async function ensurePolicyEvents(uid) {
     const title = /premium/i.test(name) ? name : `${String(name).slice(0, 120)} premium`;
     const row = await lockRow(uid, { owner_id: uid, master_table: 'insurance_policies', master_id: String(p.id), kind: 'premium', title, amount: num(p.premium) || null,
       frequency: freq, due_day: dd, due_month: freq === 'monthly' ? null : mm, start_date: null, remind_days: 7, direction: 'out', buffer_days: 2,
-      category_id: DEFAULT_CAT.premium, amount_mode: 'about', source: 'policy', status: 'active' }, { texts: ['title', 'notes'] });
+      category_id: DEFAULT_CAT.premium, amount_mode: 'about', source: 'policy', status: 'proposed' }, { texts: ['title', 'notes'] });
     const { error } = await supabase.from('recurring_events').insert(row);
     if (!error) { made++; known.add(String(p.id)); (have || []).push({ ...row, master_id: String(p.id) }); }
     else console.error('[events] policy event not saved', p.id, error.message);
@@ -427,12 +427,15 @@ async function runMatching(uid, { force = false, matchesMaster = null } = {}) {
   await ensurePolicyEvents(uid).catch(() => 0);
   const since = Date.now() - 400 * DAY;
   const [{ data: evs }, { data: rules }, txns] = await Promise.all([
-    supabase.from('recurring_events').select('*').eq('owner_id', uid).eq('status', 'active'),
+    supabase.from('recurring_events').select('*').eq('owner_id', uid).in('status', ['active', 'proposed']),
     supabase.from('user_sms_rules').select('*').eq('user_id', uid).eq('is_deleted', false).not('event_id', 'is', null),
     allRows(() => supabase.from('expense_transactions').select('id, amount, type, merchant, description, sms_body, sms_sender, bank_name, account_last4, date_time, category_id, master_id, event_id, event_skip, signals, merchant_tok')
       .eq('user_id', uid).eq('is_deleted', false).gte('date_time', since).order('date_time', { ascending: true }).order('id', { ascending: true })),
   ]);
-  const events = (evs || []).filter(e => e.frequency);
+  // Proposals get their SMS rules made (so the user can check them before activating) but are not tracked (K-215)
+  const proposals = (evs || []).filter(e => e.frequency && e.status === 'proposed');
+  const events = (evs || []).filter(e => e.frequency && e.status === 'active');
+  if (proposals.length) await seedRules(uid, proposals, rules, txns, []).catch(() => []);
   if (!events.length) return { linked: 0 };
   const ids = events.map(e => e.id);
   const { data: pays } = await supabase.from('event_payments').select('event_id, period, status, txn_ref, paid_on, amount, match_source').in('event_id', ids).gte('period', ymd(new Date(since - 40 * DAY)));
