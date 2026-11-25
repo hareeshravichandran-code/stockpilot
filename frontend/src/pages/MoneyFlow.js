@@ -235,8 +235,15 @@ function CategoryDialog({ row, cats, others, onClose, onDone }) {
     try {
       await expenseAPI.updateTxn(row.id, { category_id: pick });
       if (all && others.length) await expenseAPI.bulkCategorize(others.map(o => o.id), pick);
-      if (rule && payee) await expenseAPI.createSmsRule({ merchant_pattern: payee.toLowerCase(), category_id: pick, user_confirmed: true });
-      onDone(rule && payee ? `Saved. Future SMS from ${payee} will be filed there too.` : 'Category saved.');
+      let filed = 0;
+      if (rule && payee) {
+        // apply_from: the server also files this payee's earlier payments with no category, in every month (K-208)
+        const r = await expenseAPI.createSmsRule({ merchant_pattern: payee.toLowerCase(), category_id: pick, user_confirmed: true, apply_from: row.id });
+        filed = Number(r?.data?.applied) || 0;
+      }
+      onDone(rule && payee
+        ? `Saved.${filed ? ` ${filed} earlier payment${filed > 1 ? 's' : ''} from ${payee} filed too.` : ''} Future SMS from ${payee} will be filed there too.`
+        : 'Category saved.');
     } catch (e) { setErr(e?.response?.data?.error || 'Could not save. Try again.'); setBusy(false); }
   };
   return (

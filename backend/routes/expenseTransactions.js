@@ -10,18 +10,27 @@ const { WINDOW_MS, nearestTwin, extraCopies } = require('../services/txnDedup');
 /** The saved copy of this payment, if the cloud already has it: by id, then reference, then amount and time. */
 async function savedTwin(uid, row, id) {
   if (id && /^[0-9a-f-]{36}$/i.test(String(id))) {
-    const { data } = await supabase.from('expense_transactions').select('*').eq('id', id).eq('user_id', uid).eq('is_deleted', false).limit(1);
+    const { data } = await supabase.from('expense_transactions').select('*').eq('id', id).eq('user_id', uid).limit(1);
     if (data && data[0]) return data[0];
   }
   const { data } = await supabase.from('expense_transactions').select('*')
     .eq('user_id', uid).eq('amount', row.amount).eq('type', row.type).eq('is_deleted', false)
     .gte('date_time', row.date_time - WINDOW_MS).lte('date_time', row.date_time + WINDOW_MS).limit(20);
-  return nearestTwin(row, data);
+  const live = nearestTwin(row, data);
+  if (live) return live;
+  // A payment the user deleted: an SMS read again must not bring it back
+  const { data: dead } = await supabase.from('expense_transactions').select('*')
+    .eq('user_id', uid).eq('amount', row.amount).eq('type', row.type).eq('is_deleted', true)
+    .gte('date_time', row.date_time - WINDOW_MS).lte('date_time', row.date_time + WINDOW_MS).limit(20);
+  return nearestTwin(row, dead);
 }
 
 /** The phone sends a payment again after a change there (category, note): keep those changes on the saved copy. */
-async function keepChanges(uid, had, category_id, note) {
+async function keepChanges(uid, had, category_id, note, extra = {}) {
   const patch = {};
+  if (had.is_deleted) return { ...had, deleted: true };            // deleted stays deleted
+  if (extra.is_deleted === true) patch.is_deleted = true;            // deleted on the phone
+  if (extra.dup_state !== undefined && (extra.dup_state || null) !== (had.dup_state || null)) patch.dup_state = extra.dup_state || null;
   if (category_id && category_id !== had.category_id) patch.category_id = category_id;
   if (note != null && note !== '' && note !== had.note) patch.note = note;
   if (!Object.keys(patch).length) return had;
@@ -67,9 +76,11 @@ router.get('/transactions', authMiddleware, async (req, res) => {
       .from('expense_transactions')
       .select('*, expense_categories(id, name, type, icon, color)', { count: 'exact' })
       .eq('user_id', req.userId)
-      .eq('is_deleted', false)
       .order('date_time', { ascending: false })
+      .order('id', { ascending: true })
       .range(offset, offset + parseInt(limit) - 1);
+    // include_deleted=1: the phone's restore also takes deleted payments, so it never reads those SMS in again
+    if (req.query.include_deleted !== '1') query = query.eq('is_deleted', false);
 
     if (from) query = query.gte('date_time', parseInt(from));
     if (to)   query = query.lte('date_time', parseInt(to));
@@ -153,7 +164,10 @@ router.post('/transactions', authMiddleware, async (req, res) => {
       };
     // Already in the cloud (same id, or the same payment a minute apart): update it, never add a second copy
     const twin = await savedTwin(req.userId, row, req.body.id);
-    if (twin) return res.status(200).json({ ...(await keepChanges(req.userId, twin, category_id, note)), duplicate: true });
+    const extra = { is_deleted: req.body.is_deleted === true, dup_state: req.body.dup_state === undefined ? undefined : (['separate'].includes(req.body.dup_state) ? req.body.dup_state : null) };
+    if (twin) return res.status(200).json({ ...(await keepChanges(req.userId, twin, category_id, note, extra)), duplicate: true });
+    if (extra.is_deleted) row.is_deleted = true;                      // deleted before it ever reached the cloud: keep it as a marker
+    if (extra.dup_state) row.dup_state = extra.dup_state;
     const put = (r) => supabase.from('expense_transactions').insert(r).select().single();
     let { data, error } = await put(row);
     // A category the server does not know yet: keep the payment, leave it unsorted

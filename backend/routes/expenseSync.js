@@ -51,21 +51,26 @@ router.get('/sync/pull', auth, async (req, res) => {
   try {
     const uid        = req.userId;
     const lastSyncAt = parseInt(req.query.last_sync_at || '0');
+    const live = (q) => (lastSyncAt > 0 ? q : q.eq('is_deleted', false));
 
     const [txnRes, catRes, budgetRes, rulesRes, fieldsRes, sheetsRes] = await Promise.all([
       // A first sync (or a long gap) can pass Supabase's 1000-row cap: page through, oldest change first
       require('../services/allRows').allRows(() => supabase.from('expense_transactions').select('*')
         .eq('user_id', uid).gt('updated_at', lastSyncAt).order('updated_at').order('id'), 50000).then(data => ({ data, error: null })),
-      supabase.from('expense_categories').select('*')
+      // K-210: removed rows are sent too (is_deleted true) once the phone has synced before, so a delete on the web
+      // reaches the phone; on a first pull (last_sync_at 0) only live rows are sent.
+      live(supabase.from('expense_categories').select('*')
         .or(`user_id.eq.${uid},is_system.eq.true`)
-        .gt('updated_at', lastSyncAt).eq('is_deleted', false),
-      supabase.from('expense_budgets').select('*')
-        .eq('user_id', uid).gt('updated_at', lastSyncAt).eq('is_deleted', false),
+        .gt('updated_at', lastSyncAt)),
+      live(supabase.from('expense_budgets').select('*')
+        .eq('user_id', uid).gt('updated_at', lastSyncAt)),
       // Rules without words (sender / amount only, made for an event) are server-side only
-      supabase.from('user_sms_rules').select('*')
-        .eq('user_id', uid).gt('updated_at', lastSyncAt).eq('is_deleted', false).not('merchant_pattern', 'is', null),
-      supabase.from('custom_fields').select('*')
-        .eq('user_id', uid).gt('updated_at', lastSyncAt).eq('is_deleted', false),
+      live(supabase.from('user_sms_rules').select('*')
+        .eq('user_id', uid).gt('updated_at', lastSyncAt).not('merchant_pattern', 'is', null)),
+      // custom_fields.updated_at is a timestamp, not epoch ms: comparing it with a number failed, so
+      // custom fields never reached the phone (K-210)
+      live(supabase.from('custom_fields').select('*')
+        .eq('user_id', uid).gt('updated_at', new Date(lastSyncAt || 0).toISOString())),
       supabase.from('google_sheets_config').select('*')
         .eq('user_id', uid),
     ]);

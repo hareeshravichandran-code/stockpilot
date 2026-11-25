@@ -44,13 +44,22 @@ router.post('/sms-rules', authMiddleware, async (req, res) => {
     const category_id = is_ignored ? (req.body.category_id || null) : req.body.category_id;
     if (!merchant_pattern) return res.status(400).json({ error: 'merchant_pattern is required' });
     if (!category_id && !is_ignored) return res.status(400).json({ error: 'category_id is required (or is_ignored)' });
+    // Match mode, day window, amount range and the payment the rule came from (see events.js ruleWindow)
+    const win = {};
+    for (const k of ['account_ref', 'ref_kind']) if (req.body[k] !== undefined) win[k] = req.body[k] || null;
+    if (win.ref_kind && !['card', 'loan', 'acct'].includes(win.ref_kind)) win.ref_kind = null;
+    if (win.account_ref) win.account_ref = String(win.account_ref).replace(/\D/g, '').slice(-4) || null;
+    const num = (v) => (v === null || v === '' || v === undefined || isNaN(Number(v))) ? null : Number(v);
+    if (req.body.amount_min !== undefined) win.amount_min = num(req.body.amount_min);
+    if (req.body.amount_max !== undefined) win.amount_max = num(req.body.amount_max);
+    require('./events').ruleWindow(req.body, win);
     // Same rule id with edited words: update that rule (an upsert on the words would clash on the id)
     if (id) {
       const { data: had } = await supabase.from('user_sms_rules').select('id, user_id').eq('id', id).maybeSingle();
       if (had && had.user_id !== req.userId) return res.status(409).json({ error: 'rule id in use' });
       if (had) {
         const { data, error } = await supabase.from('user_sms_rules').update({
-          merchant_pattern, category_id, is_ignored, match_count: match_count || 1, user_confirmed: user_confirmed || false, is_deleted: false,
+          merchant_pattern, category_id, is_ignored, match_count: match_count || 1, user_confirmed: user_confirmed || false, is_deleted: false, ...win,
           ...(Array.isArray(req.body.pattern_tok) ? { pattern_tok: req.body.pattern_tok.slice(0, 20) } : {}), updated_at: Date.now(),
         }).eq('id', id).eq('user_id', req.userId).select().single();
         if (error && !/duplicate key/.test(error.message || '')) throw error;
@@ -69,18 +78,47 @@ router.post('/sms-rules', authMiddleware, async (req, res) => {
         is_deleted:       false,
         match_count:      match_count || 1,
         user_confirmed:   user_confirmed || false,
+        ...win,
         ...(Array.isArray(req.body.pattern_tok) ? { pattern_tok: req.body.pattern_tok.slice(0, 20) } : {}),
         updated_at:       Date.now()
       }, { onConflict: 'user_id,merchant_pattern' })
       .select()
       .single();
     if (error) throw error;
-    res.status(201).json(data);
+    const applied = await applyToPast(req.userId, req.body.apply_from, data);
+    res.status(201).json(applied == null ? data : { ...data, applied });
   } catch (err) {
     console.error('[sms-rules POST]', err.message);
     res.status(500).json({ error: err.message });
   }
 });
+
+/**
+ * A rule made from a payment also files that payee's earlier payments that have no category yet (K-208).
+ * The payee is matched on merchant_key (the phone's keyed hash of the name), so names stay encrypted.
+ * The rule's day window and amount range apply. Returns how many were filed, or null when not asked.
+ */
+async function applyToPast(userId, fromId, rule) {
+  if (!fromId || !rule || rule.is_ignored || !rule.category_id) return null;
+  const { data: src } = await supabase.from('expense_transactions').select('merchant_key, type')
+    .eq('id', fromId).eq('user_id', userId).maybeSingle();
+  if (!src?.merchant_key) return 0;
+  const { data: rows, error } = await supabase.from('expense_transactions').select('id, amount, date_time, category_id')
+    .eq('user_id', userId).eq('merchant_key', src.merchant_key).eq('type', src.type).eq('is_deleted', false).limit(5000);
+  if (error) throw error;
+  const { dayOk } = require('../services/eventMatch');
+  const num = (v) => (v == null ? null : Number(v));
+  const ids = (rows || []).filter(t => (!t.category_id || t.category_id === 'other')
+    && dayOk(rule, t)
+    && (num(rule.amount_min) == null || Number(t.amount) >= num(rule.amount_min) - 0.5)
+    && (num(rule.amount_max) == null || Number(t.amount) <= num(rule.amount_max) + 0.5)).map(t => t.id);
+  for (let i = 0; i < ids.length; i += 200) {
+    const { error: e } = await supabase.from('expense_transactions')
+      .update({ category_id: rule.category_id, updated_at: Date.now() }).in('id', ids.slice(i, i + 200)).eq('user_id', userId);
+    if (e) throw e;
+  }
+  return ids.length;
+}
 
 // PUT /api/expense/sms-rules/:id — edit a rule (pattern and/or category)
 router.put('/sms-rules/:id', authMiddleware, async (req, res) => {
@@ -125,3 +163,4 @@ router.get('/transactions/refs', authMiddleware, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.applyToPast = applyToPast;

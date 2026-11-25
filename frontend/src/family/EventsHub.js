@@ -88,21 +88,48 @@ function stateLine(e) {
   if (e.next_due) return [`Next ${fmt(e.next_due)}`, 'calm'];
   return ['No upcoming date', 'mute'];
 }
+const ordinal = (n) => { const v = n % 100; return n + (v >= 11 && v <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th')); };
+// A rule matches on the merchant; it can be narrowed to days of the month, and to an amount too
+const MATCH_MODES = [['merchant', 'Merchant only'], ['merchant_date', 'Merchant + date'], ['merchant_date_amount', 'Merchant + date + amount']];
+const wrapDay = (d) => ((d - 1 + 31) % 31) + 1;
 function ruleWhen(r) {
   const parts = [];
   if (r.sender_key) parts.push(['From', r.sender_key]);
-  if (r.merchant_pattern) parts.push(['Words', `“${r.merchant_pattern}”`]);
+  if (r.ref_kind === 'acct') parts.push(['Account', `${r.label ? clean(r.label) + ' ' : ''}••${r.account_ref || ''}`]);
+  else if (r.merchant_pattern) parts.push(['Words', `“${r.merchant_pattern}”`]);
   else if (r.has_words) parts.push(['Payee', r.label ? `“${clean(r.label)}”` : 'same payee']);
   if (r.amount_min != null || r.amount_max != null) {
     parts.push(['Amount', r.amount_min != null && r.amount_max != null
       ? (r.amount_min === r.amount_max ? inr(r.amount_min) : `${inr(r.amount_min)} – ${inr(r.amount_max)}`)
       : r.amount_min != null ? `from ${inr(r.amount_min)}` : `up to ${inr(r.amount_max)}`]);
   }
-  if (r.account_ref) parts.push([r.ref_kind === 'loan' ? 'Loan' : r.ref_kind === 'card' ? 'Card' : 'Account', `••${r.account_ref}`]);
+  if (r.account_ref && r.ref_kind !== 'acct') parts.push([r.ref_kind === 'loan' ? 'Loan' : r.ref_kind === 'card' ? 'Card' : 'Account', `••${r.account_ref}`]);
+  if (r.day_from && r.day_to) parts.push(['Days', r.day_from === r.day_to ? `${ordinal(r.day_from)} of the month` : `${ordinal(r.day_from)} – ${ordinal(r.day_to)} of the month`]);
   return parts;
 }
 
 function Pill({ tone, children }) { return <span className={`eh-pill ${tone}`}>{children}</span>; }
+// K-214: each cycle as a mark: filled tick = paid, cross = missed, ! = overdue, ring = due now, hollow = coming up
+const TRACK = {
+  done: ['Paid', '✓'], skipped: ['Skipped', '–'], missed: ['Missed', '✕'], overdue: ['Overdue', '!'],
+  due: ['Due now', ''], upcoming: ['Coming up', ''], untracked: ['Before tracking', ''],
+};
+function Track({ track, big }) {
+  if (!track || track.length < 2) return null;
+  const paid = track.filter(t => t.s === 'done').length;
+  const counted = track.filter(t => !['upcoming', 'untracked', 'due'].includes(t.s)).length;
+  return (
+    <span className={`eh-track${big ? ' big' : ''}`} role="img"
+      aria-label={`${paid} of ${counted} paid: ${track.map(t => `${fmtY(t.p)} ${TRACK[t.s]?.[0] || t.s}`).join(', ')}`}>
+      {track.map(t => (
+        <span key={t.p} className={`eh-dot s-${t.s}`} title={`${fmtY(t.p)} · ${TRACK[t.s]?.[0] || t.s}`}>
+          {TRACK[t.s]?.[1] || ''}
+          {big && <small>{MONTHS[pd(t.p).getMonth()]}</small>}
+        </span>
+      ))}
+    </span>
+  );
+}
 
 // What an event belongs to (from the server's link): the master you can open from here
 const LINK_NAME = { subscription: 'Subscription', card: 'Credit card', loan: 'Loan', sip: 'SIP', rd: 'Recurring deposit', insurance: 'Insurance policy',
@@ -115,38 +142,6 @@ const GROUPS = [['all', 'Everything'], ['loan', 'Loans & EMIs'], ['card', 'Credi
 const groupOf = (e) => ({ emi: 'loan', card_due: 'card', subscription: 'subscription', sip: 'invest', rd_instalment: 'invest', premium: 'insurance',
   salary: 'income', income: 'income', dividend: 'income' }[e.kind] || 'bill');
 
-/** The chain an event sits in: the master it came from -> the event -> its SMS rules -> the last payment. Each link opens its part. */
-function LinkChain({ e, rules, lastPaid, onOpenMaster, onRules, onEdit }) {
-  const l = e.link;
-  const lk = kindOf(l?.kind === 'loan' ? 'emi' : l?.kind || e.kind);
-  return (
-    <ol className="eh-chain" aria-label="How this event is connected">
-      <li className={l ? '' : 'none'}>
-        {l ? (
-          <button type="button" onClick={onOpenMaster} title={`Open this ${linkName(l).toLowerCase()}`}>
-            <span className="eh-chain-ic" style={{ '--k': lk.c }}><KindIcon kind={l.kind === 'loan' ? 'emi' : l.kind} size={15} color="#FAF7F0" /></span>
-            <span><small>{linkName(l)}</small><b>{linkTitle(l) || clean(e.title)}</b><em>Open</em></span>
-          </button>
-        ) : (
-          <button type="button" onClick={onEdit}><span><small>Added by you</small><b>Not tied to a master</b><em>Edit event</em></span></button>
-        )}
-      </li>
-      <li>
-        <button type="button" onClick={onEdit}>
-          <span><small>Event</small><b>{scheduleText(e)}</b><em>{amountText(e)}</em></span>
-        </button>
-      </li>
-      <li className={rules ? '' : 'warn'}>
-        <button type="button" onClick={onRules}>
-          <span><small>SMS rules</small><b>{rules ? `${rules} rule${rules > 1 ? 's' : ''}` : 'None yet'}</b><em>{rules ? 'Edit' : 'Add one'}</em></span>
-        </button>
-      </li>
-      <li className={lastPaid ? 'ok' : ''}>
-        <span className="eh-chain-end"><small>Last paid</small><b>{lastPaid ? fmt(lastPaid) : 'Not seen yet'}</b></span>
-      </li>
-    </ol>
-  );
-}
 // Categories the phone has that the web list may not
 const CAT_NAMES = { cc_bill: 'Credit card bill', p_insurance: 'Insurance', p_transfer: 'Transfer', p_emi: 'EMI', p_education: 'Education', subscriptions: 'Subscriptions' };
 export const RULE_SOURCE = { event_map: 'made from a payment you picked', from_master: "made from the master's keywords", from_payments: 'made from earlier payments',
@@ -360,6 +355,18 @@ function RuleForm({ initial, preset, cats, events, onClose, onSaved, notify }) {
     sender_key: r0.sender_key || preset?.sender_key || '', words: r0.merchant_pattern || '',
     amount_min: r0.amount_min ?? preset?.amount_min ?? '', amount_max: r0.amount_max ?? preset?.amount_max ?? '',
     account_ref: r0.account_ref || preset?.account_ref || '',
+    match_mode: r0.match_mode || 'merchant', day_from: r0.day_from ?? '', day_to: r0.day_to ?? '',
+  });
+  const acctRule = r0.ref_kind === 'acct';
+  // Switching the match fills the window from the payment the rule was made from: its day ±3, its amount ±5%
+  const setMode = (m) => setF(x => {
+    const y = { ...x, match_mode: m };
+    const sd = r0.sample_day, sa = r0.sample_amount;
+    if (m !== 'merchant' && (x.day_from === '' || x.day_to === '') && sd) { y.day_from = wrapDay(sd - 3); y.day_to = wrapDay(sd + 3); }
+    if (m === 'merchant_date_amount' && x.amount_min === '' && x.amount_max === '' && sa) { y.amount_min = Math.floor(sa * 0.95); y.amount_max = Math.ceil(sa * 1.05); }
+    if (m === 'merchant') { y.day_from = ''; y.day_to = ''; }
+    if (m !== 'merchant_date_amount' && !x.event_id) { y.amount_min = ''; y.amount_max = ''; }
+    return y;
   });
   const keepPayee = !!(initial && !initial.merchant_pattern && initial.has_words);
   const [senders, setSenders] = useState([]);
@@ -372,10 +379,13 @@ function RuleForm({ initial, preset, cats, events, onClose, onSaved, notify }) {
   useEffect(() => { if (ev && ev.category_id && !f.category_id) setF(x => ({ ...x, category_id: ev.category_id })); }, [ev, f.category_id]);
   const body = useMemo(() => ({
     event_id: f.event_id || null, category_id: f.category_id || null, sender_key: f.sender_key || null,
-    ...(f.words.trim() ? { merchant_pattern: f.words.trim().toLowerCase(), pattern_tok: null } : keepPayee ? {} : { merchant_pattern: null, pattern_tok: null }),
+    ...(acctRule ? {} : f.words.trim() ? { merchant_pattern: f.words.trim().toLowerCase(), pattern_tok: null } : keepPayee ? {} : { merchant_pattern: null, pattern_tok: null }),
+    match_mode: f.match_mode, day_from: f.match_mode === 'merchant' || f.day_from === '' ? null : Number(f.day_from),
+    day_to: f.match_mode === 'merchant' || f.day_to === '' ? null : Number(f.day_to),
     amount_min: f.amount_min === '' ? null : Number(f.amount_min), amount_max: f.amount_max === '' ? null : Number(f.amount_max),
     account_ref: f.account_ref.replace(/\D/g, '').slice(-4) || null,
-    ...(f.account_ref && ev && (ev.kind === 'card_due' || ev.kind === 'emi') ? { ref_kind: ev.kind === 'card_due' ? 'card' : 'loan' } : {}),
+    ...(acctRule ? { ref_kind: 'acct' } : {}),
+    ...(!acctRule && f.account_ref && ev && (ev.kind === 'card_due' || ev.kind === 'emi') ? { ref_kind: ev.kind === 'card_due' ? 'card' : 'loan' } : {}),
   }), [f, keepPayee, ev]);
   // Live preview: which recent SMS this rule catches
   const t = useRef(null);
@@ -393,6 +403,8 @@ function RuleForm({ initial, preset, cats, events, onClose, onSaved, notify }) {
     setErr('');
     if (!body.category_id) return setErr('Pick a category. Every rule files its SMS in a category.');
     if (!body.sender_key && !body.merchant_pattern && !body.account_ref && !keepPayee) return setErr('Give the rule a sender, words from the SMS, or the account\'s last digits.');
+    if (f.match_mode !== 'merchant' && (body.day_from == null || body.day_to == null)) return setErr('Pick the days of the month this rule covers.');
+    if (f.match_mode === 'merchant_date_amount' && body.amount_min == null && body.amount_max == null) return setErr('Give the amount range for this rule.');
     setBusy(true);
     try {
       if (initial) await eventsAPI.updateRule(initial.id, body); else await eventsAPI.createRule({ ...body, source: 'web' });
@@ -409,16 +421,37 @@ function RuleForm({ initial, preset, cats, events, onClose, onSaved, notify }) {
             <input list="eh-senders" value={f.sender_key} onChange={(e) => set('sender_key')(e.target.value.toUpperCase())} placeholder="Any sender" />
             <datalist id="eh-senders">{senders.map(s => <option key={s.key} value={s.key}>{`${s.bank || ''} · ${s.count} SMS`}</option>)}</datalist>
           </Field>
-          <Field label="has these words" hint={keepPayee ? `Now: same payee as “${clean(initial.label) || 'the payment it was made from'}”. Type words to replace it.` : 'Words from the SMS, e.g. claude or anthropic'}>
+          {acctRule ? (
+            <Field label="paid from account" hint="Made on the phone for payments whose SMS has no merchant name">
+              <input value={`${clean(r0.label) || 'Account'} ••${r0.account_ref || ''}`} readOnly />
+            </Field>
+          ) : <Field label="has these words" hint={keepPayee ? `Now: same payee as “${clean(initial.label) || 'the payment it was made from'}”. Type words to replace it.` : 'Words from the SMS, e.g. claude or anthropic'}>
             <input value={f.words} onChange={set('words')} placeholder={keepPayee ? 'Same payee (keep)' : 'Any words'} />
-          </Field>
+          </Field>}
+          {!f.event_id && (
+            <Field label="match on" hint={r0.sample_day ? `Made from a payment of ${r0.sample_amount != null ? inr(r0.sample_amount) : '—'} on the ${ordinal(r0.sample_day)}.` : 'Narrow the rule to some days of the month, and an amount.'}>
+              <div className="eh-seg" role="radiogroup" aria-label="Match on">
+                {MATCH_MODES.map(([k, label]) => (
+                  <button key={k} type="button" role="radio" aria-checked={f.match_mode === k} className={f.match_mode === k ? 'on' : ''} onClick={() => setMode(k)}>{label}</button>
+                ))}
+              </div>
+            </Field>
+          )}
+          {!f.event_id && f.match_mode !== 'merchant' && (
+            <div className="eh-two">
+              <Field label="from day"><input type="number" min="1" max="31" value={f.day_from} onChange={set('day_from')} placeholder="1" /></Field>
+              <Field label="to day" hint="28 to 5 wraps the month end"><input type="number" min="1" max="31" value={f.day_to} onChange={set('day_to')} placeholder="31" /></Field>
+            </div>
+          )}
+          {(f.event_id || f.match_mode === 'merchant_date_amount') && (
           <div className="eh-two">
             <Field label="amount from"><input type="number" min="0" value={f.amount_min} onChange={set('amount_min')} placeholder="Any" /></Field>
             <Field label="to"><input type="number" min="0" value={f.amount_max} onChange={set('amount_max')} placeholder="Any" /></Field>
           </div>
-          <Field label="mentions account / card ending in" hint="Last 2 to 4 digits, e.g. 6007 for Card XX6007. Best for card bills and EMIs, whose amount changes.">
+          )}
+          {!acctRule && <Field label="mentions account / card ending in" hint="Last 2 to 4 digits, e.g. 6007 for Card XX6007. Best for card bills and EMIs, whose amount changes.">
             <input inputMode="numeric" value={f.account_ref} onChange={(e) => set('account_ref')(e.target.value.replace(/[^0-9xX*]/g, '').slice(0, 8))} placeholder="Any account" />
-          </Field>
+          </Field>}
         </div>
         <div className="eh-rf-arrow" aria-hidden="true">→</div>
         <div className="eh-rf-col">
@@ -565,30 +598,8 @@ function Occurrence({ o, ev, onAct, onPick, busy, i }) {
   );
 }
 
-/** The linked master's own facts, chosen by its type (loan, card, subscription, insurance, SIP...). */
-function FactsCard({ e }) {
-  const d = e.details; if (!d) return null;
-  const day = (n) => (n ? `${n}${[, 'st', 'nd', 'rd'][n % 10 > 3 || Math.floor(n / 10) === 1 ? 0 : n % 10] || 'th'} of the month` : null);
-  const F = {
-    loan: [['EMI', d.emi && inr(d.emi)], ['EMI date', day(d.due_day)], ['Ends', d.ends && fmtY(d.ends)], ['Notes', d.notes && clean(d.notes)]],
-    card: [['Bank', d.institution], ['Card', d.last4 && `••${d.last4}`], ['Bill due', day(d.due_day)], ['Limit', d.limit && inr(d.limit)], ['Outstanding', d.outstanding && inr(d.outstanding)]],
-    insurance: [['Insurer', d.insurer], ['Plan', d.title], ['Premium', d.premium && inr(d.premium)], ['Cover', d.sum_assured && inr(d.sum_assured)], ['Paid', d.frequency], ['Renews', d.renewal && fmtY(d.renewal)]],
-    subscription: [['Service', d.title], ['Price', d.amount && inr(d.amount)], ['Billed', FREQ_NAME[d.frequency] || d.frequency], ['Bill date', day(d.due_day)], ['Plan', d.plan], ['Since', d.since && fmtY(String(d.since).slice(0, 10))]],
-  }[d.type] || [['Name', d.title], ['Bank / provider', d.institution], ['Account', d.last4 && `••${d.last4}`], ['Amount', d.amount && inr(d.amount)], ['Schedule', FREQ_NAME[d.frequency] || d.frequency], ['Day', day(d.due_day)]];
-  const rows = F.filter(([, v]) => v);
-  if (!rows.length) return null;
-  const title = { loan: 'Loan', card: 'Credit card', insurance: 'Insurance policy', subscription: 'Subscription', sip: 'SIP', income: 'Income' }[d.type] || 'Linked master';
-  return (
-    <section className={`eh-facts f-${d.type}`}>
-      <h3>{title}{d.title && d.type !== 'insurance' ? <span>{clean(d.title)}</span> : null}</h3>
-      <dl>{rows.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl>
-    </section>
-  );
-}
-
 function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify, full }) {
   const nav = useNavigate();
-  const rulesRef = useRef(null);
   const [d, setD] = useState(null);
   const [busy, setBusy] = useState(false);
   const [ruleEdit, setRuleEdit] = useState(null);
@@ -629,14 +640,24 @@ function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify, ful
   const e = d.event;
   const k = kindOf(e.kind);
   const now = d.occurrences.find(o => o.state === 'overdue' || o.state === 'due');
+  const openMaster = () => { const l = e.link; if (!l) return; if (l.to) nav(l.to); else nav(`/dashboard?tab=${l.tab === 'm-subscription' ? 'm-all' : l.tab}`); };
+  // Timeline, oldest first: earlier cycles, the one due now, then what's coming (K-214)
+  const occ = [...d.occurrences].sort((x, y) => String(x.period).localeCompare(String(y.period)));
+  const past = occ.filter(o => ['done', 'missed', 'skipped', 'untracked'].includes(o.state));
+  const cur = occ.filter(o => ['due', 'overdue'].includes(o.state));
+  const next = occ.filter(o => o.state === 'upcoming');
+  const track = occ.map(o => ({ p: o.period, s: o.state }));
   return (
-    <div className={`eh-detail${full ? " full" : ""}`}>
+    <div className={`eh-detail eh-v2${full ? ' full' : ''}`}>
       <header className="eh-d-head">
-        <button type="button" className="eh-back" onClick={onClose} aria-label="Back to events">‹</button>
         <span className="eh-ico" style={{ '--k': k.c }}><KindIcon kind={e.kind} size={20} /></span>
         <div className="eh-d-title">
           <h2>{clean(e.title)}</h2>
-          <p>{TYPE_NAME[e.kind] || k.label} · {scheduleText(e)} · {amountText(e)}</p>
+          <p className="eh-d-tags">
+            <span className={`eh-type t-${groupOf(e)}`}>{e.kind === 'subscription' ? '↻ Subscription' : (TYPE_NAME[e.kind] || k.label)}</span>
+            {e.status !== 'active' && <span className="eh-type t-off">{e.status === 'paused' ? 'Paused' : 'Not tracked'}</span>}
+            {e.link && <button type="button" className="eh-link" onClick={openMaster}>Linked to {linkName(e.link).toLowerCase()}{linkTitle(e.link) ? ` · ${linkTitle(e.link)}` : ''} ›</button>}
+          </p>
         </div>
         <div className="eh-d-acts">
           <button type="button" className="fo-btn sm" onClick={() => onEdit(e)}>Edit</button>
@@ -646,87 +667,50 @@ function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify, ful
           {e.source === 'manual'
             ? <button type="button" className="fo-btn sm ghost danger" onClick={del}>Delete</button>
             : e.status !== 'closed' && <button type="button" className="fo-btn sm ghost danger" onClick={stopTracking}>Stop tracking</button>}
-          <button type="button" className="eh-x" onClick={onClose} aria-label="Close panel" title="Close panel">×</button>
         </div>
       </header>
 
-      <FactsCard e={e} />
-      <LinkChain e={e} rules={d.rules.length}
-        lastPaid={(d.occurrences.find(o => o.state === 'done') || {}).period}
-        onOpenMaster={() => { const l = e.link; if (!l) return; if (l.to) nav(l.to); else nav(`/dashboard?tab=${l.tab}`); }}
-        onRules={() => { if (!d.rules.length) setRuleEdit({ preset: { event_id: e.id, category_id: e.category_id } }); else rulesRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
-        onEdit={() => onEdit(e)} />
+      <Spotter e={e} rules={d.rules} cats={cats} notify={notify} onChanged={async () => { await load(); onChanged(); }}
+        onAddRule={() => setRuleEdit({ preset: { event_id: e.id, category_id: e.category_id } })}
+        onEditRule={(r) => setRuleEdit({ rule: { ...r, event_id: e.id } })} onDelRule={delRule} onEditEvent={() => onEdit(e)} />
 
-      {!e.category_id && (
-        <div className="eh-callout warn"><b>Pick a category for this event.</b> Its payments and SMS rules are filed there. <button type="button" className="eh-link" onClick={() => onEdit(e)}>Pick one</button></div>
-      )}
-      {e.status === 'active' && now && (
-        <div className={`eh-callout ${now.state === 'overdue' ? 'bad' : 'warn'}`}>
-          <b>{now.state === 'overdue' ? `${fmt(now.period)} is overdue.` : `${fmt(now.period)} is due.`}</b> {' '}
-          {(now.suggestions || []).length ? 'Is one of these SMS the payment? Answer below.' : <>No likely payment found. <button type="button" className="eh-link" onClick={() => setPick(now.period)}>Choose the payment</button> or mark it paid another way below.</>}
+      <section className="eh-sec eh-tl-sec">
+        <div className="eh-sec-head">
+          <h3>Timeline</h3>
+          <Track track={track} />
         </div>
-      )}
-
-      <section className="eh-sec">
-        <h3>Due dates</h3>
-        <ul className="eh-occs">
-          {d.occurrences.map((o, i) => <Occurrence key={o.period} o={o} ev={e} onAct={act} onPick={setPick} busy={busy} i={i} />)}
-        </ul>
-        {!!d.other_payments.length && (
+        {e.status === 'active' && now && !(now.suggestions || []).length && (
+          <div className={`eh-callout ${now.state === 'overdue' ? 'bad' : 'warn'}`}>
+            <b>{now.state === 'overdue' ? `${fmt(now.period)} is overdue.` : `${fmt(now.period)} is due.`}</b>{' '}
+            No likely payment found. <button type="button" className="eh-link" onClick={() => setPick(now.period)}>Choose the payment</button>
+          </div>
+        )}
+        <ol className="eh-tl">
+          {[['Coming up', next, 'next'], ['Now', cur, 'now'], ['Earlier', [...past].reverse(), 'past']].map(([label, list, key]) => (list.length ? (
+            <li key={key} className={`eh-tl-group g-${key}`}>
+              <h4>{label}</h4>
+              <ul className="eh-occs">
+                {list.map((o, i) => <Occurrence key={o.period} o={o} ev={e} onAct={act} onPick={setPick} busy={busy} i={i} />)}
+              </ul>
+            </li>
+          ) : null))}
+        </ol>
+        {!!(d.other_payments || []).length && (
           <details className="eh-extra">
             <summary>Other payments tied to this event ({d.other_payments.length})</summary>
-            <ul>{d.other_payments.map(t => <li key={t.id}><span className="eh-amt">{inr(t.amount)}</span><span>{fmtY(t.date)}</span><span className="eh-body">{clean(t.body || t.payee)}</span></li>)}</ul>
+            <ul>{d.other_payments.map(t => <li key={t.id}><PayLine t={t} /></li>)}</ul>
           </details>
         )}
       </section>
-      <section className="eh-sec eh-rules-sec" ref={rulesRef}>
-        <div className="eh-sec-head">
-          <h3>SMS that settle it <span className="eh-count">{d.rules.length}</span></h3>
-          <button type="button" className="fo-btn sm ghost" onClick={() => setRuleEdit({ preset: { event_id: e.id, category_id: e.category_id } })}>+ Add rule</button>
-        </div>
-        {!d.rules.length ? (
-          <div className="eh-callout warn"><b>No SMS rule yet.</b> Answer “Is this your payment?” on a due date above and Kanalyst saves one for you, or add one here.{!e.category_id ? ' Pick a category first: every rule needs one.' : ''}</div>
-        ) : (
-          <ul className="eh-rules compact">
-            {d.rules.map(r => (
-              <li key={r.id}>
-                <div className="eh-when">{ruleWhen(r).map(([a, b]) => <span key={a}><em>{a}</em>{b}</span>)}</div>
-                <div className="eh-then"><CatChip id={r.category_id} cats={cats} ignored={r.is_ignored} /><span className="eh-dim">{r.caught} SMS · {RULE_SOURCE[r.source] || 'rule'}</span></div>
-                {r.sample ? (
-                  <figure className="eh-sms">
-                    <figcaption>Latest SMS it caught · {fmtY(r.sample.date)}{r.sample.sender ? ` · from ${r.sample.sender}` : ''}{r.sample.amount ? ` · ${inr(r.sample.amount)}` : ''}</figcaption>
-                    <blockquote>{clean(r.sample.body) || clean(r.sample.payee) || 'No SMS text saved for this payment.'}</blockquote>
-                  </figure>
-                ) : <p className="eh-dim eh-sms-none">No SMS has matched this rule yet.</p>}
-                <div className="eh-r-acts">
-                  <button type="button" className="eh-link" onClick={() => setRuleEdit({ rule: { ...r, event_id: e.id } })}>Edit</button>
-                  <button type="button" className="eh-link danger" onClick={() => delRule(r)}>Remove</button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-      <section className="eh-sec">
-        <h3>Details</h3>
-        <dl className="eh-dl">
-          <div><dt>Type</dt><dd>{TYPE_NAME[e.kind] || k.label}</dd></div>
-          <div><dt>Category</dt><dd><CatChip id={e.category_id} cats={cats} /></dd></div>
-          <div><dt>Schedule</dt><dd>{scheduleText(e)}</dd></div>
-          <div><dt>Amount</dt><dd>{amountText(e)}</dd></div>
-          {e.status !== 'active' && <div><dt>Status</dt><dd>{e.status === 'paused' ? 'Paused' : 'Not tracked (stopped)'}</dd></div>}
-        </dl>
-      </section>
 
       <details className="eh-sec eh-adv">
-        <summary>Advanced: matching window and alerts</summary>
+        <summary>Alerts and payment mode</summary>
         <dl className="eh-dl">
-          <div><dt>Buffer</dt><dd>± {e.buffer_days} day{e.buffer_days === 1 ? '' : 's'}</dd></div>
           <div><dt>Paid by</dt><dd>{e.pay_mode === 'manual' ? 'You, by hand' : 'Auto-debit'}</dd></div>
-          <div><dt>Alerts</dt><dd>{LEVELS.find(l => l[0] === e.level)?.[1]}{e.remind_days != null ? ` · from ${e.remind_days} days before` : ''}</dd></div>
-          <div><dt>Created from</dt><dd>{e.master ? `${e.master.title || e.master.institution || 'Master'} (master)` : 'Added by you'}<small className="eh-dl-note">SMS reach it only through its rules</small></dd></div>
+          <div><dt>Remind me</dt><dd>{e.remind_days != null ? `${e.remind_days} days before` : 'Default'}</dd></div>
+          <div><dt>Created from</dt><dd>{e.master ? `${clean(e.master.title || e.master.institution || 'Master')} (master)` : 'Added by you'}</dd></div>
         </dl>
-
+        <button type="button" className="eh-link" onClick={() => onEdit(e)}>Change these in Edit</button>
       </details>
       {pick && <PaymentPicker ev={e} period={pick} busy={busy} onClose={() => setPick(null)}
         onPick={async (t) => { await act(pick, { action: 'match', txn_id: t.id }); setPick(null); }} />}
@@ -735,6 +719,121 @@ function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify, ful
           onClose={() => setRuleEdit(null)} onSaved={() => { setRuleEdit(null); load(); onChanged(); }} notify={notify} />
       )}
     </div>
+  );
+}
+
+/**
+ * K-214: one card that says how Kanalyst recognises this payment: the SMS rule, the payee, the amount and the
+ * date, each with its allowed buffer, which can be changed right here.
+ */
+function Spotter({ e, rules, cats, notify, onChanged, onAddRule, onEditRule, onDelRule, onEditEvent }) {
+  const [sel, setSel] = useState(0);
+  const [editAmt, setEditAmt] = useState(null);
+  const [editDay, setEditDay] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const r = rules[Math.min(sel, Math.max(0, rules.length - 1))] || null;
+  const amt = Number(e.amount) || 0;
+  const hasRange = r && (r.amount_min != null || r.amount_max != null);
+  const amtBuf = r && amt && hasRange
+    ? Math.round(Math.max(r.amount_max != null ? r.amount_max - amt : 0, r.amount_min != null ? amt - r.amount_min : 0)) : null;
+  const who = r ? ruleWhen(r).filter(([key]) => !['Amount', 'Days'].includes(key)) : [];
+  const saveAmt = async () => {
+    const b = Math.max(0, Math.round(Number(editAmt) || 0));
+    setSaving(true);
+    try { await eventsAPI.updateRule(r.id, { amount_min: Math.max(0, amt - b), amount_max: amt + b, event_id: e.id }); notify(`Amount buffer saved · ${inr(Math.max(0, amt - b))} to ${inr(amt + b)}`); setEditAmt(null); await onChanged(); }
+    catch (er) { notify(errMsg(er)); } finally { setSaving(false); }
+  };
+  const saveDay = async () => {
+    const b = Math.max(0, Math.min(15, parseInt(editDay, 10) || 0));
+    setSaving(true);
+    try { await eventsAPI.update(e.id, { buffer_days: b }); notify(`Date buffer saved · ± ${b} day${b === 1 ? '' : 's'}`); setEditDay(null); await onChanged(); }
+    catch (er) { notify(errMsg(er)); } finally { setSaving(false); }
+  };
+  return (
+    <section className="eh-spot" aria-label="How Kanalyst spots this payment">
+      <div className="eh-spot-head">
+        <h3>How Kanalyst spots this payment</h3>
+        {rules.length > 1 && (
+          <div className="eh-seg" role="tablist" aria-label="SMS rules">
+            {rules.map((x, i) => <button key={x.id} type="button" role="tab" aria-selected={i === sel} className={i === sel ? 'on' : ''} onClick={() => setSel(i)}>Rule {i + 1}</button>)}
+          </div>
+        )}
+      </div>
+      {!r ? (
+        <div className="eh-spot-none">
+          <p><b>No SMS rule yet</b>, so Kanalyst can't mark this paid by itself. Answer “Is this your payment?” on a due date below, or add a rule now.</p>
+          <div>
+            <button type="button" className="fo-btn sm" onClick={onAddRule} disabled={!e.category_id}>+ Add SMS rule</button>
+            {!e.category_id && <button type="button" className="eh-link" onClick={onEditEvent}>Pick a category first</button>}
+          </div>
+          <dl className="eh-spot-grid">
+            <div><dt>Amount</dt><dd>{amountText(e)}</dd></div>
+            <div><dt>Date</dt><dd>{scheduleText(e)} <span className="eh-buf">± {e.buffer_days} day{e.buffer_days === 1 ? '' : 's'}</span></dd></div>
+          </dl>
+        </div>
+      ) : (
+        <dl className="eh-spot-grid">
+          <div className="wide">
+            <dt>SMS rule</dt>
+            <dd>
+              <b>{r.label ? clean(r.label) : who.map(([, v]) => v).join(' · ') || 'Rule'}</b>
+              <span className="eh-dim"> · caught {r.caught} SMS in 6 months{RULE_SOURCE[r.source] ? ` · ${RULE_SOURCE[r.source]}` : ''}</span>
+              <span className="eh-spot-acts">
+                <button type="button" className="eh-link" onClick={() => onEditRule(r)}>Edit rule</button>
+                <button type="button" className="eh-link danger" onClick={() => onDelRule(r)}>Remove</button>
+                <button type="button" className="eh-link" onClick={onAddRule}>+ Another rule</button>
+              </span>
+            </dd>
+          </div>
+          <div>
+            <dt>Payee</dt>
+            <dd>{who.length ? who.map(([key, v]) => <span key={key} className="eh-kv"><em>{key}</em>{v}</span>) : <span className="eh-dim">Any payee</span>}</dd>
+          </div>
+          <div>
+            <dt>Category</dt>
+            <dd><CatChip id={r.category_id || e.category_id} cats={cats} /></dd>
+          </div>
+          <div>
+            <dt>Amount</dt>
+            <dd>
+              {!amt ? (
+                <span>Varies{hasRange ? <span className="eh-dim"> · rule takes {ruleWhen(r).find(([key]) => key === 'Amount')?.[1]}</span> : null}</span>
+              ) : editAmt == null ? (
+                <span>{inr(amt)} <span className="eh-buf">± {amtBuf != null ? inr(amtBuf) : 'any'}</span>
+                  {amtBuf != null && <span className="eh-dim"> ({inr(Math.max(0, amt - amtBuf))} – {inr(amt + amtBuf)})</span>}
+                  <button type="button" className="eh-link" onClick={() => setEditAmt(amtBuf ?? Math.round(amt * 0.05))}>Change</button></span>
+              ) : (
+                <span className="eh-inline">{inr(amt)} ± ₹<input type="number" min="0" value={editAmt} onChange={(ev) => setEditAmt(ev.target.value)} aria-label="Amount buffer in rupees" autoFocus />
+                  <button type="button" className="fo-btn sm" disabled={saving} onClick={saveAmt}>Save</button>
+                  <button type="button" className="eh-link" onClick={() => setEditAmt(null)}>Cancel</button></span>
+              )}
+            </dd>
+          </div>
+          <div>
+            <dt>Date</dt>
+            <dd>
+              {editDay == null ? (
+                <span>{scheduleText(e)} <span className="eh-buf">± {e.buffer_days} day{e.buffer_days === 1 ? '' : 's'}</span>
+                  <button type="button" className="eh-link" onClick={() => setEditDay(e.buffer_days)}>Change</button></span>
+              ) : (
+                <span className="eh-inline">{scheduleText(e)} ± <input type="number" min="0" max="15" value={editDay} onChange={(ev) => setEditDay(ev.target.value)} aria-label="Date buffer in days" autoFocus /> days
+                  <button type="button" className="fo-btn sm" disabled={saving} onClick={saveDay}>Save</button>
+                  <button type="button" className="eh-link" onClick={() => setEditDay(null)}>Cancel</button></span>
+              )}
+            </dd>
+          </div>
+          {r.sample && (
+            <div className="wide">
+              <dt>Latest SMS it caught</dt>
+              <dd>
+                <blockquote className="eh-spot-sms">{clean(r.sample.body) || clean(r.sample.payee) || 'No SMS text saved for this payment.'}</blockquote>
+                <span className="eh-dim">{fmtY(r.sample.date)}{r.sample.sender ? ` · from ${r.sample.sender}` : ''}{r.sample.amount ? ` · ${inr(r.sample.amount)}` : ''}</span>
+              </dd>
+            </div>
+          )}
+        </dl>
+      )}
+    </section>
   );
 }
 
@@ -806,7 +905,8 @@ const dueText = (e) => e.next_due ? fmt(e.next_due) : e.focus_date ? fmt(e.focus
 const COLS = [['title', 'Event'], ['type', 'Type'], ['freq', 'Frequency'], ['due', 'Next due'], ['last', 'Last paid'], ['amount', 'Amount'], ['state', 'Status']];
 function EventsTab({ events, cats, reload, notify, selected, setSelected }) {
   const [filter, setFilter] = useState('all');
-  const [group, setGroup] = useState('all');
+  // Subscriptions live here now (K-214): the old Subscriptions link opens Events filtered to them
+  const [group, setGroup] = useState(() => { try { const g = sessionStorage.getItem('eh-group'); sessionStorage.removeItem('eh-group'); return g || 'all'; } catch { return 'all'; } });
   const [freq, setFreq] = useState('');
   const [q, setQ] = useState('');
   const [sort, setSort] = useState(['due', 1]);
@@ -891,7 +991,10 @@ function EventsTab({ events, cats, reload, notify, selected, setSelected }) {
                       onDoubleClick={() => open(e.id)} onKeyDown={(ev) => { if (ev.key === 'Enter') open(e.id); }}>
                       <td className="t"><span className="eh-ico sm" style={{ '--k': k.c }}><KindIcon kind={e.kind} size={15} /></span><b>{clean(e.title)}</b></td>
                       <td><span className={`eh-type t-${groupOf(e)}`}>{typeOf(e)}</span>{e.link?.ref && <small className="eh-dim"> ••{e.link.ref}</small>}</td>
-                      <td>{FREQ_NAME[e.frequency] || '—'}{e.due_day && e.frequency === 'monthly' ? <small className="eh-dim"> · day {e.due_day}</small> : null}</td>
+                      <td className="eh-freq">
+                        <span>{FREQ_NAME[e.frequency] || '—'}{e.due_day && e.frequency === 'monthly' ? <small className="eh-dim"> · day {e.due_day}</small> : null}</span>
+                        <Track track={e.track} />
+                      </td>
                       <td>{dueText(e)}</td>
                       <td>{lastPaidOf(e) ? fmt(lastPaidOf(e)) : <span className="eh-dim">Not seen</span>}</td>
                       <td className="num">{Number(e.amount) ? inr(e.amount) : <span className="eh-dim">varies</span>}</td>
@@ -1123,7 +1226,7 @@ export default function EventsHub({ notify }) {
     <div className="eh">
       <header className="eh-head">
         <div>
-          <h1>Events</h1>
+          <h1>Events &amp; subscriptions</h1>
           <p>Every EMI, card bill, subscription, SIP and premium, with the master it belongs to and the SMS rules that mark it paid.</p>
         </div>
         {events && (

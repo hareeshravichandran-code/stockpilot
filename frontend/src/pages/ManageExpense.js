@@ -152,7 +152,7 @@ export default function ManageExpense({ onClose }) {
 /* ═══════════════════════════════════════════════════════════ */
 function CategoriesTab({ cats, parentCats, subCats, reload }) {
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm]         = useState({ name:'', type:'EXPENSE', parent_id:'', icon:'🏷️', color:'var(--lime)' });
+  const [form, setForm]         = useState({ name:'', type:'EXPENSE', parent_id:'', icon:'🏷️', color:CAT_COLORS[2] });
   const [saving, setSaving]     = useState(false);
   const [error, setError]       = useState('');
 
@@ -164,7 +164,7 @@ function CategoriesTab({ cats, parentCats, subCats, reload }) {
     setSaving(true); setError('');
     try {
       await expenseAPI.createCategory({ name:form.name, type:form.type, parent_id:form.parent_id||null, icon:form.icon, color:form.color });
-      setShowForm(false); setForm({ name:'', type:'EXPENSE', parent_id:'', icon:'🏷️', color:'var(--lime)' });
+      setShowForm(false); setForm({ name:'', type:'EXPENSE', parent_id:'', icon:'🏷️', color:CAT_COLORS[2] });
       reload();
     } catch(e) { setError(e.message); }
     finally { setSaving(false); }

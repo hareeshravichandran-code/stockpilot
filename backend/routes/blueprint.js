@@ -119,7 +119,7 @@ async function loadMemberUniverse(userId, prefix, member) {
     items.push({
       asset_type: 'stock', asset_ref: ref, demat,
       label: h.symbol || h.company, sub: `${h.company || ''} · ${num(h.quantity)} sh · ${brokerLabel(demat)}`,
-      value: round2(value),
+      value: round2(value), invested: round2(num(h.quantity) * num(h.avg_cost)),
     });
     if (!brokers[demat]) brokers[demat] = { value: 0, count: 0 };
     brokers[demat].value += value;
@@ -142,7 +142,7 @@ async function loadMemberUniverse(userId, prefix, member) {
       asset_type: 'mf', asset_ref: `${m.folio_number || ''}|${m.isin || ''}`,
       label: m.fund_name || m.isin,
       sub: `Folio ${m.folio_number || '—'}${m.fund_category ? ' · ' + m.fund_category : ''}${sipMonthly ? ` · SIP ₹${sipMonthly.toLocaleString('en-IN')}/mo` : ''}`,
-      value: round2(num(m.current_value)),
+      value: round2(num(m.current_value)), invested: round2(num(m.invested_value)),
       ...(sips.length ? { sip_monthly: sipMonthly, sips } : {}),
     });
   }
@@ -655,16 +655,41 @@ router.get('/networth', requireAuth, async (req, res) => {
   try {
     const uid = req.user.id;
     const members = await familyMembers(uid);
+    // Financial year (April–March, IST) and the last 12 months, for dividends
+    const ist = new Date(Date.now() + 330 * 60000);
+    const fyY = ist.getUTCMonth() >= 3 ? ist.getUTCFullYear() : ist.getUTCFullYear() - 1;
+    const fyStart = `${fyY}-04-01`;
+    const yearAgo = new Date(Date.UTC(ist.getUTCFullYear() - 1, ist.getUTCMonth(), ist.getUTCDate())).toISOString().slice(0, 10);
+    const divFrom = fyStart < yearAgo ? fyStart : yearAgo;
+    const inv = { mf: { value: 0, invested: 0, count: 0 }, stocks: { value: 0, invested: 0, count: 0 }, dividends: { fy: 0, last12: 0, count: 0, fy_label: `FY ${fyY}-${String((fyY + 1) % 100).padStart(2, '0')}` } };
     const per = await Promise.all(members.map(async m => {
-      const [items, { data: bal }] = await Promise.all([
+      const [items, { data: bal }, { data: epf }, { data: divs }] = await Promise.all([
         loadMemberUniverse(m.id, m.me ? '' : `fam:${m.id}:`, m),
         supabase.from('asset_balances').select('asset_type, balance').eq('user_id', m.id),
+        supabase.from('epf_accounts').select('balance, status').eq('user_id', m.id),
+        supabase.from('dividend_income').select('total_dividend, ex_date').eq('user_id', m.id).gte('ex_date', divFrom),
       ]);
+      // Investments for the phone's Summary (K-204): value against what was put in, and dividends
+      for (const it of items) {
+        const k = it.asset_type === 'mf' ? 'mf' : it.asset_type === 'stock' ? 'stocks' : null;
+        if (!k) continue;
+        inv[k].value += num(it.value); inv[k].invested += num(it.invested); inv[k].count += 1;
+      }
+      for (const d of divs || []) {
+        const v = num(d.total_dividend); if (!v || !d.ex_date) continue;
+        if (d.ex_date >= fyStart) inv.dividends.fy += v;
+        if (d.ex_date >= yearAgo) inv.dividends.last12 += v;
+        inv.dividends.count += 1;
+      }
       const parts = {}; let owed = 0;
       for (const it of items) { if (it.asset_type === 'broker' || !CLASS[it.asset_type]) continue; parts[CLASS[it.asset_type]] = (parts[CLASS[it.asset_type]] || 0) + num(it.value); }
+      // EPF: the EPF module's accounts (EPFO SMS, passbook, entered balance). The older single EPF figure counts only without them.
+      const epfLive = (epf || []).filter(a => a.status !== 'closed').reduce((t, a) => t + num(a.balance), 0);
+      if (epfLive > 0) parts.EPF = epfLive;
       for (const b of bal || []) {
         const t = String(b.asset_type || '').toUpperCase(); const v = num(b.balance);
         if (!v) continue;
+        if (t === 'EPF' && epfLive > 0) continue;
         if (DEBT_RX.test(t)) owed += Math.abs(v);
         else { const name = t === 'EPF' ? 'EPF' : t === 'PPF' ? 'PPF' : t.charAt(0) + t.slice(1).toLowerCase().replace(/_/g, ' '); parts[name] = (parts[name] || 0) + v; }
       }
@@ -678,6 +703,11 @@ router.get('/networth', requireAuth, async (req, res) => {
       total: round2(total), owed: round2(owed), after_loans: round2(total - owed),
       parts: Object.entries(parts).map(([name, value]) => ({ name, value: round2(value) })).filter(p => p.value > 0).sort((a, b) => b.value - a.value),
       members: per.map(p => ({ id: p.id, name: p.name, me: p.me, total: p.total, owed: p.owed })),
+      invest: {
+        mf: { value: round2(inv.mf.value), invested: round2(inv.mf.invested), count: inv.mf.count },
+        stocks: { value: round2(inv.stocks.value), invested: round2(inv.stocks.invested), count: inv.stocks.count },
+        dividends: { fy: round2(inv.dividends.fy), last12: round2(inv.dividends.last12), count: inv.dividends.count, fy_label: inv.dividends.fy_label },
+      },
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

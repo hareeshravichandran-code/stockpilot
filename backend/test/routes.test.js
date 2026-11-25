@@ -9,7 +9,7 @@ const { db, uid, txn, ist, istToday } = H;
 const rows = (name) => db._tables[name] || [];
 let api;
 
-before(async () => { api = await H.server([['/api/events', 'events.js'], ['/api/expense', 'expenseTransactions.js'], ['/api/moneyflow', 'moneyflow.js'], ['/api/expense', 'expenseSync.js'], ['/api/expense', 'expenseSmsRules.js'], ['/api', 'appReports.js']]); });
+before(async () => { api = await H.server([['/api/events', 'events.js'], ['/api/expense', 'expenseTransactions.js'], ['/api/moneyflow', 'moneyflow.js'], ['/api/expense', 'expenseSync.js'], ['/api/expense', 'expenseSmsRules.js'], ['/api', 'appReports.js'], ['/api/expense', 'expenseCategories.js'], ['/api/expense', 'expenseManage.js']]); });
 after(async () => { await api.close(); });
 beforeEach(() => H.reset());
 
@@ -213,5 +213,162 @@ describe('phone sync', () => {
     const r = await api.call('GET', '/api/expense/sync/pull?last_sync_at=0');
     assert.equal(r.status, 200, JSON.stringify(r.body).slice(0, 200));
     assert.equal(r.body.transactions.length, 1500);
+  });
+});
+
+describe('K-199 / K-201: rule windows, deletions and duplicate decisions survive a reinstall', () => {
+  const EM = require('../services/eventMatch');
+  test('day window: plain, wrapping the month end, and short months', () => {
+    const r = { day_from: 3, day_to: 7 };
+    assert.equal(EM.dayOk(r, { date_time: ist('2026-10-05') }), true);
+    assert.equal(EM.dayOk(r, { date_time: ist('2026-10-09') }), false);
+    const wrap = { day_from: 28, day_to: 4 };
+    assert.equal(EM.dayOk(wrap, { date_time: ist('2026-10-30') }), true);
+    assert.equal(EM.dayOk(wrap, { date_time: ist('2026-11-02') }), true);
+    assert.equal(EM.dayOk(wrap, { date_time: ist('2026-11-15') }), false);
+    assert.equal(EM.dayOk({ day_from: 29, day_to: 31 }, { date_time: ist('2026-02-28') }), true, 'Feb 28 stands in for 29-31');
+    assert.equal(EM.dayOk({}, { date_time: ist('2026-02-28') }), true, 'no window: any day');
+  });
+  test('phone rule keeps its mode, window and the payment it came from; merchant-only clears the window', async () => {
+    const a = await api.call('POST', '/api/expense/sms-rules', { id: 'm-1', merchant_pattern: 'landlord', category_id: 'rent_house',
+      match_mode: 'merchant_date_amount', day_from: 1, day_to: 7, amount_min: 23750, amount_max: 26250, sample_amount: 25000, sample_day: 3 });
+    assert.equal(a.status, 201, JSON.stringify(a.body));
+    let r = rows('user_sms_rules')[0];
+    assert.equal(r.match_mode, 'merchant_date_amount'); assert.equal(r.day_from, 1); assert.equal(r.amount_max, 26250); assert.equal(r.sample_day, 3);
+    await api.call('PUT', '/api/events/rules/m-1', { match_mode: 'merchant' });
+    r = rows('user_sms_rules')[0];
+    assert.equal(r.match_mode, 'merchant'); assert.equal(r.day_from, null); assert.equal(r.amount_min, null);
+    assert.equal(r.sample_amount, 25000, 'the sample stays for next time');
+  });
+  test('merchant + date needs the days', async () => {
+    await api.call('POST', '/api/expense/sms-rules', { id: 'm-2', merchant_pattern: 'school', category_id: 'school_fees' });
+    const bad = await api.call('PUT', '/api/events/rules/m-2', { match_mode: 'merchant_date' });
+    assert.equal(bad.status, 400);
+  });
+  test('account rule from the phone (no merchant in the SMS) matches on account, days and amount only', () => {
+    const rule = { merchant_pattern: 'ev1:opaque', ref_kind: 'acct', account_ref: '4821', match_mode: 'merchant_date_amount', day_from: 3, day_to: 7, amount_min: 31000, amount_max: 34000 };
+    const t = { amount: 32786, date_time: ist('2026-11-05'), account_last4: '4821', sms_body: 'Rs 32786 debited from a/c XX4821' };
+    assert.ok(EM.ruleScore(rule, t) > 0);
+    assert.equal(EM.ruleScore(rule, { ...t, amount: 500 }), 0);
+    assert.equal(EM.ruleScore(rule, { ...t, date_time: ist('2026-11-20') }), 0);
+  });
+  test('a deleted payment is sent to the phone as a marker, and the same SMS read again stays deleted', async () => {
+    const body = { amount: 640, type: 'DEBIT', date_time: ist(istToday()), reference_no: 'UTR640', category_id: 'food_dining' };
+    const made = await api.call('POST', '/api/expense/transactions', body);
+    await api.call('DELETE', `/api/expense/transactions/${made.body.id}`);
+    const again = await api.call('POST', '/api/expense/transactions', { ...body, id: undefined });
+    assert.equal(again.status, 200, JSON.stringify(again.body));
+    assert.equal(again.body.deleted, true);
+    assert.equal(rows('expense_transactions').length, 1);
+    assert.equal(rows('expense_transactions')[0].is_deleted, true, 'not brought back');
+    const live = await api.call('GET', '/api/expense/transactions?page=1&limit=100');
+    assert.equal(live.body.data.length, 0);
+    const all = await api.call('GET', '/api/expense/transactions?page=1&limit=100&include_deleted=1');
+    assert.equal(all.body.data.length, 1); assert.equal(all.body.data[0].is_deleted, true);
+  });
+  test('a payment deleted on the phone before upload is kept as a marker; separate-payment decision is saved', async () => {
+    const dead = await api.call('POST', '/api/expense/transactions', { amount: 99, type: 'DEBIT', date_time: ist(istToday()), reference_no: 'UTR99', is_deleted: true });
+    assert.equal(dead.status, 201); assert.equal(rows('expense_transactions')[0].is_deleted, true);
+    const body = { amount: 300, type: 'DEBIT', date_time: ist(istToday()), reference_no: 'UTR300' };
+    await api.call('POST', '/api/expense/transactions', body);
+    await api.call('POST', '/api/expense/transactions', { ...body, dup_state: 'separate' });
+    assert.equal(rows('expense_transactions').find(x => x.reference_no === 'UTR300').dup_state, 'separate');
+  });
+});
+
+describe('K-208: a rule made from a payment files that payee\'s earlier payments', () => {
+  const seed = (o) => { (db._tables.expense_transactions ||= []).push(txn({ id: o.id, merchant_key: 'k-mulberry', amount: 15, date_time: ist('2026-11-19', '12:26'), ...o })); };
+  test('uncategorised payments of the same payee get the category; others stay as they are', async () => {
+    seed({ id: 't-now', amount: 16, category_id: 'ciggy' });
+    seed({ id: 't-old1', date_time: ist('2026-10-02') });
+    seed({ id: 't-old2', category_id: 'other', date_time: ist('2026-09-14') });
+    seed({ id: 't-kept', category_id: 'snacks' });
+    seed({ id: 't-gone', is_deleted: true });
+    seed({ id: 't-in', type: 'CREDIT' });
+    seed({ id: 't-else', merchant_key: 'k-other' });
+    const r = await api.call('POST', '/api/expense/sms-rules', { merchant_pattern: 'mulberry', category_id: 'ciggy', user_confirmed: true, apply_from: 't-now' });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(r.body.applied, 2);
+    const cat = (id) => rows('expense_transactions').find(t => t.id === id).category_id;
+    assert.equal(cat('t-old1'), 'ciggy'); assert.equal(cat('t-old2'), 'ciggy');
+    assert.equal(cat('t-kept'), 'snacks'); assert.equal(cat('t-gone'), null); assert.equal(cat('t-in'), null); assert.equal(cat('t-else'), null);
+    assert.equal(typeof rows('expense_transactions').find(t => t.id === 't-old1').updated_at, 'number');
+  });
+  test('a day window on the rule limits which earlier payments are filed', async () => {
+    seed({ id: 't-now', category_id: 'rent_house', date_time: ist('2026-11-05') });
+    seed({ id: 't-in', date_time: ist('2026-10-04') });
+    seed({ id: 't-out', date_time: ist('2026-10-20') });
+    const r = await api.call('POST', '/api/expense/sms-rules', { merchant_pattern: 'landlord', category_id: 'rent_house', match_mode: 'merchant_date', day_from: 1, day_to: 7, apply_from: 't-now' });
+    assert.equal(r.body.applied, 1);
+    assert.equal(rows('expense_transactions').find(t => t.id === 't-out').category_id, null);
+  });
+  test('without apply_from nothing else changes (the phone files its own copy)', async () => {
+    seed({ id: 't-old1' });
+    const r = await api.call('POST', '/api/expense/sms-rules', { merchant_pattern: 'mulberry', category_id: 'ciggy' });
+    assert.equal(r.body.applied, undefined);
+    assert.equal(rows('expense_transactions')[0].category_id, null);
+  });
+});
+
+describe('K-210: web and phone masters stay in step', () => {
+  const put = (t, r) => { (db._tables[t] ||= []).push(r); };
+  test('deleting a category on the web works: subcategories go, payments become uncategorised, rules stop', async () => {
+    put('expense_categories', { id: 'c-pets', user_id: uid, name: 'Pets', type: 'EXPENSE', is_system: false, is_deleted: false, updated_at: 1 });
+    put('expense_categories', { id: 'c-vet', user_id: uid, name: 'Vet', type: 'EXPENSE', parent_id: 'c-pets', is_system: false, is_deleted: false, updated_at: 1 });
+    put('expense_categories', { id: 'food', user_id: null, name: 'Food', type: 'EXPENSE', is_system: true, is_deleted: false, updated_at: 1 });
+    put('expense_transactions', txn({ id: 't1', amount: 500, date_time: 1, category_id: 'c-vet', updated_at: 1 }));
+    put('expense_transactions', txn({ id: 't2', amount: 90, date_time: 1, category_id: 'food', updated_at: 1 }));
+    put('user_sms_rules', { id: 'r1', user_id: uid, merchant_pattern: 'pawsome', category_id: 'c-pets', is_deleted: false, updated_at: 1 });
+    const r = await api.call('DELETE', '/api/expense/categories/c-pets');
+    assert.equal(r.status, 200, JSON.stringify(r.body)); assert.equal(r.body.deleted, 2);
+    const cat = (id) => rows('expense_categories').find(c => c.id === id);
+    assert.equal(cat('c-pets').is_deleted, true); assert.equal(cat('c-vet').is_deleted, true); assert.ok(cat('c-vet').updated_at > 1);
+    assert.equal(rows('expense_transactions').find(t => t.id === 't1').category_id, null);
+    assert.equal(rows('expense_transactions').find(t => t.id === 't2').category_id, 'food');
+    assert.equal(rows('user_sms_rules')[0].is_deleted, true);
+    assert.equal((await api.call('DELETE', '/api/expense/categories/food')).status, 404, 'system categories stay');
+  });
+  test('the phone pull carries web deletions after the first sync, but not on a first pull', async () => {
+    put('expense_categories', { id: 'c-old', user_id: uid, name: 'Old', type: 'EXPENSE', is_system: false, is_deleted: true, updated_at: 500 });
+    put('expense_budgets', { id: 'b-old', user_id: uid, category_id: 'food', month: 202611, amount: 100, is_deleted: true, updated_at: 500 });
+    put('user_sms_rules', { id: 'r-old', user_id: uid, merchant_pattern: 'x', category_id: 'food', is_deleted: true, updated_at: 500 });
+    put('custom_fields', { id: 'f-old', user_id: uid, name: 'Trip', is_deleted: true, updated_at: '2026-11-23T10:00:00.000Z' });
+    const later = await api.call('GET', '/api/expense/sync/pull?last_sync_at=100');
+    assert.equal(later.status, 200);
+    assert.deepEqual([later.body.categories.length, later.body.budgets.length, later.body.sms_rules.length, later.body.custom_fields.length], [1, 1, 1, 1]);
+    assert.equal(later.body.custom_fields[0].is_deleted, true);
+    const first = await api.call('GET', '/api/expense/sync/pull?last_sync_at=0');
+    assert.deepEqual([first.body.categories.length, first.body.budgets.length, first.body.sms_rules.length, first.body.custom_fields.length], [0, 0, 0, 0]);
+  });
+  test('custom fields changed on the web reach the phone (timestamp column)', async () => {
+    put('custom_fields', { id: 'f1', user_id: uid, name: 'Trip', is_deleted: false, updated_at: '2026-11-23T10:00:00.000Z' });
+    const since = Date.parse('2026-11-22T00:00:00Z');
+    assert.equal((await api.call('GET', `/api/expense/sync/pull?last_sync_at=${since}`)).body.custom_fields.length, 1);
+    assert.equal((await api.call('GET', `/api/expense/sync/pull?last_sync_at=${Date.parse('2026-11-24T00:00:00Z')}`)).body.custom_fields.length, 0);
+  });
+  test('a custom field deleted on the web moves its updated_at', async () => {
+    put('custom_fields', { id: 'f2', user_id: uid, name: 'Trip', is_deleted: false, updated_at: '2026-01-01T00:00:00.000Z' });
+    assert.equal((await api.call('DELETE', '/api/expense/custom-fields/f2')).status, 200);
+    assert.ok(rows('custom_fields')[0].updated_at > '2026-01-01T00:00:00.000Z');
+  });
+});
+
+describe('K-214: an event shows its recent cycles at a glance', () => {
+  const { trackOf } = require('../routes/events');
+  test('a monthly event: twelve cycles ending with the next one, paid ones done', () => {
+    const e = { id: 'e1', frequency: 'monthly', due_day: 5, kind: 'emi', status: 'active', created_at: '2025-01-01T00:00:00Z', buffer_days: 2 };
+    const pay = { 'e1|2026-10-05': { status: 'paid' }, 'e1|2026-09-05': { status: 'paid' } };
+    const t = trackOf(e, pay, '2026-11-26');
+    assert.equal(t.length, 12);
+    assert.equal(t[t.length - 1].p, '2026-12-05');
+    assert.equal(t[t.length - 1].s, 'upcoming');
+    assert.equal(t.find(x => x.p === '2026-10-05').s, 'done');
+    assert.equal(t.find(x => x.p === '2026-11-05').s, 'overdue');
+  });
+  test('quarterly: four cycles; ones before the event was made are untracked', () => {
+    const e = { id: 'e2', frequency: 'quarterly', due_day: 10, due_month: 1, kind: 'premium', status: 'active', created_at: '2026-06-01T00:00:00Z', buffer_days: 3 };
+    const t = trackOf(e, {}, '2026-11-26');
+    assert.equal(t.length, 4);
+    assert.equal(t[0].s, 'untracked');
   });
 });
