@@ -1011,7 +1011,7 @@ function EventsTab({ events, cats, reload, notify, selected, setSelected }) {
             : `${list.length} event${list.length === 1 ? '' : 's'}. Double-click a row (or press Enter) to see and edit it.`}</p>
           <div className="eh-tscroll">
             <table className="eh-evtable">
-              <thead><tr>{COLS.map(([k, l]) => head(k, l))}<th scope="col">SMS rules</th></tr></thead>
+              <thead><tr>{COLS.map(([k, l]) => head(k, l))}<th scope="col">SMS rules</th><th scope="col" className="act">{list.some(e => e.status === 'proposed') ? 'Action' : ''}</th></tr></thead>
               <tbody>
                 {list.map(e => {
                   const k = kindOf(e.kind); const [line, tone] = stateLine(e);
@@ -1019,7 +1019,7 @@ function EventsTab({ events, cats, reload, notify, selected, setSelected }) {
                     <tr key={e.id} tabIndex={0} className={focus === e.id ? 'on' : ''} aria-label={`${clean(e.title)}, ${line}`}
                       onClick={() => { setFocus(e.id); if (window.matchMedia?.('(pointer: coarse)').matches) open(e.id); }}
                       onDoubleClick={() => open(e.id)} onKeyDown={(ev) => { if (ev.key === 'Enter') open(e.id); }}>
-                      <td className="t"><span className="eh-ico sm" style={{ '--k': k.c }}><KindIcon kind={e.kind} size={15} /></span><b>{clean(e.title)}</b></td>
+                      <td className="t"><div className="eh-tcell"><span className="eh-ico sm" style={{ '--k': k.c }}><KindIcon kind={e.kind} size={15} /></span><b>{clean(e.title)}</b></div></td>
                       <td><span className={`eh-type t-${groupOf(e)}`}>{typeOf(e)}</span>{e.link?.ref && <small className="eh-dim"> ••{e.link.ref}</small>}</td>
                       <td className="eh-freq">
                         <span>{FREQ_NAME[e.frequency] || '—'}{e.due_day && e.frequency === 'monthly' ? <small className="eh-dim"> · day {e.due_day}</small> : null}</span>
@@ -1028,12 +1028,11 @@ function EventsTab({ events, cats, reload, notify, selected, setSelected }) {
                       <td>{dueText(e)}</td>
                       <td>{lastPaidOf(e) ? fmt(lastPaidOf(e)) : <span className="eh-dim">Not seen</span>}</td>
                       <td className="num">{Number(e.amount) ? inr(e.amount) : <span className="eh-dim">varies</span>}</td>
-                      <td>{e.status === 'proposed' ? (
-                        <span className="eh-propcell"><Pill tone="prop">Proposed</Pill>
-                          <button type="button" className="fo-btn sm" disabled={activating === e.id} onClick={(ev) => { ev.stopPropagation(); activate(e); }}
-                            onDoubleClick={(ev) => ev.stopPropagation()}>{activating === e.id ? 'Activating…' : 'Activate'}</button></span>
-                      ) : <Pill tone={tone}>{line}</Pill>}</td>
+                      <td>{e.status === 'proposed' ? <Pill tone="prop">Proposed</Pill> : <Pill tone={tone}>{line}</Pill>}</td>
                       <td>{e.rules ? <span className="eh-tag">{e.rules}</span> : <span className="eh-tag warn">None</span>}</td>
+                      <td className="act">{e.status === 'proposed' && (
+                        <button type="button" className="fo-btn sm" disabled={activating === e.id} onClick={(ev) => { ev.stopPropagation(); activate(e); }}
+                          onDoubleClick={(ev) => ev.stopPropagation()}>{activating === e.id ? 'Activating…' : 'Activate'}</button>)}</td>
                     </tr>
                   );
                 })}

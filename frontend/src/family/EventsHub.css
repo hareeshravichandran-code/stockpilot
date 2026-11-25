@@ -294,7 +294,7 @@
 .eh-evtable tbody tr:hover { background: #F4EEE2; }
 .eh-evtable tbody tr.on { background: #EFE3D4; box-shadow: inset 3px 0 0 #D9541E; }
 .eh-evtable tbody tr:focus-visible { outline: 2px solid #D9541E; outline-offset: -2px; }
-.eh-evtable td.t { display: flex; align-items: center; gap: 10px; }
+.eh-evtable td.t .eh-tcell { display: flex; align-items: center; gap: 10px; }
 .eh-evtable td.t b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
 .eh-ico.sm { width: 28px; height: 28px; border-radius: 8px; }
 .eh-type { display: inline-block; font-size: 12.5px; font-weight: 600; padding: 2px 9px; border-radius: 999px; background: #EFE9DC; color: #5A4334; }
@@ -490,3 +490,11 @@
 .eh-filters button.prop span { background: var(--prop); color: #fff; }
 .eh-stats .prop b { color: var(--prop); }
 .eh-grp-prop { margin: 6px 0 0; font-size: 12.5px; color: var(--fo-ink-2); }
+
+/* K-217: clear row lines, Activate in its own last column */
+.eh-evtable td { border-bottom: 1px solid #D9CFBD; }
+.eh-evtable tbody tr:nth-child(even) { background: rgba(226, 218, 203, .22); }
+.eh-evtable tbody tr:nth-child(even):hover { background: #F4EEE2; }
+.eh-evtable tbody tr:last-child td { border-bottom: 0; }
+.eh-evtable th { border-bottom: 1.5px solid #CFC3AE; }
+.eh-evtable th.act, .eh-evtable td.act { text-align: right; width: 1%; }
