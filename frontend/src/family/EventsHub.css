@@ -498,3 +498,41 @@
 .eh-evtable tbody tr:last-child td { border-bottom: 0; }
 .eh-evtable th { border-bottom: 1.5px solid #CFC3AE; }
 .eh-evtable th.act, .eh-evtable td.act { text-align: right; width: 1%; }
+
+/* K-218: event page polish. Hierarchy by size and weight (no uppercase labels); the rule as a sentence;
+   facts as four tiles with their Change control at the edge; the proposal note carries its own actions. */
+.eh .eh-sec h3, .eh-spot-head h3 { font-family: 'DM Serif Display', Georgia, serif; font-size: 19px; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--fo-ink); margin: 0; }
+.eh-tl-group h4 { font-size: 13.5px; font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--fo-ink-2); }
+.eh-tl-group.g-now h4 { color: var(--fo-ink); }
+.eh-propnote { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; border: 0; border-left: 4px solid var(--prop);
+  background: var(--prop-bg); border-radius: 14px; padding: 14px 16px; }
+.eh-propnote b { color: var(--prop); font-size: 15px; }
+.eh-propnote p { margin: 4px 0 0; color: var(--fo-ink-2); font-size: 13.5px; line-height: 1.45; max-width: 62ch; }
+.eh-propnote-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.eh-spot { padding: 20px 22px; display: flex; flex-direction: column; gap: 16px; box-shadow: 0 1px 2px rgba(43,33,28,.04), 0 4px 16px rgba(43,33,28,.04); }
+.eh-spot-head { margin: 0; }
+.eh-spot-say { margin: 0; font-size: 15.5px; line-height: 1.55; color: var(--fo-ink); max-width: 72ch; }
+.eh-spot-say b { font-weight: 600; }
+.eh-spot-warn { margin: -6px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--bad-bg); color: var(--bad); font-size: 13.5px; line-height: 1.45; }
+.eh-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 0; }
+.eh-fact { position: relative; border: 1px solid var(--fo-line); border-radius: 12px; padding: 12px 14px; background: #FDFBF6; min-width: 0; }
+.eh-fact dt { font-size: 12.5px; font-weight: 500; color: var(--fo-ink-2); margin: 0 0 6px; text-transform: none; letter-spacing: 0; }
+.eh-fact dd { margin: 0; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.eh-fact-v { font-size: 15.5px; font-weight: 600; color: var(--fo-ink); display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; overflow-wrap: anywhere; }
+.eh-fact-v.warn { color: var(--bad); }
+.eh-fact-sub { font-size: 12.5px; color: var(--fo-ink-2); line-height: 1.35; }
+.eh-fact-edit { position: absolute; top: 9px; right: 10px; border: 0; background: none; padding: 2px 6px; border-radius: 6px; font: 500 12.5px Outfit, sans-serif;
+  color: var(--fo-ink-2); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.eh-fact-edit:hover { color: var(--fo-ink); background: rgba(43,33,28,.05); }
+.eh-fact-edit:focus-visible { outline: 2px solid var(--fo-ink); outline-offset: 1px; }
+.eh-fact .eh-buf { font-weight: 600; }
+.eh-smsq { margin: 0; }
+.eh-smsq figcaption { font-size: 13px; font-weight: 500; color: var(--fo-ink-2); margin-bottom: 6px; }
+.eh-smsq figcaption span { font-weight: 400; }
+.eh-smsq blockquote { margin: 0; padding: 10px 14px; border-radius: 4px 14px 14px 14px; background: #EFE8DA; font-size: 13.5px; line-height: 1.5; max-width: 72ch; overflow-wrap: anywhere; }
+.eh-spot-btns { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 14px; border-top: 1px solid var(--fo-line); }
+.eh-spot-none .eh-spot-btns { border-top: 0; padding-top: 0; }
+.eh-spot-meta { font-size: 12.5px; margin-left: 4px; }
+.eh-push { margin-left: auto; }
+@media (max-width: 900px) { .eh-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .eh-tiles { grid-template-columns: 1fr; } .eh-push { margin-left: 0; } .eh-propnote-btns { width: 100%; } }

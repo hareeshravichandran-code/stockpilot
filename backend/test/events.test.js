@@ -127,25 +127,47 @@ describe('rules made for events that have none', () => {
     const ev = rows('recurring_events')[0];
     const [m1, m2] = [monthBefore(lastMonth, 2), monthBefore(lastMonth, 1)];
     db._seed('expense_transactions', [
-      txn({ amount: 1982.4, sms_sender: 'JX-ICICIT-S', date_time: ist(`${m1}-08`) }),
-      txn({ amount: 1982.4, sms_sender: 'JD-ICICIT-S', date_time: ist(`${m2}-08`) }),
+      txn({ amount: 1982.4, sms_sender: 'JX-ICICIT-S', date_time: ist(`${m1}-08`), merchant: 'ev1:aa', merchant_tok: ['tANTH', 'tCLAU'] }),
+      txn({ amount: 1982.4, sms_sender: 'JD-ICICIT-S', date_time: ist(`${m2}-08`), merchant: 'ev1:bb', merchant_tok: ['tANTH', 'tCLAU', 'tPBC'] }),
     ]);
     const [a, b] = rows('expense_transactions');
     db._seed('event_payments', [
       { owner_id: uid, event_id: ev.id, period: `${m1}-09`, status: 'paid', txn_ref: a.id, amount: 1982.4 },
       { owner_id: uid, event_id: ev.id, period: `${m2}-09`, status: 'paid', txn_ref: b.id, amount: 1982.4 },
     ]);
-    db._seed('expense_transactions', [txn({ amount: 1982.4, sms_sender: 'BP-ICICIT-T', date_time: ist(PAY) })]);
+    db._seed('expense_transactions', [txn({ amount: 1982.4, sms_sender: 'BP-ICICIT-T', date_time: ist(PAY), merchant: 'ev1:cc', merchant_tok: ['tANTH', 'tCLAU'] })]);
     await EM.runMatching(uid, { force: true });
     const rules = rows('user_sms_rules').filter(r => r.event_id === ev.id);
     assert.equal(rules.length, 1, 'one rule made');
     assert.equal(rules[0].source, 'from_payments');
     assert.equal(rules[0].sender_key, 'ICICIT');
-    assert.equal(rules[0].merchant_pattern, null, 'rules without words are allowed by the database');
+    assert.equal(rules[0].merchant_pattern, null, 'encrypted payee: no readable words');
+    assert.deepEqual(rules[0].pattern_tok, ['tANTH', 'tCLAU'], 'the payee fingerprints every payment shares');
     assert.ok(rules[0].id, 'database gives the rule an id');
     assert.equal(rules[0].category_id, 'p_membership', 'event got the default category for its type');
     assert.equal(rows('recurring_events')[0].rules_seeded, true);
     assert.ok(rows('event_payments').some(p => p.period === DUE && p.match_source === 'rule'), 'the new payment was settled by that rule');
+  });
+
+  test('K-218: no payee in common, no rule (a bank sender + amount alone would catch any card spend of that size)', async () => {
+    db._seed('recurring_events', [claudeEvent({ rules_seeded: false, category_id: null, amount: 130 })]);
+    const ev = rows('recurring_events')[0];
+    const [m1, m2] = [monthBefore(lastMonth, 2), monthBefore(lastMonth, 1)];
+    db._seed('expense_transactions', [
+      txn({ amount: 149, sms_sender: 'JX-ICICIT-S', date_time: ist(`${m1}-08`), merchant: 'ev1:aa' }),
+      txn({ amount: 149, sms_sender: 'JD-ICICIT-S', date_time: ist(`${m2}-08`), merchant: 'ev1:bb' }),
+    ]);
+    const [a, b] = rows('expense_transactions');
+    db._seed('event_payments', [
+      { owner_id: uid, event_id: ev.id, period: `${m1}-09`, status: 'paid', txn_ref: a.id, amount: 149 },
+      { owner_id: uid, event_id: ev.id, period: `${m2}-09`, status: 'paid', txn_ref: b.id, amount: 149 },
+    ]);
+    db._seed('expense_transactions', [txn({ amount: 150, sms_sender: 'AD-ICICIT-S', date_time: ist(PAY), merchant: 'Singapore shopp', merchant_tok: ['tSING'] })]);
+    await EM.runMatching(uid, { force: true });
+    assert.equal(rows('user_sms_rules').filter(r => r.event_id === ev.id).length, 0, 'no sender + amount rule');
+    assert.ok(!rows('event_payments').some(p => p.period === DUE), 'the shop payment does not settle the event');
+    const shop = { sender_key: 'ICICIT', amount_min: 101, amount_max: 159, merchant_pattern: null, pattern_tok: ['tANTH'] };
+    assert.equal(EM.ruleScore(shop, rows('expense_transactions').at(-1)), 0, 'a rule with the payee never catches another shop');
   });
 
   test('from the master keywords', async () => {
