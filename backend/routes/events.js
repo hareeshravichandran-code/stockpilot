@@ -167,9 +167,24 @@ async function proposeFromGroups(uid, { force = false } = {}) {
   if (!force && Date.now() - (proposedAt.get(uid) || 0) < 10 * 60 * 1000) return 0;
   proposedAt.set(uid, Date.now());
   const { data: gs } = await supabase.from('sms_groups').select('*').eq('owner_id', uid).eq('status', 'open').is('event_id', null).not('cadence', 'is', null);
+  if (!(gs || []).length) return 0;
+  // What already exists: no proposal for a payment that has an event (any status, deleted ones too), or a rule tied to one
+  const [{ data: have }, { data: tied }] = await Promise.all([
+    supabase.from('recurring_events').select('id, frequency, due_day, amount, status').eq('owner_id', uid),
+    supabase.from('user_sms_rules').select('merchant_pattern, event_id').eq('user_id', uid).eq('is_deleted', false).not('event_id', 'is', null),
+  ]);
+  const known = (have || []).map(e => ({ id: e.id, frequency: e.frequency, due_day: e.due_day, amount: num(e.amount) }));
+  const ruleEv = Object.fromEntries((tied || []).filter(r => r.merchant_pattern).map(r => [r.merchant_pattern, r.event_id]));
+  const dayGap = (a, b) => { const d = Math.abs((a || 0) - (b || 0)); return Math.min(d, 31 - d); };
+  const sameAs = (g) => known.find(e => e.frequency === g.cadence && dayGap(e.due_day, g.due_day) <= 4
+    && (!e.amount || !num(g.avg_amount) || (num(g.avg_amount) >= e.amount * 0.8 && num(g.avg_amount) <= e.amount * 1.25)));
+  const { isEnc } = require('../services/privacy');
   let made = 0;
   for (const g of gs || []) {
     if ((g.count || 0) < 2 || !g.due_day) continue;
+    const pat = isEnc(g.key) ? g.key : String(g.key).toLowerCase().trim();
+    const dup = (ruleEv[pat] && { id: ruleEv[pat] }) || sameAs(g);
+    if (dup) { await supabase.from('sms_groups').update({ event_id: dup.id, updated_at: nowIso() }).eq('id', g.id); continue; }
     const kindOf = Object.entries(EM.DEFAULT_CAT).find(([, c]) => c === g.suggested);
     const kind = kindOf ? kindOf[0] : (g.cadence === 'monthly' && num(g.avg_amount) <= 2000 ? 'subscription' : 'bill');
     const steady = num(g.min_amount) && num(g.max_amount) && num(g.max_amount) <= num(g.min_amount) * 1.25;
@@ -182,10 +197,10 @@ async function proposeFromGroups(uid, { force = false } = {}) {
     const { data: ev, error } = await supabase.from('recurring_events').insert(await lockRow(uid, row, { texts: ['title'] })).select('id').single();
     if (error) { console.error('[events] proposal not saved', error.message); continue; }
     made++;
+    known.push({ id: ev.id, frequency: row.frequency, due_day: row.due_day, amount: num(row.amount) });   // the same payee seen twice is one proposal
     await supabase.from('sms_groups').update({ event_id: ev.id, updated_at: nowIso() }).eq('id', g.id);
     // Its SMS rule, so the user can see and edit it before activating. Never takes over a rule the user already has.
     if (category_id) {
-      const { isEnc } = require('../services/privacy');
       const pattern = isEnc(g.key) ? g.key : String(g.key).toLowerCase().trim();
       const { data: ex } = await supabase.from('user_sms_rules').select('id').eq('user_id', uid).eq('merchant_pattern', pattern).eq('is_deleted', false).maybeSingle();
       if (!ex) await supabase.from('user_sms_rules').insert({ user_id: uid, merchant_pattern: pattern, pattern_tok: g.pattern_tok || null, category_id, event_id: ev.id,
@@ -439,8 +454,9 @@ router.post('/groups/:id', requireAuth, async (req, res) => {
     if (!category_id) return res.status(400).json({ error: 'Pick a category' });
     const proposal = g.event_id ? await ownEvent(uid, g.event_id) : null;
     const isProposal = proposal && proposal.status === 'proposed';
+    const groupMade = isProposal && proposal.master_id === `g-${g.id}`;   // a group can also point at an event made from a master
     if (b.action === 'category') {
-      if (isProposal) await dropEvent(uid, proposal);
+      if (groupMade) await dropEvent(uid, proposal);
       const rule_id = await ruleFromGroup(uid, g, { category_id });
       await recategorise(uid, g, category_id);
       await set({ status: 'ruled', category_id, rule_id, event_id: null });
@@ -467,8 +483,8 @@ router.post('/groups/:id', requireAuth, async (req, res) => {
     }
     const fields = { kind, category_id, amount, amount_mode: ['exact', 'about', 'any'].includes(b.amount_mode) ? b.amount_mode : 'about', frequency: freq, due_day, due_month,
       buffer_days: (() => { const x = parseInt(b.buffer_days, 10); return Number.isFinite(x) ? Math.max(0, Math.min(15, x)) : 2; })(), direction: IN_KINDS.includes(kind) ? 'in' : 'out' };
-    if (!eventId && isProposal && proposal.master_table === 'manual') eventId = proposal.id;
-    else if (eventId && isProposal && proposal.id !== eventId) await dropEvent(uid, proposal);
+    if (!eventId && proposal && proposal.status !== 'deleted') eventId = proposal.id;          // the event this payee already has
+    else if (eventId && groupMade && proposal.id !== eventId) await dropEvent(uid, proposal);
     if (eventId) await supabase.from('recurring_events').update(await lockRow(uid, { ...fields, title, status: 'active', updated_at: nowIso() }, { texts: ['title'] })).eq('id', eventId);
     else {
       const row = { owner_id: uid, master_table: 'manual', master_id: `g-${g.id}`, source: 'manual', status: 'active', title, start_date: null, pay_mode: 'auto',
