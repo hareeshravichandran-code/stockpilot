@@ -214,7 +214,8 @@ async function upsertMaster(uid, f) {
   return { status: 'created', table: 'money_masters', id: data.id };
 }
 
-async function upsertEvent(uid, master, e) {
+// K-215: events Kanalyst finds start as proposals; only ones the user activates are tracked
+async function upsertEvent(uid, master, e, status = 'proposed') {
   const kind = EVENT_KINDS.includes(e.kind) ? e.kind : 'bill';
   const { data: ex } = await supabase.from('recurring_events').select('*')
     .eq('owner_id', uid).eq('master_table', master.table).eq('master_id', String(master.id)).eq('kind', kind).maybeSingle();
@@ -225,7 +226,7 @@ async function upsertEvent(uid, master, e) {
     frequency: EVENT_FREQS.includes(e.frequency) ? e.frequency : 'monthly',
     due_day: int(e.due_day, 1, 31), due_month: int(e.due_month, 1, 12),
     start_date: isDate(e.start_date) ? e.start_date : null, end_date: isDate(e.end_date) ? e.end_date : null,
-    remind_days: int(e.remind_days, 0, 30) ?? 3, direction: e.direction === 'in' ? 'in' : 'out', source: 'discover', status: 'active',
+    remind_days: int(e.remind_days, 0, 30) ?? 3, direction: e.direction === 'in' ? 'in' : 'out', source: 'discover', status,
   })).select().single();
   if (error) throw error;
   return { status: 'created', id: data.id };
@@ -424,13 +425,17 @@ async function linkActuals(uid, { force = false } = {}) {
 async function syncEvent(uid, m) {
   const ev = defaultEvent(m);
   if (!ev) return null;
-  const { data: ex } = await supabase.from('recurring_events').select('id').eq('owner_id', uid).eq('master_table', 'money_masters').eq('master_id', m.id).maybeSingle();
+  const { data: ex } = await supabase.from('recurring_events').select('id, status').eq('owner_id', uid).eq('master_table', 'money_masters').eq('master_id', m.id).maybeSingle();
   if (ex) {
+    if (ex.status === 'deleted') return null;                     // a proposal the user deleted stays deleted
+    // The event keeps the status the user gave it (proposed / active / paused); a closed master closes it
+    const st = m.status === 'closed' ? { status: 'closed' } : {};
     await supabase.from('recurring_events').update({ title: ev.title, amount: num(ev.amount), frequency: EVENT_FREQS.includes(ev.frequency) ? ev.frequency : 'monthly',
-      due_day: ev.due_day, due_month: ev.due_month, status: m.status === 'closed' ? 'closed' : 'active', updated_at: nowIso() }).eq('id', ex.id);
+      due_day: ev.due_day, due_month: ev.due_month, ...st, updated_at: nowIso() }).eq('id', ex.id);
     return ex.id;
   }
-  const r = await upsertEvent(uid, { table: 'money_masters', id: m.id }, ev);
+  // A master the user typed in gets a tracked event; one found in SMS gets a proposal
+  const r = await upsertEvent(uid, { table: 'money_masters', id: m.id }, ev, m.source === 'manual' ? 'active' : 'proposed');
   return r.id;
 }
 
@@ -673,6 +678,7 @@ router.get('/events/all', requireAuth, async (req, res) => {
     };
     for (const e of ev.data || []) {
       if (e.master_table === 'insurance_policies' || e.master_table === 'recurring_deposits') continue;  // listed from their own tables below
+      if (e.status === 'proposed') continue;                         // proposals are not tracked until activated (K-215)
       const m = e.master_table === 'money_masters' ? mById[e.master_id] : null;
       add({ id: e.id, source: e.master_table === 'manual' ? 'manual' : 'event', kind: e.kind, title: e.title, amount: num(e.amount),
         frequency: e.frequency, due_day: e.due_day, due_month: e.due_month, direction: e.direction, status: e.status,

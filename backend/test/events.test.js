@@ -80,6 +80,11 @@ describe('matching through rules only', () => {
     assert.equal(ev.kind, 'emi');
     assert.equal(ev.due_day, 9);
     assert.ok(rows('user_sms_rules').some(r => r.event_id === ev.id && r.sender_key === 'HDFCBK' && r.amount_min <= 33000 && r.amount_max >= 33000), 'rule from the EMI debits');
+    // K-215: it starts as a proposal: rule made, nothing tracked until the user activates it
+    assert.equal(ev.status, 'proposed');
+    await EM.runMatching(uid, { force: true });
+    assert.ok(!rows('event_payments').some(p => p.event_id === ev.id), 'a proposal is not tracked');
+    ev.status = 'active';
     await EM.runMatching(uid, { force: true });
     assert.ok(rows('event_payments').some(p => p.event_id === ev.id && p.period === DUE), 'last EMI marked paid');
     await EM.ensureLoanEvents(uid);

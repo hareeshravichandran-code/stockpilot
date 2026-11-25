@@ -80,6 +80,7 @@ const amountText = (e) => {
   return `About ${inr(e.amount)}`;
 };
 function stateLine(e) {
+  if (e.status === 'proposed') return ['Proposed · not tracked yet', 'prop'];
   if (e.status !== 'active') return [e.status === 'paused' ? 'Paused' : 'Not tracked', 'mute'];
   const d = e.focus_date;
   if (e.state === 'overdue') return [`Overdue · was due ${fmt(d)}`, 'bad'];
@@ -620,8 +621,9 @@ function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify, ful
       await load(); onChanged();
     } catch (e) { notify(errMsg(e)); } finally { setBusy(false); }
   };
+  const e0 = d?.event;
   const setStatus = async (s) => {
-    try { await eventsAPI.status(id, s); notify(s === 'active' ? 'Resumed' : s === 'paused' ? 'Paused · no alerts until you resume' : 'Stopped tracking'); await load(); onChanged(); }
+    try { await eventsAPI.status(id, s); notify(s === 'active' ? (e0?.status === 'proposed' ? 'Activated · Kanalyst now tracks it' : 'Resumed') : s === 'paused' ? 'Paused · no alerts until you resume' : 'Stopped tracking'); await load(); onChanged(); }
     catch (e) { notify(errMsg(e)); }
   };
   const stopTracking = () => {
@@ -629,8 +631,10 @@ function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify, ful
     setStatus('closed');
   };
   const del = async () => {
-    if (!window.confirm('Delete this event, its due dates and its SMS rules? Payments stay in your expenses.')) return;
-    try { await eventsAPI.remove(id); notify('Event deleted'); onChanged(); onClose(); } catch (e) { notify(errMsg(e)); }
+    const prop = e0?.status === 'proposed';
+    if (!window.confirm(prop ? 'Delete this proposal and its SMS rule? Kanalyst will not propose it again. Payments stay in your expenses.'
+      : 'Delete this event, its due dates and its SMS rules? Payments stay in your expenses.')) return;
+    try { await eventsAPI.remove(id); notify(prop ? 'Proposal deleted' : 'Event deleted'); onChanged(); onClose(); } catch (e) { notify(errMsg(e)); }
   };
   const delRule = async (r) => {
     try { await eventsAPI.removeRule(r.id); notify('Rule removed'); await load(); onChanged(); } catch (e) { notify(errMsg(e)); }
@@ -655,11 +659,19 @@ function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify, ful
           <h2>{clean(e.title)}</h2>
           <p className="eh-d-tags">
             <span className={`eh-type t-${groupOf(e)}`}>{e.kind === 'subscription' ? '↻ Subscription' : (TYPE_NAME[e.kind] || k.label)}</span>
-            {e.status !== 'active' && <span className="eh-type t-off">{e.status === 'paused' ? 'Paused' : 'Not tracked'}</span>}
+            {e.status === 'proposed' && <span className="eh-type t-prop">Proposed</span>}
+            {!['active', 'proposed'].includes(e.status) && <span className="eh-type t-off">{e.status === 'paused' ? 'Paused' : 'Not tracked'}</span>}
             {e.link && <button type="button" className="eh-link" onClick={openMaster}>Linked to {linkName(e.link).toLowerCase()}{linkTitle(e.link) ? ` · ${linkTitle(e.link)}` : ''} ›</button>}
           </p>
         </div>
         <div className="eh-d-acts">
+          {e.status === 'proposed' ? (
+            <>
+              <button type="button" className="fo-btn sm" onClick={() => setStatus('active')}>Activate</button>
+              <button type="button" className="fo-btn sm ghost" onClick={() => onEdit(e)}>Edit</button>
+              <button type="button" className="fo-btn sm ghost danger" onClick={del}>Delete proposal</button>
+            </>
+          ) : <>
           <button type="button" className="fo-btn sm" onClick={() => onEdit(e)}>Edit</button>
           {e.status === 'active'
             ? <button type="button" className="fo-btn sm ghost" onClick={() => setStatus('paused')}>Pause</button>
@@ -667,8 +679,15 @@ function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify, ful
           {e.source === 'manual'
             ? <button type="button" className="fo-btn sm ghost danger" onClick={del}>Delete</button>
             : e.status !== 'closed' && <button type="button" className="fo-btn sm ghost danger" onClick={stopTracking}>Stop tracking</button>}
+          </>}
         </div>
       </header>
+      {e.status === 'proposed' && (
+        <div className="eh-propnote">
+          <b>Kanalyst found this in your SMS.</b> It is not tracked yet: no alerts, and payments are not marked against it.
+          Check the SMS rule, amount and date below (change anything that is off), then press <b>Activate</b>. Not a real repeating payment? <button type="button" className="eh-link" onClick={del}>Delete the proposal</button>.
+        </div>
+      )}
 
       <Spotter e={e} rules={d.rules} cats={cats} notify={notify} onChanged={async () => { await load(); onChanged(); }}
         onAddRule={() => setRuleEdit({ preset: { event_id: e.id, category_id: e.category_id } })}
@@ -904,7 +923,14 @@ const typeOf = (e) => (e.link ? linkName(e.link) : e.source === 'manual' || !e.s
 const dueText = (e) => e.next_due ? fmt(e.next_due) : e.focus_date ? fmt(e.focus_date) : '—';
 const COLS = [['title', 'Event'], ['type', 'Type'], ['freq', 'Frequency'], ['due', 'Next due'], ['last', 'Last paid'], ['amount', 'Amount'], ['state', 'Status']];
 function EventsTab({ events, cats, reload, notify, selected, setSelected }) {
-  const [filter, setFilter] = useState('all');
+  // K-215: open on the proposals while nothing is active yet
+  const [filter, setFilter] = useState(() => (!events.some(e => e.status === 'active') && events.some(e => e.status === 'proposed') ? 'proposed' : 'all'));
+  const [activating, setActivating] = useState(null);
+  const activate = async (e) => {
+    setActivating(e.id);
+    try { await eventsAPI.status(e.id, 'active'); notify(`${clean(e.title)} activated · Kanalyst now tracks it`); await reload(); }
+    catch (er) { notify(errMsg(er)); } finally { setActivating(null); }
+  };
   // Subscriptions live here now (K-214): the old Subscriptions link opens Events filtered to them
   const [group, setGroup] = useState(() => { try { const g = sessionStorage.getItem('eh-group'); sessionStorage.removeItem('eh-group'); return g || 'all'; } catch { return 'all'; } });
   const [freq, setFreq] = useState('');
@@ -923,7 +949,8 @@ function EventsTab({ events, cats, reload, notify, selected, setSelected }) {
         case 'done': return e.status === 'active' && tone === 'ok';
         case 'upcoming': return e.status === 'active' && tone === 'calm';
         case 'norule': return e.status === 'active' && !e.rules;
-        case 'inactive': return e.status !== 'active';
+        case 'proposed': return e.status === 'proposed';
+        case 'inactive': return e.status !== 'active' && e.status !== 'proposed';
         default: return e.status === 'active';
       }
     });
@@ -938,7 +965,8 @@ function EventsTab({ events, cats, reload, notify, selected, setSelected }) {
     done: events.filter(e => e.status === 'active' && stateLine(e)[1] === 'ok').length,
     upcoming: events.filter(e => e.status === 'active' && stateLine(e)[1] === 'calm').length,
     norule: events.filter(e => e.status === 'active' && !e.rules).length,
-    inactive: events.filter(e => e.status !== 'active').length,
+    proposed: events.filter(e => e.status === 'proposed').length,
+    inactive: events.filter(e => e.status !== 'active' && e.status !== 'proposed').length,
   };
   const open = (id) => { setSelected(id); window.scrollTo?.({ top: 0, behavior: 'smooth' }); };
   if (selected) {
@@ -968,8 +996,8 @@ function EventsTab({ events, cats, reload, notify, selected, setSelected }) {
           <option value="">Any frequency</option>{FREQS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
         </select>
         <div className="eh-filters" role="tablist" aria-label="Status">
-          {[['all', 'Active'], ['action', 'Needs action'], ['upcoming', 'Upcoming'], ['done', 'Paid'], ['norule', 'No SMS rule'], ['inactive', 'Paused / stopped']].map(([k, l]) => (
-            <button key={k} type="button" role="tab" aria-selected={filter === k} className={`${filter === k ? 'on' : ''} ${k === 'action' && counts.action ? 'hot' : ''}`} onClick={() => setFilter(k)}>{l}<span>{counts[k]}</span></button>
+          {[['all', 'Active'], ['proposed', 'Proposed'], ['action', 'Needs action'], ['upcoming', 'Upcoming'], ['done', 'Paid'], ['norule', 'No SMS rule'], ['inactive', 'Paused / stopped']].map(([k, l]) => (
+            <button key={k} type="button" role="tab" aria-selected={filter === k} className={`${filter === k ? 'on' : ''} ${k === 'action' && counts.action ? 'hot' : ''} ${k === 'proposed' && counts.proposed ? 'prop' : ''}`} onClick={() => setFilter(k)}>{l}<span>{counts[k]}</span></button>
           ))}
         </div>
         <button type="button" className="fo-btn eh-new" onClick={() => setForm({})}>+ New event</button>
@@ -978,7 +1006,9 @@ function EventsTab({ events, cats, reload, notify, selected, setSelected }) {
         <div className="eh-empty"><b>{events.length ? 'No events match these filters.' : 'No events yet.'}</b><p>{events.length ? 'Clear a filter to see more.' : 'Add your EMIs, subscriptions, SIPs and bills with “New event”.'}</p></div>
       ) : (
         <>
-          <p className="eh-thint">{list.length} event{list.length === 1 ? '' : 's'}. Double-click a row (or press Enter) to see and edit it.</p>
+          <p className="eh-thint">{filter === 'proposed'
+            ? `${list.length} proposal${list.length === 1 ? '' : 's'} found in your SMS. Open one to check its SMS rule, amount and date, then Activate it, or delete it. Only active events are tracked.`
+            : `${list.length} event${list.length === 1 ? '' : 's'}. Double-click a row (or press Enter) to see and edit it.`}</p>
           <div className="eh-tscroll">
             <table className="eh-evtable">
               <thead><tr>{COLS.map(([k, l]) => head(k, l))}<th scope="col">SMS rules</th></tr></thead>
@@ -998,7 +1028,11 @@ function EventsTab({ events, cats, reload, notify, selected, setSelected }) {
                       <td>{dueText(e)}</td>
                       <td>{lastPaidOf(e) ? fmt(lastPaidOf(e)) : <span className="eh-dim">Not seen</span>}</td>
                       <td className="num">{Number(e.amount) ? inr(e.amount) : <span className="eh-dim">varies</span>}</td>
-                      <td><Pill tone={tone}>{line}</Pill></td>
+                      <td>{e.status === 'proposed' ? (
+                        <span className="eh-propcell"><Pill tone="prop">Proposed</Pill>
+                          <button type="button" className="fo-btn sm" disabled={activating === e.id} onClick={(ev) => { ev.stopPropagation(); activate(e); }}
+                            onDoubleClick={(ev) => ev.stopPropagation()}>{activating === e.id ? 'Activating…' : 'Activate'}</button></span>
+                      ) : <Pill tone={tone}>{line}</Pill>}</td>
                       <td>{e.rules ? <span className="eh-tag">{e.rules}</span> : <span className="eh-tag warn">None</span>}</td>
                     </tr>
                   );
@@ -1140,8 +1174,9 @@ function GroupRow({ g, cats, i, onAct, busy, onEvent }) {
               <CategorySelect value={cat} onChange={setCat} cats={cats} required />
               <button type="button" className="fo-btn sm" disabled={busy || !cat} onClick={() => onAct(g, { action: 'category', category_id: cat })}>Save rule</button>
             </div>
+            {g.event?.status === 'proposed' && <p className="eh-grp-prop"><span className="eh-type t-prop">Proposed event</span> {clean(g.event.title)} is waiting in Events. “Save rule” drops it (just a category); “Make it an event” activates it.</p>}
             <div className="eh-grp-more">
-              <button type="button" className="fo-btn sm ghost" disabled={busy} onClick={() => onEvent(g)}>Make it an event…</button>
+              <button type="button" className="fo-btn sm ghost" disabled={busy} onClick={() => onEvent(g)}>{g.event?.status === 'proposed' ? 'Make it an event (activate)…' : 'Make it an event…'}</button>
               <button type="button" className="eh-link" disabled={busy} onClick={() => onAct(g, { action: 'ignore' })}>Ignore</button>
             </div>
           </>
@@ -1232,6 +1267,7 @@ export default function EventsHub({ notify }) {
         {events && (
           <div className="eh-stats" aria-label="Summary">
             <span><b>{events.filter(e => e.status === 'active').length}</b> active</span>
+            {events.some(e => e.status === 'proposed') && <span className="prop"><b>{events.filter(e => e.status === 'proposed').length}</b> proposed</span>}
             <span className={action ? 'hot' : ''}><b>{action}</b> need action</span>
             <span><b>{ruleCount ?? '–'}</b> rules</span>
           </div>

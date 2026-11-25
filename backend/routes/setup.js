@@ -210,6 +210,7 @@ router.post('/groups', requireAuth, async (req, res) => {
       if (error) throw error;
       created += Math.min(100, rows.length - i);
     }
+    await require('./events').proposeFromGroups(uid, { force: true }).catch(() => 0);
     res.json({ ok: true, created, updated });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
