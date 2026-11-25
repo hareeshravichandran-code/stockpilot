@@ -141,6 +141,22 @@ async function detailsFor(uid, e) {
   return null;
 }
 
+/**
+ * The last cycles of an event at a glance (K-214): a year of monthly ones, four quarters, the last three years...
+ * ending with the next one due. Each: { p: due date, s: done | missed | overdue | due | upcoming | skipped | untracked }.
+ */
+const TRACK_N = { monthly: 12, quarterly: 4, half_yearly: 4, yearly: 3, once: 1 };
+function trackOf(e, payOf, today) {
+  if (e.status === 'deleted') return [];
+  const n = TRACK_N[e.frequency] || 6;
+  const iv = EM.intervalDays(e);
+  const ps = EM.periods(e, EM.addDays(today, -iv * (n + 1)), EM.addDays(today, iv)).sort();
+  const upto = ps.filter(p => p <= today);
+  const next = ps.find(p => p > today);
+  const list = [...upto.slice(-(next ? n - 1 : n)), ...(next ? [next] : [])];
+  return list.map(p => ({ p, s: EM.stateOf(e, p, payOf[e.id + '|' + p] || null, today).state }));
+}
+
 // ── List ─────────────────────────────────────────────────────────────────────
 router.get('/', requireAuth, async (req, res) => {
   try {
@@ -154,7 +170,7 @@ router.get('/', requireAuth, async (req, res) => {
     ]);
     const ids = (evs || []).map(e => e.id);
     const { data: pays } = ids.length ? await supabase.from('event_payments').select('event_id, period, status, paid_on, amount, timing, match_source')
-      .in('event_id', ids).gte('period', EM.addDays(EM.todayStr(), -800)) : { data: [] };
+      .in('event_id', ids).gte('period', EM.addDays(EM.todayStr(), -1200)) : { data: [] };
     const payOf = {}; for (const p of pays || []) payOf[p.event_id + '|' + p.period] = p;
     const ruleCount = {}; for (const r of rules || []) ruleCount[r.event_id] = (ruleCount[r.event_id] || 0) + 1;
     const mById = Object.fromEntries((ms || []).map(m => [m.id, m]));
@@ -172,6 +188,7 @@ router.get('/', requireAuth, async (req, res) => {
         rules: ruleCount[e.id] || 0, link: links[e.id] || null,
         state: cur.now ? cur.now.state : (focus ? focus.state : null), focus_date: focus ? focus.period : null, alert: !!(cur.now && cur.now.alert),
         next_due: cur.next ? cur.next.period : null, last_done: cur.last_done, cycle_done: !!cur.cycle_done,
+        track: trackOf(e, payOf, today),
       };
     });
     const order = { overdue: 0, due: 1, upcoming: 2, done: 3 };
@@ -727,3 +744,4 @@ router.delete('/:id/occurrences/:period', requireAuth, async (req, res) => {
 
 module.exports = router;
 module.exports.ruleWindow = ruleWindow;
+module.exports.trackOf = trackOf;

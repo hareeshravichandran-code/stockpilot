@@ -48,8 +48,7 @@ const NAV_SECTIONS = [
     { id: 'm-card', icon: '▭', label: 'Credit cards' },
     { id: 'm-loan', icon: '⊟', label: 'Loans' },
     { id: 'm-insurance', icon: '☂', label: 'Insurance' },
-    { id: 'm-subscription', icon: '↻', label: 'Subscriptions' },
-    { id: 'm-events', icon: '◷', label: 'Events', hint: 'EMIs, card bills, subscriptions, SIPs: due dates and SMS rules' },
+    { id: 'm-events', icon: '◷', label: 'Events & subscriptions', hint: 'EMIs, card bills, subscriptions, SIPs: due dates and SMS rules' },
     { id: 'm-people', icon: '☺', label: 'People' },
     { id: 'm-documents', icon: '▤', label: 'Documents' },
     { id: 'm-all', icon: '≡', label: 'All masters', hint: 'Salary, SIPs, rent and every other master' },
@@ -818,6 +817,8 @@ export default function Dashboard() {
   const loadTab = async (t0) => {
     if (t0 === 'retirement' && !FEATURES.retirement) t0 = 'dashboard';     // switched off for now (lib/features.js)
     let t = OLD_TAB[t0] && !['income', 'expenses'].includes(t0) ? OLD_TAB[t0] : t0;
+    // Subscriptions are events now (K-214): open Events filtered to them
+    if (t === 'm-subscription') { try { sessionStorage.setItem('eh-group', 'subscription'); sessionStorage.setItem('eh-tab', 'events'); } catch { /* ignore */ } t = 'm-events'; }
     if (t0 === 'dividends') setStockView('dividends');
     if (t0 === 'income' || t0 === 'expenses') { setCfView('flow'); t = 'cashflow'; }
     setNavTab(t === 'bankdeposits' ? 'fd' : t);

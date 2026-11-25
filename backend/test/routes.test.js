@@ -352,3 +352,23 @@ describe('K-210: web and phone masters stay in step', () => {
     assert.ok(rows('custom_fields')[0].updated_at > '2026-01-01T00:00:00.000Z');
   });
 });
+
+describe('K-214: an event shows its recent cycles at a glance', () => {
+  const { trackOf } = require('../routes/events');
+  test('a monthly event: twelve cycles ending with the next one, paid ones done', () => {
+    const e = { id: 'e1', frequency: 'monthly', due_day: 5, kind: 'emi', status: 'active', created_at: '2025-01-01T00:00:00Z', buffer_days: 2 };
+    const pay = { 'e1|2026-10-05': { status: 'paid' }, 'e1|2026-09-05': { status: 'paid' } };
+    const t = trackOf(e, pay, '2026-11-26');
+    assert.equal(t.length, 12);
+    assert.equal(t[t.length - 1].p, '2026-12-05');
+    assert.equal(t[t.length - 1].s, 'upcoming');
+    assert.equal(t.find(x => x.p === '2026-10-05').s, 'done');
+    assert.equal(t.find(x => x.p === '2026-11-05').s, 'overdue');
+  });
+  test('quarterly: four cycles; ones before the event was made are untracked', () => {
+    const e = { id: 'e2', frequency: 'quarterly', due_day: 10, due_month: 1, kind: 'premium', status: 'active', created_at: '2026-06-01T00:00:00Z', buffer_days: 3 };
+    const t = trackOf(e, {}, '2026-11-26');
+    assert.equal(t.length, 4);
+    assert.equal(t[0].s, 'untracked');
+  });
+});
