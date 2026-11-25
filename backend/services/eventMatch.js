@@ -232,6 +232,17 @@ const DEFAULT_CAT = { card_due: 'cc_bill', emi: 'p_loans', subscription: 'p_memb
  *   - from payments already tied to the event: sender + amount range (+ payee words when every payment shares them)
  * Each becomes a normal rule (source 'from_master' / 'from_payments') the user can see, edit or delete.
  */
+/** Payee fingerprints shared by every payment in the list (null when any payment has none, or they share none). */
+function commonToks(list) {
+  let common = null;
+  for (const t of list) {
+    const tk = Array.isArray(t.merchant_tok) ? t.merchant_tok.filter(x => typeof x === 'string' && x) : [];
+    if (!tk.length) return null;
+    common = common ? common.filter(x => tk.includes(x)) : [...new Set(tk)];
+    if (!common.length) return null;
+  }
+  return common && common.length ? common.slice(0, 20) : null;
+}
 async function seedRules(uid, events, rules, txns, pays) {
   const has = new Set((rules || []).map(r => r.event_id));
   const todo = events.filter(e => !e.rules_seeded && !has.has(e.id));
@@ -293,11 +304,15 @@ async function seedRules(uid, events, rules, txns, pays) {
         }
         const names = [...new Set(list.map(t => (t.merchant && !isEnc(t.merchant) ? String(t.merchant).toLowerCase().trim() : '')))];
         const word = names.length === 1 && names[0].length >= 3 ? names[0].slice(0, 60) : null;
-        // Quarterly / yearly dues: a sender + amount rule with no words would settle a late due date with any
-        // payment of that size from the bank, months later. Only with the payee's words.
-        if (!word && e.frequency && e.frequency !== 'monthly') continue;
+        // K-218: the payee must be in the rule. For end-to-end encrypted accounts the name is unreadable here, so the
+        // payee's fingerprints (merchant_tok) every payment shares stand in for it. A bank sender + an amount range
+        // alone caught every card spend of that size (a ₹150 shop payment filed as a ₹130 subscription).
+        const toks = word ? null : commonToks(list);
+        // Except bank-run monthly debits (EMI, SIP, RD): the bank itself is the payee and the amount is steady
+        const bankDebit = ['emi', 'sip', 'rd_instalment'].includes(e.kind) && (!e.frequency || e.frequency === 'monthly');
+        if (!word && !toks && !bankDebit) continue;
         if (rows.some(r => r.sender_key === k && r.amount_min != null && r.amount_min <= lo && r.amount_max >= hi)) continue;
-        rows.push({ merchant_pattern: word, pattern_tok: null, sender_key: k, amount_min: Math.floor(lo * 0.95), amount_max: Math.ceil(hi * 1.05), source: 'from_payments', label: null });
+        rows.push({ merchant_pattern: word, pattern_tok: toks, sender_key: k, amount_min: Math.floor(lo * 0.95), amount_max: Math.ceil(hi * 1.05), source: 'from_payments', label: null });
       }
     }
     let failed = 0;
@@ -498,4 +513,4 @@ async function runMatching(uid, { force = false, matchesMaster = null } = {}) {
 module.exports = {
   dayOk,
   ensureLoanEvents, ensurePolicyEvents,
-  hasAccountRef, seedRules, DEFAULT_CAT, catFamily, categoryPick, inCatWindow, insurerWords, repairRefs, KIND_CATS, senderKey, periods, stateOf, pickPeriod, ruleScore, runMatching, intervalDays, bufferOf, todayStr, istDay, addDays, diffDays };
+  hasAccountRef, seedRules, commonToks, DEFAULT_CAT, catFamily, categoryPick, inCatWindow, insurerWords, repairRefs, KIND_CATS, senderKey, periods, stateOf, pickPeriod, ruleScore, runMatching, intervalDays, bufferOf, todayStr, istDay, addDays, diffDays };

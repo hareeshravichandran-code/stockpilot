@@ -666,11 +666,7 @@ function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify, ful
         </div>
         <div className="eh-d-acts">
           {e.status === 'proposed' ? (
-            <>
-              <button type="button" className="fo-btn sm" onClick={() => setStatus('active')}>Activate</button>
-              <button type="button" className="fo-btn sm ghost" onClick={() => onEdit(e)}>Edit</button>
-              <button type="button" className="fo-btn sm ghost danger" onClick={del}>Delete proposal</button>
-            </>
+            <button type="button" className="fo-btn sm ghost" onClick={() => onEdit(e)}>Edit</button>
           ) : <>
           <button type="button" className="fo-btn sm" onClick={() => onEdit(e)}>Edit</button>
           {e.status === 'active'
@@ -683,9 +679,15 @@ function EventDetail({ id, cats, events, onEdit, onChanged, onClose, notify, ful
         </div>
       </header>
       {e.status === 'proposed' && (
-        <div className="eh-propnote">
-          <b>Kanalyst found this in your SMS.</b> It is not tracked yet: no alerts, and payments are not marked against it.
-          Check the SMS rule, amount and date below (change anything that is off), then press <b>Activate</b>. Not a real repeating payment? <button type="button" className="eh-link" onClick={del}>Delete the proposal</button>.
+        <div className="eh-propnote" role="region" aria-label="Proposal">
+          <div>
+            <b>Proposed from your SMS · not tracked yet</b>
+            <p>Check the rule, amount and date below, then activate. Until then there are no alerts and no payments are marked.</p>
+          </div>
+          <div className="eh-propnote-btns">
+            <button type="button" className="fo-btn" onClick={() => setStatus('active')}>Activate</button>
+            <button type="button" className="fo-btn ghost danger" onClick={del}>Delete proposal</button>
+          </div>
         </div>
       )}
 
@@ -755,7 +757,11 @@ function Spotter({ e, rules, cats, notify, onChanged, onAddRule, onEditRule, onD
   const hasRange = r && (r.amount_min != null || r.amount_max != null);
   const amtBuf = r && amt && hasRange
     ? Math.round(Math.max(r.amount_max != null ? r.amount_max - amt : 0, r.amount_min != null ? amt - r.amount_min : 0)) : null;
-  const who = r ? ruleWhen(r).filter(([key]) => !['Amount', 'Days'].includes(key)) : [];
+  const parts = r ? ruleWhen(r) : [];
+  const from = parts.find(([key]) => key === 'From')?.[1] || null;
+  const payee = parts.filter(([key]) => !['From', 'Amount', 'Days'].includes(key));
+  const ruleAmount = parts.find(([key]) => key === 'Amount')?.[1] || null;
+  const noPayee = r && !payee.length;
   const saveAmt = async () => {
     const b = Math.max(0, Math.round(Number(editAmt) || 0));
     setSaving(true);
@@ -768,89 +774,100 @@ function Spotter({ e, rules, cats, notify, onChanged, onAddRule, onEditRule, onD
     try { await eventsAPI.update(e.id, { buffer_days: b }); notify(`Date buffer saved · ± ${b} day${b === 1 ? '' : 's'}`); setEditDay(null); await onChanged(); }
     catch (er) { notify(errMsg(er)); } finally { setSaving(false); }
   };
+  const amountLine = amt && amtBuf != null ? `${inr(Math.max(0, amt - amtBuf))} – ${inr(amt + amtBuf)}` : ruleAmount || 'any amount';
   return (
-    <section className="eh-spot" aria-label="How Kanalyst spots this payment">
+    <section className="eh-spot" aria-labelledby="eh-spot-h">
       <div className="eh-spot-head">
-        <h3>How Kanalyst spots this payment</h3>
+        <h3 id="eh-spot-h">How Kanalyst spots this payment</h3>
         {rules.length > 1 && (
           <div className="eh-seg" role="tablist" aria-label="SMS rules">
             {rules.map((x, i) => <button key={x.id} type="button" role="tab" aria-selected={i === sel} className={i === sel ? 'on' : ''} onClick={() => setSel(i)}>Rule {i + 1}</button>)}
           </div>
         )}
       </div>
+
       {!r ? (
         <div className="eh-spot-none">
-          <p><b>No SMS rule yet</b>, so Kanalyst can't mark this paid by itself. Answer “Is this your payment?” on a due date below, or add a rule now.</p>
-          <div>
-            <button type="button" className="fo-btn sm" onClick={onAddRule} disabled={!e.category_id}>+ Add SMS rule</button>
-            {!e.category_id && <button type="button" className="eh-link" onClick={onEditEvent}>Pick a category first</button>}
+          <p><b>No SMS rule yet.</b> Kanalyst can’t mark this paid by itself until it has one.</p>
+          <div className="eh-spot-btns">
+            <button type="button" className="fo-btn sm" onClick={onAddRule} disabled={!e.category_id}>Add SMS rule</button>
+            {!e.category_id && <button type="button" className="fo-btn sm ghost" onClick={onEditEvent}>Pick a category first</button>}
           </div>
-          <dl className="eh-spot-grid">
-            <div><dt>Amount</dt><dd>{amountText(e)}</dd></div>
-            <div><dt>Date</dt><dd>{scheduleText(e)} <span className="eh-buf">± {e.buffer_days} day{e.buffer_days === 1 ? '' : 's'}</span></dd></div>
-          </dl>
         </div>
       ) : (
-        <dl className="eh-spot-grid">
-          <div className="wide">
-            <dt>SMS rule</dt>
-            <dd>
-              <b>{r.label ? clean(r.label) : who.map(([, v]) => v).join(' · ') || 'Rule'}</b>
-              <span className="eh-dim"> · caught {r.caught} SMS in 6 months{RULE_SOURCE[r.source] ? ` · ${RULE_SOURCE[r.source]}` : ''}</span>
-              <span className="eh-spot-acts">
-                <button type="button" className="eh-link" onClick={() => onEditRule(r)}>Edit rule</button>
-                <button type="button" className="eh-link danger" onClick={() => onDelRule(r)}>Remove</button>
-                <button type="button" className="eh-link" onClick={onAddRule}>+ Another rule</button>
-              </span>
-            </dd>
-          </div>
-          <div>
-            <dt>Payee</dt>
-            <dd>{who.length ? who.map(([key, v]) => <span key={key} className="eh-kv"><em>{key}</em>{v}</span>) : <span className="eh-dim">Any payee</span>}</dd>
-          </div>
-          <div>
-            <dt>Category</dt>
-            <dd><CatChip id={r.category_id || e.category_id} cats={cats} /></dd>
-          </div>
-          <div>
-            <dt>Amount</dt>
-            <dd>
-              {!amt ? (
-                <span>Varies{hasRange ? <span className="eh-dim"> · rule takes {ruleWhen(r).find(([key]) => key === 'Amount')?.[1]}</span> : null}</span>
-              ) : editAmt == null ? (
-                <span>{inr(amt)} <span className="eh-buf">± {amtBuf != null ? inr(amtBuf) : 'any'}</span>
-                  {amtBuf != null && <span className="eh-dim"> ({inr(Math.max(0, amt - amtBuf))} – {inr(amt + amtBuf)})</span>}
-                  <button type="button" className="eh-link" onClick={() => setEditAmt(amtBuf ?? Math.round(amt * 0.05))}>Change</button></span>
-              ) : (
-                <span className="eh-inline">{inr(amt)} ± ₹<input type="number" min="0" value={editAmt} onChange={(ev) => setEditAmt(ev.target.value)} aria-label="Amount buffer in rupees" autoFocus />
-                  <button type="button" className="fo-btn sm" disabled={saving} onClick={saveAmt}>Save</button>
-                  <button type="button" className="eh-link" onClick={() => setEditAmt(null)}>Cancel</button></span>
-              )}
-            </dd>
-          </div>
-          <div>
-            <dt>Date</dt>
-            <dd>
-              {editDay == null ? (
-                <span>{scheduleText(e)} <span className="eh-buf">± {e.buffer_days} day{e.buffer_days === 1 ? '' : 's'}</span>
-                  <button type="button" className="eh-link" onClick={() => setEditDay(e.buffer_days)}>Change</button></span>
-              ) : (
-                <span className="eh-inline">{scheduleText(e)} ± <input type="number" min="0" max="15" value={editDay} onChange={(ev) => setEditDay(ev.target.value)} aria-label="Date buffer in days" autoFocus /> days
-                  <button type="button" className="fo-btn sm" disabled={saving} onClick={saveDay}>Save</button>
-                  <button type="button" className="eh-link" onClick={() => setEditDay(null)}>Cancel</button></span>
-              )}
-            </dd>
-          </div>
-          {r.sample && (
-            <div className="wide">
-              <dt>Latest SMS it caught</dt>
+        <>
+          {/* The rule in one sentence: what an SMS must look like to count as this payment */}
+          <p className="eh-spot-say">
+            A payment SMS{from ? <> from <b>{from}</b></> : null}
+            {payee.length ? <> to <b>{payee.map(([, v]) => v).join(' · ')}</b></> : null}
+            {' '}for <b>{amountLine}</b>, around <b>{scheduleText(e).replace(/^Every /, 'every ')}</b> (± {e.buffer_days} day{e.buffer_days === 1 ? '' : 's'}), marks this paid.
+          </p>
+          {noPayee && (
+            <p className="eh-spot-warn" role="note">
+              This rule has no payee, so any SMS from {from || 'this sender'} in that amount range counts, even another shop. Edit the rule and add the payee.
+            </p>
+          )}
+
+          <dl className="eh-tiles">
+            <div className="eh-fact">
+              <dt>Payee</dt>
+              <dd>{payee.length ? payee.map(([key, v]) => <span key={key} className="eh-fact-v">{v}</span>) : <span className="eh-fact-v warn">Not set</span>}
+                {from && <span className="eh-fact-sub">SMS from {from}</span>}</dd>
+            </div>
+            <div className="eh-fact">
+              <dt>Category</dt>
+              <dd><CatChip id={r.category_id || e.category_id} cats={cats} /></dd>
+            </div>
+            <div className="eh-fact">
+              <dt>Amount</dt>
               <dd>
-                <blockquote className="eh-spot-sms">{clean(r.sample.body) || clean(r.sample.payee) || 'No SMS text saved for this payment.'}</blockquote>
-                <span className="eh-dim">{fmtY(r.sample.date)}{r.sample.sender ? ` · from ${r.sample.sender}` : ''}{r.sample.amount ? ` · ${inr(r.sample.amount)}` : ''}</span>
+                {!amt ? (
+                  <><span className="eh-fact-v">Varies</span>{ruleAmount && <span className="eh-fact-sub">Rule takes {ruleAmount}</span>}</>
+                ) : editAmt == null ? (
+                  <>
+                    <span className="eh-fact-v">{inr(amt)} <span className="eh-buf">± {amtBuf != null ? inr(amtBuf) : 'any'}</span></span>
+                    {amtBuf != null && <span className="eh-fact-sub">{inr(Math.max(0, amt - amtBuf))} to {inr(amt + amtBuf)}</span>}
+                    <button type="button" className="eh-fact-edit" onClick={() => setEditAmt(amtBuf ?? Math.round(amt * 0.05))} aria-label="Change the amount buffer">Change</button>
+                  </>
+                ) : (
+                  <span className="eh-inline">± ₹<input type="number" min="0" value={editAmt} onChange={(ev) => setEditAmt(ev.target.value)} aria-label="Amount buffer in rupees" autoFocus />
+                    <button type="button" className="fo-btn sm" disabled={saving} onClick={saveAmt}>Save</button>
+                    <button type="button" className="fo-btn sm ghost" onClick={() => setEditAmt(null)}>Cancel</button></span>
+                )}
               </dd>
             </div>
+            <div className="eh-fact">
+              <dt>Due date</dt>
+              <dd>
+                {editDay == null ? (
+                  <>
+                    <span className="eh-fact-v">{scheduleText(e)} <span className="eh-buf">± {e.buffer_days} day{e.buffer_days === 1 ? '' : 's'}</span></span>
+                    <span className="eh-fact-sub">A payment this many days early or late still counts</span>
+                    <button type="button" className="eh-fact-edit" onClick={() => setEditDay(e.buffer_days)} aria-label="Change the date buffer">Change</button>
+                  </>
+                ) : (
+                  <span className="eh-inline">± <input type="number" min="0" max="15" value={editDay} onChange={(ev) => setEditDay(ev.target.value)} aria-label="Date buffer in days" autoFocus /> days
+                    <button type="button" className="fo-btn sm" disabled={saving} onClick={saveDay}>Save</button>
+                    <button type="button" className="fo-btn sm ghost" onClick={() => setEditDay(null)}>Cancel</button></span>
+                )}
+              </dd>
+            </div>
+          </dl>
+
+          {r.sample && (
+            <figure className="eh-smsq">
+              <figcaption>Latest SMS this rule caught <span>· {fmtY(r.sample.date)}{r.sample.sender ? ` · ${r.sample.sender}` : ''}{r.sample.amount ? ` · ${inr(r.sample.amount)}` : ''}</span></figcaption>
+              <blockquote>{clean(r.sample.body) || clean(r.sample.payee) || 'No SMS text saved for this payment.'}</blockquote>
+            </figure>
           )}
-        </dl>
+
+          <div className="eh-spot-btns">
+            <button type="button" className="fo-btn sm" onClick={() => onEditRule(r)}>Edit rule</button>
+            <button type="button" className="fo-btn sm ghost" onClick={onAddRule}>Add another rule</button>
+            <span className="eh-dim eh-spot-meta">Caught {r.caught} SMS in 6 months{RULE_SOURCE[r.source] ? ` · ${RULE_SOURCE[r.source]}` : ''}</span>
+            <button type="button" className="fo-btn sm ghost danger eh-push" onClick={() => onDelRule(r)}>Remove rule</button>
+          </div>
+        </>
       )}
     </section>
   );
